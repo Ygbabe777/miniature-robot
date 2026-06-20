@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AGX Dealer Mechanics — Pine Script v6</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <!-- NAVBAR -->
+  <nav class="navbar">
+    <div class="nav-inner">
+      <div class="nav-brand">
+        <span class="brand-icon">⬡</span>
+        <span class="brand-text">AGX <span class="brand-accent">Dealer Mechanics</span></span>
+      </div>
+      <div class="nav-links">
+        <a href="#overview">Overview</a>
+        <a href="#structure">Struttura</a>
+        <a href="#inputs">Input</a>
+        <a href="#logic">Logica</a>
+        <a href="#alerts">Alert</a>
+        <a href="#code">Codice</a>
+      </div>
+      <button class="btn-primary nav-cta" onclick="document.getElementById('code').scrollIntoView({behavior:'smooth'})">
+        Scarica Script
+      </button>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-bg"></div>
+    <div class="hero-content">
+      <div class="hero-badge">Pine Script v6 · NQ1! · Intraday</div>
+      <h1 class="hero-title">AGX Dealer<br /><span class="gradient-text">Mechanics</span></h1>
+      <p class="hero-sub">
+        Framework di visualizzazione basato su <strong>Dealer Gamma Mechanics</strong> per Nasdaq Futures.<br />
+        Livelli GEXBot, confluenze AGX, regime dinamico, flip rule automatico.
+      </p>
+      <div class="hero-actions">
+        <button class="btn-primary" onclick="copyCode()">⎘ Copia Pine Script</button>
+        <button class="btn-secondary" onclick="document.getElementById('overview').scrollIntoView({behavior:'smooth'})">
+          Scopri la struttura ↓
+        </button>
+      </div>
+      <div class="hero-stats">
+        <div class="stat"><span class="stat-n">27+</span><span class="stat-l">Input configurabili</span></div>
+        <div class="stat"><span class="stat-n">5</span><span class="stat-l">Alert conditions</span></div>
+        <div class="stat"><span class="stat-n">∞</span><span class="stat-l">AGX Zone dinamiche</span></div>
+        <div class="stat"><span class="stat-n">3</span><span class="stat-l">Mode regime</span></div>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="chart-mock">
+        <div class="cm-bar cm-bar--red"></div>
+        <div class="cm-line cm-line--r" style="top:22%">Call Resistance</div>
+        <div class="cm-zone cm-zone--red" style="top:28%;height:8%"></div>
+        <div class="cm-line cm-line--y" style="top:48%">Zero Gamma</div>
+        <div class="cm-zone cm-zone--green" style="top:60%;height:10%"></div>
+        <div class="cm-line cm-line--g" style="top:72%">Put Support</div>
+        <div class="cm-bar cm-bar--green"></div>
+        <div class="cm-candles">
+          <div class="cc" style="height:30px;bottom:40%"></div>
+          <div class="cc" style="height:45px;bottom:43%"></div>
+          <div class="cc cc--red" style="height:25px;bottom:50%"></div>
+          <div class="cc" style="height:38px;bottom:48%"></div>
+          <div class="cc" style="height:20px;bottom:55%"></div>
+          <div class="cc cc--red" style="height:50px;bottom:46%"></div>
+          <div class="cc" style="height:35px;bottom:44%"></div>
+        </div>
+        <div class="cm-table">
+          <div class="ct-row ct-head">AGX DEALER MECHANICS</div>
+          <div class="ct-row"><span>MODE</span><span class="ct-fade">FADE EDGES</span></div>
+          <div class="ct-row"><span>Net GEX</span><span class="ct-green">POSITIVO</span></div>
+          <div class="ct-row"><span>Zero Gamma</span><span class="ct-yellow">19240</span></div>
+          <div class="ct-row"><span>Pin 0DTE</span><span class="ct-orange">STRETTO</span></div>
+          <div class="ct-row"><span>AGX Zones</span><span>▲ 3  ▼ 2</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DISCLAIMER -->
+  <div class="disclaimer">
+    <span class="disc-icon">⚠</span>
+    <span>
+      Strumento di <strong>visualizzazione e alert</strong> — non genera segnali di trading automatici, probabilità o narrativa discrezionale.
+      I livelli vengono inseriti <strong>manualmente</strong> dall'operatore ogni giorno prima dell'apertura.
+    </span>
+  </div>
+
+  <!-- OVERVIEW -->
+  <section class="section" id="overview">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Panoramica</span>
+        <h2>Cosa fa l'indicatore</h2>
+        <p>AGX Dealer Mechanics legge i livelli inseriti manualmente e produce una mappa oggettiva delle zone dealer rilevanti per la sessione.</p>
+      </div>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="fc-icon" style="background:rgba(0,200,83,.15);color:#00C853">⬛</div>
+          <h3>Livelli GEXBot</h3>
+          <p>4 nodi green + 4 nodi red con spessore proporzionale alla size in milioni. Flip rule automatico con conferma momentum.</p>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon" style="background:rgba(255,109,0,.15);color:#FF6D00">◈</div>
+          <h3>AGX Zones</h3>
+          <p>Clustering automatico di tutti i livelli attivi (GEXBot + MenthorQ + QQQ). Zone con 2+ confluenze disegnate come box con rating a stelle.</p>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon" style="background:rgba(255,214,0,.15);color:#FFD600">⬡</div>
+          <h3>Regime Dinamico</h3>
+          <p>Calcolo automatico del mode (FADE EDGES / FOLLOW MOMENTUM / TRANSIZIONE) basato su Net GEX e posizione dello spot rispetto a Zero Gamma.</p>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon" style="background:rgba(41,182,246,.15);color:#29B6F6">◱</div>
+          <h3>Pin 0DTE</h3>
+          <p>Box tra Put Support e Call Resistance 0DTE con classificazione automatica: STRETTO / NORMALE / AMPIO basata su soglie configurabili.</p>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon" style="background:rgba(211,47,47,.15);color:#D32F2F">⊗</div>
+          <h3>Flip Rule</h3>
+          <p>Ogni nodo GEXBot tiene traccia del proprio stato. Se il prezzo chiude oltre il livello + buffer, il nodo flippa e cambia stile visivo e ruolo.</p>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon" style="background:rgba(156,39,176,.15);color:#AB47BC">◎</div>
+          <h3>Alert Avanzati</h3>
+          <p>5 alertcondition distinte: entrata zona da sotto, entrata zona da sopra, flip nodo, rottura pin superiore, rottura pin inferiore.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STRUTTURA -->
+  <section class="section section--dark" id="structure">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Architettura</span>
+        <h2>Struttura del codice</h2>
+        <p>Organizzazione delle variabili globali e delle funzioni principali.</p>
+      </div>
+      <div class="arch-grid">
+        <div class="arch-block">
+          <h4><span class="arch-num">01</span> Stato persistente</h4>
+          <ul>
+            <li><code>gex_flipped</code> — array&lt;bool&gt;[8], reset giornaliero</li>
+            <li><code>zone_touch_count</code> — contatore tocchi per AGX Zone</li>
+            <li><code>zone_prices_prev</code> — prezzi zone sessione corrente</li>
+            <li><code>last_reset_day</code> — tracking cambio sessione</li>
+          </ul>
+        </div>
+        <div class="arch-block">
+          <h4><span class="arch-num">02</span> Funzioni principali</h4>
+          <ul>
+            <li><code>f_is_active(p)</code> — nodo abilitato se p ≠ 0</li>
+            <li><code>f_check_flip(p, is_green, idx)</code> — logica flip</li>
+            <li><code>f_gex_width(size_m)</code> — spessore linea GEXBot</li>
+            <li><code>f_star_rating(n)</code> — stringa stelle da conteggio</li>
+            <li><code>f_draw_gex_node(p, s, idx, is_green)</code> — disegno nodo</li>
+            <li><code>f_clear_drawings()</code> — cancella e ridisegna</li>
+          </ul>
+        </div>
+        <div class="arch-block">
+          <h4><span class="arch-num">03</span> Clustering AGX</h4>
+          <ul>
+            <li>Raccolta in <code>all_prices[]</code> + <code>all_sources[]</code></li>
+            <li>Ordinamento bubble sort (n ≤ 30 — accettabile)</li>
+            <li>Algoritmo greedy: cluster aperto finché Δprice ≤ tolleranza</li>
+            <li>Solo cluster con count ≥ 2 diventano AGX Zone</li>
+          </ul>
+        </div>
+        <div class="arch-block">
+          <h4><span class="arch-num">04</span> Rendering</h4>
+          <ul>
+            <li>Oggetti disegnati solo su <code>barstate.islast</code></li>
+            <li>Array <code>drawn_lines/boxes/labels</code> cancellati ogni render</li>
+            <li>Tabella <code>table.new()</code> con 9 righe, posizione configurabile</li>
+            <li>Extend right per linee e box — sempre visibili</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- INPUTS -->
+  <section class="section" id="inputs">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Configurazione</span>
+        <h2>Gruppi di input</h2>
+        <p>Tutti i parametri sono organizzati in 6 gruppi nel pannello impostazioni di TradingView.</p>
+      </div>
+      <div class="input-groups">
+
+        <div class="input-group-card">
+          <div class="igc-header" style="border-left-color:#FFD600">
+            <span class="igc-num">G1</span>
+            <h3>Regime &amp; Zero Gamma</h3>
+          </div>
+          <table class="input-table">
+            <tr><th>Input</th><th>Tipo</th><th>Default</th></tr>
+            <tr><td>Net GEX è positivo?</td><td>bool</td><td>true</td></tr>
+            <tr><td>Zero Gamma / HVL</td><td>float</td><td>0.0</td></tr>
+            <tr><td>Max Change GEX</td><td>dropdown</td><td>Neutro</td></tr>
+          </table>
+        </div>
+
+        <div class="input-group-card">
+          <div class="igc-header" style="border-left-color:#00C853">
+            <span class="igc-num">G2</span>
+            <h3>Nodi GEXBot (metodo Freddy)</h3>
+          </div>
+          <table class="input-table">
+            <tr><th>Input</th><th>Tipo</th><th>Note</th></tr>
+            <tr><td>Green 1-4 Prezzo</td><td>float</td><td>0 = non attivo</td></tr>
+            <tr><td>Green 1-4 Size $M</td><td>float</td><td>opzionale</td></tr>
+            <tr><td>Red 1-4 Prezzo</td><td>float</td><td>0 = non attivo</td></tr>
+            <tr><td>Red 1-4 Size $M</td><td>float</td><td>opzionale</td></tr>
+          </table>
+        </div>
+
+        <div class="input-group-card">
+          <div class="igc-header" style="border-left-color:#D32F2F">
+            <span class="igc-num">G3</span>
+            <h3>Livelli MenthorQ</h3>
+          </div>
+          <table class="input-table">
+            <tr><th>Input</th><th>Colore linea</th></tr>
+            <tr><td>Call Resistance</td><td><span class="dot" style="background:#D32F2F"></span> Rosso</td></tr>
+            <tr><td>Put Support</td><td><span class="dot" style="background:#00C853"></span> Verde</td></tr>
+            <tr><td>HVL</td><td><span class="dot" style="background:#FFD600"></span> Giallo tratteggiato</td></tr>
+            <tr><td>CR / PS / GW 0DTE</td><td><span class="dot" style="background:#FF6D00"></span> Arancio punteggiato</td></tr>
+            <tr><td>1D Min / Max</td><td><span class="dot" style="background:#29B6F6"></span> Azzurro tratteggiato</td></tr>
+            <tr><td>GEX Level 1-5 (liberi)</td><td><span class="dot" style="background:#888"></span> Grigio punteggiato</td></tr>
+          </table>
+        </div>
+
+        <div class="input-group-card">
+          <div class="igc-header" style="border-left-color:#29B6F6">
+            <span class="igc-num">G4</span>
+            <h3>Livelli QQQ Correlati</h3>
+          </div>
+          <table class="input-table">
+            <tr><th>Input</th><th>Tipo</th><th>Note</th></tr>
+            <tr><td>QQQ Level 1-3 Prezzo</td><td>float</td><td>0 = non attivo</td></tr>
+            <tr><td>QQQ Level 1-3 Label</td><td>string</td><td>testo libero</td></tr>
+          </table>
+        </div>
+
+        <div class="input-group-card">
+          <div class="igc-header" style="border-left-color:#AB47BC">
+            <span class="igc-num">G5</span>
+            <h3>Parametri di Calcolo</h3>
+          </div>
+          <table class="input-table">
+            <tr><th>Parametro</th><th>Default</th></tr>
+            <tr><td>Tolleranza AGX Zone</td><td>15 pt</td></tr>
+            <tr><td>Buffer flip momentum</td><td>10 pt</td></tr>
+            <tr><td>Soglia pin NARROW</td><td>300 pt</td></tr>
+            <tr><td>Soglia pin WIDE</td><td>600 pt</td></tr>
+          </table>
+        </div>
+
+        <div class="input-group-card">
+          <div class="igc-header" style="border-left-color:#546E7A">
+            <span class="igc-num">G6</span>
+            <h3>Visualizzazione</h3>
+          </div>
+          <table class="input-table">
+            <tr><th>Input</th><th>Tipo</th><th>Default</th></tr>
+            <tr><td>Mostra tabella</td><td>bool</td><td>true</td></tr>
+            <tr><td>Posizione tabella</td><td>dropdown</td><td>Top Right</td></tr>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- LOGICA -->
+  <section class="section section--dark" id="logic">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Logica</span>
+        <h2>Meccanismi principali</h2>
+      </div>
+
+      <div class="logic-blocks">
+
+        <!-- REGIME -->
+        <div class="logic-card">
+          <h3><span class="lc-badge" style="background:#FFD600;color:#000">REGIME</span> Calcolo Mode</h3>
+          <div class="logic-matrix">
+            <div class="lm-row lm-head">
+              <span>Net GEX</span><span>Spot vs Zero Gamma</span><span>Mode</span>
+            </div>
+            <div class="lm-row lm-fade">
+              <span>✅ Positivo</span><span>Sopra ZG</span><span>FADE EDGES</span>
+            </div>
+            <div class="lm-row lm-follow">
+              <span>❌ Negativo</span><span>Sotto ZG</span><span>FOLLOW MOMENTUM</span>
+            </div>
+            <div class="lm-row lm-trans">
+              <span>✅ Positivo</span><span>Sotto ZG</span><span>TRANSIZIONE ⚠</span>
+            </div>
+            <div class="lm-row lm-trans">
+              <span>❌ Negativo</span><span>Sopra ZG</span><span>TRANSIZIONE ⚠</span>
+            </div>
+          </div>
+          <div class="logic-note">
+            <strong>Hard Rule:</strong> "FOLLOW MOMENTUM" non può mai essere assegnato se Net GEX è positivo. Questo vincolo è esplicitato anche nel codice con commento dedicato.
+          </div>
+        </div>
+
+        <!-- FLIP RULE -->
+        <div class="logic-card">
+          <h3><span class="lc-badge" style="background:#D32F2F">FLIP</span> Flip Rule</h3>
+          <div class="flip-diagram">
+            <div class="fd-node fd-green">
+              <div class="fd-before">Nodo GREEN<br/><small>supporto dealer</small></div>
+              <div class="fd-arrow">Close &lt; livello − buffer ⟶</div>
+              <div class="fd-after">Nodo GREEN flippato<br/><small>⟳ si comporta da RESISTENZA</small><br/><small>stile tratteggiato</small></div>
+            </div>
+            <div class="fd-node fd-red">
+              <div class="fd-before">Nodo RED<br/><small>resistenza dealer</small></div>
+              <div class="fd-arrow">Close &gt; livello + buffer ⟶</div>
+              <div class="fd-after">Nodo RED flippato<br/><small>⟳ si comporta da SUPPORTO</small><br/><small>stile tratteggiato</small></div>
+            </div>
+          </div>
+          <div class="logic-note">
+            Il colore base (verde/rosso) viene mantenuto per identificare l'origine. Il tag <strong>[⟳ RES]</strong> o <strong>[⟳ SUP]</strong> nella label segnala il ruolo invertito. Stato resettato ogni nuova sessione.
+          </div>
+        </div>
+
+        <!-- AGX ZONES -->
+        <div class="logic-card">
+          <h3><span class="lc-badge" style="background:#FF6D00">AGX</span> Clustering Zone</h3>
+          <div class="agx-diagram">
+            <div class="agx-step">
+              <div class="agx-step-n">1</div>
+              <p>Raccoglie <strong>tutti</strong> i livelli attivi in un unico array ordinato per prezzo</p>
+            </div>
+            <div class="agx-step">
+              <div class="agx-step-n">2</div>
+              <p>Algoritmo greedy: raggruppa livelli distanti ≤ tolleranza (default 15pt)</p>
+            </div>
+            <div class="agx-step">
+              <div class="agx-step-n">3</div>
+              <p>Cluster con 1 sola fonte → nessun box, resta linea singola</p>
+            </div>
+            <div class="agx-step">
+              <div class="agx-step-n">4</div>
+              <p>Cluster con 2+ fonti → AGX Zone con box e rating a stelle</p>
+            </div>
+          </div>
+          <div class="star-ratings">
+            <span class="sr">2 fonti → <span class="stars">★★</span></span>
+            <span class="sr">3 fonti → <span class="stars">★★★</span></span>
+            <span class="sr">4 fonti → <span class="stars">★★★★</span></span>
+            <span class="sr">5+ fonti → <span class="stars">★★★★★</span></span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ALERTS -->
+  <section class="section" id="alerts">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Alert</span>
+        <h2>Alert Conditions</h2>
+        <p>5 alertcondition() distinte, tutte configurabili nel pannello alert di TradingView.</p>
+      </div>
+      <div class="alert-list">
+        <div class="alert-item alert-long">
+          <div class="ai-icon">↑</div>
+          <div class="ai-body">
+            <h4>AGX Zone — Entrata da sotto <span class="ai-bias ai-bias--long">LONG bias</span></h4>
+            <p>Il prezzo attraversa il bordo inferiore di una AGX Zone provenendo da sotto. Possibile supporto / rimbalzo dealer.</p>
+            <code>close[1] &lt; zone_bot AND close ∈ [zone_bot, zone_top]</code>
+          </div>
+        </div>
+        <div class="alert-item alert-short">
+          <div class="ai-icon">↓</div>
+          <div class="ai-body">
+            <h4>AGX Zone — Entrata da sopra <span class="ai-bias ai-bias--short">SHORT bias</span></h4>
+            <p>Il prezzo attraversa il bordo superiore di una AGX Zone provenendo da sopra. Possibile resistenza / rigetto dealer.</p>
+            <code>close[1] &gt; zone_top AND close ∈ [zone_bot, zone_top]</code>
+          </div>
+        </div>
+        <div class="alert-item alert-flip">
+          <div class="ai-icon">⟳</div>
+          <div class="ai-body">
+            <h4>Flip livello GEXBot <span class="ai-bias" style="background:#AB47BC20;color:#AB47BC">CAMBIO RUOLO</span></h4>
+            <p>Un nodo GEXBot ha chiuso oltre il livello + buffer di momentum. Il nodo inverte il proprio ruolo per la sessione.</p>
+            <code>any(flip_g1..g4, flip_r1..r4) == true</code>
+          </div>
+        </div>
+        <div class="alert-item alert-pin-up">
+          <div class="ai-icon">⬆</div>
+          <div class="ai-body">
+            <h4>Rottura Pin 0DTE superiore <span class="ai-bias ai-bias--long">BREAKOUT ↑</span></h4>
+            <p>Chiusura oltre Call Resistance 0DTE + buffer. Potenziale uscita bullish dal pin struttura.</p>
+            <code>close &gt; CR_0DTE + buffer</code>
+          </div>
+        </div>
+        <div class="alert-item alert-pin-dn">
+          <div class="ai-icon">⬇</div>
+          <div class="ai-body">
+            <h4>Rottura Pin 0DTE inferiore <span class="ai-bias ai-bias--short">BREAKDOWN ↓</span></h4>
+            <p>Chiusura sotto Put Support 0DTE − buffer. Potenziale uscita bearish dal pin struttura.</p>
+            <code>close &lt; PS_0DTE − buffer</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CODE VIEWER -->
+  <section class="section section--dark" id="code">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Pine Script v6</span>
+        <h2>Codice completo</h2>
+        <p>Copia e incolla direttamente nell'editor Pine di TradingView.</p>
+      </div>
+      <div class="code-toolbar">
+        <div class="code-meta">
+          <span class="cm-badge">Pine Script v6</span>
+          <span class="cm-badge">overlay=true</span>
+          <span class="cm-badge">NQ1! · Intraday</span>
+        </div>
+        <div class="code-actions">
+          <button class="btn-icon" onclick="copyCode()" id="copy-btn">⎘ Copia</button>
+          <button class="btn-icon" onclick="downloadPine()">⬇ Scarica .pine</button>
+        </div>
+      </div>
+      <div class="code-wrapper">
+        <pre class="code-block" id="pine-code"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="brand-icon">⬡</span>
+          <span>AGX Dealer Mechanics</span>
+        </div>
+        <div class="footer-note">
+          Strumento di visualizzazione — non è un sistema di trading automatico.<br/>
+          Nessuna probabilità, nessuna narrativa discrezionale, solo dati oggettivi.
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <div class="toast" id="toast">✓ Codice copiato negli appunti!</div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
