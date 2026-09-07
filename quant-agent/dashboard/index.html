@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Quant Agent Dashboard</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; padding: 0 24px 48px; background: #0d1117; color: #e6edf3; }
+  h1 { font-size: 20px; padding-top: 20px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .05em; color: #8b949e; border-bottom: 1px solid #30363d; padding-bottom: 6px; margin-top: 32px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #21262d; }
+  th { color: #8b949e; font-weight: 500; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+  .pill.pass { background: #0d3d1f; color: #56d364; }
+  .pill.fail { background: #3d0d0d; color: #ff7b72; }
+  .pill.pending { background: #3d330d; color: #e3b341; }
+  .note { color: #8b949e; font-size: 12px; margin-top: 4px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; }
+  a { color: #58a6ff; }
+  #config-bar { font-size: 12px; color: #8b949e; }
+</style>
+</head>
+<body>
+  <h1>Quant Agent — Autonomous Research Lab Dashboard</h1>
+  <div id="config-bar">Loading config...</div>
+
+  <h2>Research</h2>
+  <div class="card">
+    <table id="papers-table">
+      <thead><tr><th>Title</th><th>Source</th><th>Score</th><th>Status</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <h2>Strategies — Leaderboard</h2>
+  <div class="card">
+    <table id="leaderboard-table">
+      <thead><tr><th>Name</th><th>Market</th><th>TF</th><th>Status</th><th>Sharpe (TEST)</th><th>Sharpe (OOS)</th><th>Robustness</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <h2>Deployments (Human Approval Gate)</h2>
+  <div class="card">
+    <table id="deployments-table">
+      <thead><tr><th>Strategy</th><th>Stage</th><th>Status</th><th>Score</th><th>Action</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="note">Approving here is the ONLY way a strategy can reach live execution in HUMAN_APPROVAL mode (default).</div>
+  </div>
+
+  <h2>Paper Trading / Live</h2>
+  <div class="card note">
+    TODO: this build ships PaperTrade/LiveTrade data models and a PaperTradingAgent, but no scheduler
+    runs continuous paper/live sessions yet — see scripts/example_workflow.py for a one-shot demo.
+    Live execution additionally requires a real broker (none implemented — see execution/brokers/live_stubs.py).
+  </div>
+
+  <h2>System — AI Decision Log</h2>
+  <div class="card">
+    <table id="decision-log-table">
+      <thead><tr><th>Agent</th><th>Event</th><th>Decision</th><th>Time</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <h2>System — Risk Events</h2>
+  <div class="card">
+    <table id="risk-events-table">
+      <thead><tr><th>Strategy</th><th>Severity</th><th>Rule</th><th>Message</th><th>Action Taken</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+<script>
+const API = ""; // same-origin
+
+async function j(path) {
+  const res = await fetch(API + path);
+  return res.json();
+}
+
+function pill(ok) {
+  return `<span class="pill ${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</span>`;
+}
+
+async function loadConfig() {
+  const cfg = await j("/system/config");
+  document.getElementById("config-bar").innerText =
+    `mode=${cfg.mode} | full_auto_live_allowed=${cfg.allow_full_auto_live} | llm_configured=${cfg.has_llm} | ` +
+    `budget: ${cfg.max_daily_experiments} experiments/day, ${cfg.max_research_papers_per_day} papers/day`;
+}
+
+async function loadPapers() {
+  const papers = await j("/papers?limit=50");
+  const tbody = document.querySelector("#papers-table tbody");
+  tbody.innerHTML = papers.map(p => `
+    <tr>
+      <td><a href="${p.url}" target="_blank">${p.title || "(untitled)"}</a></td>
+      <td>${p.source}</td>
+      <td>${(p.score ?? 0).toFixed(2)}</td>
+      <td>${p.rejected ? pill(false) + ' ' + (p.rejection_reason || '') : pill(true)}</td>
+    </tr>`).join("");
+}
+
+async function loadLeaderboard() {
+  const rows = await j("/strategies/leaderboard");
+  const tbody = document.querySelector("#leaderboard-table tbody");
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.name}</td><td>${r.market}</td><td>${r.timeframe}</td><td>${r.status}</td>
+      <td>${r.latest_sharpe != null ? r.latest_sharpe.toFixed(2) : "—"}</td>
+      <td>${r.latest_oos_sharpe != null ? r.latest_oos_sharpe.toFixed(2) : "—"}</td>
+      <td>${r.robustness_score != null ? r.robustness_score.toFixed(2) : "—"}</td>
+    </tr>`).join("");
+}
+
+async function loadDeployments() {
+  const rows = await j("/deployments");
+  const tbody = document.querySelector("#deployments-table tbody");
+  tbody.innerHTML = rows.map(d => `
+    <tr>
+      <td>${d.strategy_id}</td><td>${d.stage}</td><td>${d.status}</td>
+      <td>${d.deployment_score != null ? d.deployment_score.toFixed(2) : "—"}</td>
+      <td>${d.status === "PENDING_APPROVAL" ? `<button onclick="approve('${d.deployment_id}')">Approve</button>` : ""}</td>
+    </tr>`).join("");
+}
+
+async function approve(deploymentId) {
+  const approver = prompt("Approver name/email:");
+  if (!approver) return;
+  await fetch(`/deployments/${deploymentId}/approve`, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({approved_by: approver}),
+  });
+  loadDeployments();
+}
+
+async function loadDecisionLog() {
+  const rows = await j("/system/decision-log?limit=50");
+  const tbody = document.querySelector("#decision-log-table tbody");
+  tbody.innerHTML = rows.map(e => `
+    <tr><td>${e.agent}</td><td>${e.event_type}</td><td>${e.decision_log || ""}</td><td>${e.created_at}</td></tr>
+  `).join("");
+}
+
+async function loadRiskEvents() {
+  const rows = await j("/system/risk-events?limit=50");
+  const tbody = document.querySelector("#risk-events-table tbody");
+  tbody.innerHTML = rows.map(e => `
+    <tr><td>${e.strategy_id || "—"}</td><td>${e.severity}</td><td>${e.rule}</td><td>${e.message}</td><td>${e.action_taken || ""}</td></tr>
+  `).join("");
+}
+
+async function refreshAll() {
+  await Promise.all([loadConfig(), loadPapers(), loadLeaderboard(), loadDeployments(), loadDecisionLog(), loadRiskEvents()]);
+}
+refreshAll();
+setInterval(refreshAll, 15000);
+</script>
+</body>
+</html>
