@@ -50,7 +50,7 @@ i_colLondon  = input.color(color.new(#B5651D, 0), "London color", group="London 
 // INPUT — Group: Premarket
 // ═══════════════════════════════════════════════════════════════════
 i_showPremarket = input.bool(true, "Show Premarket session", group="Premarket")
-i_premarketSess = input.session("0400-0930", "Premarket session hours (NY time)", group="Premarket")
+i_premarketSess = input.session("0500-0930", "Premarket session hours (NY time, starts after London)", group="Premarket")
 i_colPremarket  = input.color(color.new(#BF6E3D, 0), "Premarket color", group="Premarket")
 
 // ═══════════════════════════════════════════════════════════════════
