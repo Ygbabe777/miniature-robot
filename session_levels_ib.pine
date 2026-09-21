@@ -11,8 +11,8 @@ indicator("Session Levels & IB Pro", shorttitle="SLIB Pro", overlay=true, max_li
 // ═══════════════════════════════════════════════════════════════════
 // INPUT — Group: General
 // ═══════════════════════════════════════════════════════════════════
-i_tz          = input.string("America/New_York", "Session timezone", group="General",
-                   tooltip="Timezone used to define Asia/London/Premarket/NY/IB session hours. E.g. America/New_York, Europe/Rome, Etc/UTC")
+i_tz          = input.string("UTC-4", "Session timezone", group="General",
+                   tooltip="Timezone used to define Asia/London/Premarket/NY/IB session hours. Default is fixed New York time (UTC-4 / EDT). E.g. UTC-4, UTC-5, America/New_York, Etc/UTC")
 i_labelOffset = input.int(12, "Price label offset (bars)", minval=1, maxval=200, group="General")
 i_labelSize   = input.string(size.small, "Label text size", group="General",
                    options=[size.tiny, size.small, size.normal, size.large])
@@ -69,15 +69,6 @@ i_colIB     = input.color(color.new(#E8B54D, 0), "IB color", group="Initial Bala
 i_ibBoxTr   = input.int(85, "IB box transparency", minval=0, maxval=99, group="Initial Balance")
 
 // ═══════════════════════════════════════════════════════════════════
-// INPUT — Group: Post-London Pivots
-// ═══════════════════════════════════════════════════════════════════
-i_showPivots  = input.bool(true, "Show pivot highs/lows formed after London", group="Post-London Pivots")
-i_pivotLeft   = input.int(5, "Pivot left bars", minval=1, maxval=50, group="Post-London Pivots")
-i_pivotRight  = input.int(5, "Pivot right bars (confirmation delay)", minval=1, maxval=50, group="Post-London Pivots")
-i_colPivotH   = input.color(color.new(#E0724A, 0), "Pivot high color", group="Post-London Pivots")
-i_colPivotL   = input.color(color.new(#D9A441, 0), "Pivot low color", group="Post-London Pivots")
-
-// ═══════════════════════════════════════════════════════════════════
 // INPUT — Group: Levels Table
 // ═══════════════════════════════════════════════════════════════════
 i_showStats  = input.bool(true, "Show levels table", group="Levels Table")
@@ -116,17 +107,9 @@ inIB         = not na(time(timeframe.period, i_ibSess, i_tz))
 
 asiaStart      = inAsia and not inAsia[1]
 londonStart    = inLondon and not inLondon[1]
-londonEndBar   = not inLondon and inLondon[1]
 premarketStart = inPremarket and not inPremarket[1]
 nyStart        = inNY and not inNY[1]
 ibStart        = inIB and not inIB[1]
-
-// ── Post-London window (gates pivot detection below) ──────────────
-var bool postLondon = false
-if newDay
-    postLondon := false
-if londonEndBar
-    postLondon := true
 
 // ── Asia High/Low ─────────────────────────────────────────────────
 var float asiaHigh = na
@@ -402,20 +385,6 @@ if i_showIB and ibStart
 if i_showIB and inIB and not na(ibBox)
     box.set_lefttop(ibBox, ibStartIdx, ibHigh)
     box.set_rightbottom(ibBox, bar_index, ibLow)
-
-// ═══════════════════════════════════════════════════════════════════
-// POST-LONDON PIVOTS — swing highs/lows formed once London has closed
-// ═══════════════════════════════════════════════════════════════════
-pivHigh = ta.pivothigh(i_pivotLeft, i_pivotRight)
-pivLow  = ta.pivotlow(i_pivotLeft, i_pivotRight)
-
-if i_showPivots and not na(pivHigh) and postLondon[i_pivotRight]
-    label.new(bar_index - i_pivotRight, pivHigh, f_priceTxt(pivHigh), xloc=xloc.bar_index, yloc=yloc.price,
-       style=label.style_label_down, color=color.new(i_colPivotH, 0), textcolor=color.white, size=size.tiny)
-
-if i_showPivots and not na(pivLow) and postLondon[i_pivotRight]
-    label.new(bar_index - i_pivotRight, pivLow, f_priceTxt(pivLow), xloc=xloc.bar_index, yloc=yloc.price,
-       style=label.style_label_up, color=color.new(i_colPivotL, 0), textcolor=color.black, size=size.tiny)
 
 // ═══════════════════════════════════════════════════════════════════
 // LEVELS TABLE — quick price reference for screenshots
