@@ -1,7 +1,7 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0
 // © Session Levels & Initial Balance — Pine Script v6
 //@version=6
-indicator("Session Levels & IB Pro", shorttitle="SLIB Pro", overlay=true, max_lines_count=200, max_boxes_count=100, max_labels_count=200, max_bars_back=500)
+indicator("Session Levels & IB Pro", shorttitle="SLIB Pro", overlay=true, max_lines_count=200, max_boxes_count=100, max_labels_count=350, max_bars_back=500)
 
 // Recommended use: intraday timeframe (1m-1h). Session levels update
 // automatically every day based on the selected timezone. All prices
@@ -11,8 +11,8 @@ indicator("Session Levels & IB Pro", shorttitle="SLIB Pro", overlay=true, max_li
 // ═══════════════════════════════════════════════════════════════════
 // INPUT — Group: General
 // ═══════════════════════════════════════════════════════════════════
-i_tz          = input.string("Europe/Rome", "Session timezone", group="General",
-                   tooltip="Timezone used to define Asia/London/NY/IB session hours. E.g. Europe/Rome, America/New_York, Etc/UTC")
+i_tz          = input.string("America/New_York", "Session timezone", group="General",
+                   tooltip="Timezone used to define Asia/London/Premarket/NY/IB session hours. E.g. America/New_York, Europe/Rome, Etc/UTC")
 i_labelOffset = input.int(12, "Price label offset (bars)", minval=1, maxval=200, group="General")
 i_labelSize   = input.string(size.small, "Label text size", group="General",
                    options=[size.tiny, size.small, size.normal, size.large])
@@ -36,30 +36,46 @@ i_pdStyle  = input.string("Dashed", "Line style", group="Previous Day", options=
 // INPUT — Group: Asia Session
 // ═══════════════════════════════════════════════════════════════════
 i_showAsia   = input.bool(true, "Show Asia session", group="Asia Session")
-i_asiaSess   = input.session("0000-0900", "Asia session hours", group="Asia Session")
+i_asiaSess   = input.session("2000-0000", "Asia session hours (NY time)", group="Asia Session")
 i_colAsia    = input.color(color.new(#CD7F32, 0), "Asia color", group="Asia Session")
 
 // ═══════════════════════════════════════════════════════════════════
 // INPUT — Group: London Session
 // ═══════════════════════════════════════════════════════════════════
 i_showLondon = input.bool(true, "Show London session", group="London Session")
-i_londonSess = input.session("0900-1530", "London session hours", group="London Session")
+i_londonSess = input.session("0200-0500", "London session hours (NY time)", group="London Session")
 i_colLondon  = input.color(color.new(#B5651D, 0), "London color", group="London Session")
+
+// ═══════════════════════════════════════════════════════════════════
+// INPUT — Group: Premarket
+// ═══════════════════════════════════════════════════════════════════
+i_showPremarket = input.bool(true, "Show Premarket session", group="Premarket")
+i_premarketSess = input.session("0400-0930", "Premarket session hours (NY time)", group="Premarket")
+i_colPremarket  = input.color(color.new(#BF6E3D, 0), "Premarket color", group="Premarket")
 
 // ═══════════════════════════════════════════════════════════════════
 // INPUT — Group: New York Session
 // ═══════════════════════════════════════════════════════════════════
 i_showNY   = input.bool(true, "Show New York session", group="New York Session")
-i_nySess   = input.session("1530-2200", "New York session hours", group="New York Session")
+i_nySess   = input.session("0930-1600", "New York session hours (NY time)", group="New York Session")
 i_colNY    = input.color(color.new(#8B3A3A, 0), "New York color", group="New York Session")
 
 // ═══════════════════════════════════════════════════════════════════
 // INPUT — Group: Initial Balance (first 30 min of NY)
 // ═══════════════════════════════════════════════════════════════════
 i_showIB    = input.bool(true, "Show Initial Balance", group="Initial Balance")
-i_ibSess    = input.session("1530-1600", "IB session hours (first 30 min of NY)", group="Initial Balance")
+i_ibSess    = input.session("0930-1000", "IB session hours (first 30 min of NY)", group="Initial Balance")
 i_colIB     = input.color(color.new(#E8B54D, 0), "IB color", group="Initial Balance")
 i_ibBoxTr   = input.int(85, "IB box transparency", minval=0, maxval=99, group="Initial Balance")
+
+// ═══════════════════════════════════════════════════════════════════
+// INPUT — Group: Post-London Pivots
+// ═══════════════════════════════════════════════════════════════════
+i_showPivots  = input.bool(true, "Show pivot highs/lows formed after London", group="Post-London Pivots")
+i_pivotLeft   = input.int(5, "Pivot left bars", minval=1, maxval=50, group="Post-London Pivots")
+i_pivotRight  = input.int(5, "Pivot right bars (confirmation delay)", minval=1, maxval=50, group="Post-London Pivots")
+i_colPivotH   = input.color(color.new(#E0724A, 0), "Pivot high color", group="Post-London Pivots")
+i_colPivotL   = input.color(color.new(#D9A441, 0), "Pivot low color", group="Post-London Pivots")
 
 // ═══════════════════════════════════════════════════════════════════
 // INPUT — Group: Levels Table
@@ -92,15 +108,25 @@ if newDay
 // ═══════════════════════════════════════════════════════════════════
 // SESSION DETECTION (configurable timezone)
 // ═══════════════════════════════════════════════════════════════════
-inAsia   = not na(time(timeframe.period, i_asiaSess, i_tz))
-inLondon = not na(time(timeframe.period, i_londonSess, i_tz))
-inNY     = not na(time(timeframe.period, i_nySess, i_tz))
-inIB     = not na(time(timeframe.period, i_ibSess, i_tz))
+inAsia       = not na(time(timeframe.period, i_asiaSess, i_tz))
+inLondon     = not na(time(timeframe.period, i_londonSess, i_tz))
+inPremarket  = not na(time(timeframe.period, i_premarketSess, i_tz))
+inNY         = not na(time(timeframe.period, i_nySess, i_tz))
+inIB         = not na(time(timeframe.period, i_ibSess, i_tz))
 
-asiaStart   = inAsia and not inAsia[1]
-londonStart = inLondon and not inLondon[1]
-nyStart     = inNY and not inNY[1]
-ibStart     = inIB and not inIB[1]
+asiaStart      = inAsia and not inAsia[1]
+londonStart    = inLondon and not inLondon[1]
+londonEndBar   = not inLondon and inLondon[1]
+premarketStart = inPremarket and not inPremarket[1]
+nyStart        = inNY and not inNY[1]
+ibStart        = inIB and not inIB[1]
+
+// ── Post-London window (gates pivot detection below) ──────────────
+var bool postLondon = false
+if newDay
+    postLondon := false
+if londonEndBar
+    postLondon := true
 
 // ── Asia High/Low ─────────────────────────────────────────────────
 var float asiaHigh = na
@@ -125,6 +151,18 @@ if londonStart
 else if inLondon
     londonHigh := math.max(londonHigh, high)
     londonLow  := math.min(londonLow, low)
+
+// ── Premarket High/Low ─────────────────────────────────────────────
+var float premarketHigh = na
+var float premarketLow  = na
+var int   premarketStartIdx = na
+if premarketStart
+    premarketHigh := high
+    premarketLow  := low
+    premarketStartIdx := bar_index
+else if inPremarket
+    premarketHigh := math.max(premarketHigh, high)
+    premarketLow  := math.min(premarketLow, low)
 
 // ── New York High/Low ─────────────────────────────────────────────
 var float nyHigh = na
@@ -169,6 +207,10 @@ var line  londonHLine = na
 var label londonHLbl  = na
 var line  londonLLine = na
 var label londonLLbl  = na
+var line  premarketHLine = na
+var label premarketHLbl  = na
+var line  premarketLLine = na
+var label premarketLLbl  = na
 var line  nyHLine = na
 var label nyHLbl  = na
 var line  nyLLine = na
@@ -277,6 +319,30 @@ if i_showLondon and not na(londonLow)
         label.set_xy(londonLLbl, bar_index + i_labelOffset, londonLow)
         label.set_text(londonLLbl, txt)
 
+// Premarket High ------------------------------------------------------------
+if i_showPremarket and not na(premarketHigh)
+    txt = "PM H  " + f_priceTxt(premarketHigh)
+    if na(premarketHLine)
+        premarketHLine := line.new(premarketStartIdx, premarketHigh, bar_index, premarketHigh, xloc=xloc.bar_index, color=i_colPremarket, style=line.style_dotted, width=i_lineWidth, extend=extend.right)
+        premarketHLbl  := label.new(bar_index + i_labelOffset, premarketHigh, txt, xloc=xloc.bar_index, style=label.style_label_left, color=color.new(i_colPremarket, 0), textcolor=color.white, size=i_labelSize)
+    else
+        line.set_xy1(premarketHLine, premarketStartIdx, premarketHigh)
+        line.set_xy2(premarketHLine, bar_index, premarketHigh)
+        label.set_xy(premarketHLbl, bar_index + i_labelOffset, premarketHigh)
+        label.set_text(premarketHLbl, txt)
+
+// Premarket Low ------------------------------------------------------------
+if i_showPremarket and not na(premarketLow)
+    txt = "PM L  " + f_priceTxt(premarketLow)
+    if na(premarketLLine)
+        premarketLLine := line.new(premarketStartIdx, premarketLow, bar_index, premarketLow, xloc=xloc.bar_index, color=i_colPremarket, style=line.style_dotted, width=i_lineWidth, extend=extend.right)
+        premarketLLbl  := label.new(bar_index + i_labelOffset, premarketLow, txt, xloc=xloc.bar_index, style=label.style_label_left, color=color.new(i_colPremarket, 0), textcolor=color.white, size=i_labelSize)
+    else
+        line.set_xy1(premarketLLine, premarketStartIdx, premarketLow)
+        line.set_xy2(premarketLLine, bar_index, premarketLow)
+        label.set_xy(premarketLLbl, bar_index + i_labelOffset, premarketLow)
+        label.set_text(premarketLLbl, txt)
+
 // New York High ------------------------------------------------------------
 if i_showNY and not na(nyHigh)
     txt = "NY H  " + f_priceTxt(nyHigh)
@@ -338,6 +404,20 @@ if i_showIB and inIB and not na(ibBox)
     box.set_rightbottom(ibBox, bar_index, ibLow)
 
 // ═══════════════════════════════════════════════════════════════════
+// POST-LONDON PIVOTS — swing highs/lows formed once London has closed
+// ═══════════════════════════════════════════════════════════════════
+pivHigh = ta.pivothigh(i_pivotLeft, i_pivotRight)
+pivLow  = ta.pivotlow(i_pivotLeft, i_pivotRight)
+
+if i_showPivots and not na(pivHigh) and postLondon[i_pivotRight]
+    label.new(bar_index - i_pivotRight, pivHigh, f_priceTxt(pivHigh), xloc=xloc.bar_index, yloc=yloc.price,
+       style=label.style_label_down, color=color.new(i_colPivotH, 0), textcolor=color.white, size=size.tiny)
+
+if i_showPivots and not na(pivLow) and postLondon[i_pivotRight]
+    label.new(bar_index - i_pivotRight, pivLow, f_priceTxt(pivLow), xloc=xloc.bar_index, yloc=yloc.price,
+       style=label.style_label_up, color=color.new(i_colPivotL, 0), textcolor=color.black, size=size.tiny)
+
+// ═══════════════════════════════════════════════════════════════════
 // LEVELS TABLE — quick price reference for screenshots
 // ═══════════════════════════════════════════════════════════════════
 f_tablePos(p) =>
@@ -349,7 +429,7 @@ rowBg    = color.new(#1E1712, 0)
 
 if i_showStats and barstate.islast
     if na(statsTbl)
-        statsTbl := table.new(f_tablePos(i_statsPos), 2, 11, border_width=1, border_color=color.new(#3A2E20, 0))
+        statsTbl := table.new(f_tablePos(i_statsPos), 2, 13, border_width=1, border_color=color.new(#3A2E20, 0))
     table.cell(statsTbl, 0, 0, "LEVEL", bgcolor=headerBg, text_color=color.new(#E8B54D, 0), text_size=i_statsSize)
     table.cell(statsTbl, 1, 0, "PRICE", bgcolor=headerBg, text_color=color.new(#E8B54D, 0), text_size=i_statsSize)
 
@@ -372,7 +452,12 @@ if i_showStats and barstate.islast
     table.cell(statsTbl, 0, 8, "London Low", text_color=i_colLondon, bgcolor=rowBg, text_size=i_statsSize)
     table.cell(statsTbl, 1, 8, f_priceTxt(londonLow), text_color=color.white, bgcolor=rowBg, text_size=i_statsSize)
 
-    table.cell(statsTbl, 0, 9, "NY High", text_color=i_colNY, bgcolor=rowBg, text_size=i_statsSize)
-    table.cell(statsTbl, 1, 9, f_priceTxt(nyHigh), text_color=color.white, bgcolor=rowBg, text_size=i_statsSize)
-    table.cell(statsTbl, 0, 10, "NY Low", text_color=i_colNY, bgcolor=rowBg, text_size=i_statsSize)
-    table.cell(statsTbl, 1, 10, f_priceTxt(nyLow), text_color=color.white, bgcolor=rowBg, text_size=i_statsSize)
+    table.cell(statsTbl, 0, 9, "Premarket High", text_color=i_colPremarket, bgcolor=rowBg, text_size=i_statsSize)
+    table.cell(statsTbl, 1, 9, f_priceTxt(premarketHigh), text_color=color.white, bgcolor=rowBg, text_size=i_statsSize)
+    table.cell(statsTbl, 0, 10, "Premarket Low", text_color=i_colPremarket, bgcolor=rowBg, text_size=i_statsSize)
+    table.cell(statsTbl, 1, 10, f_priceTxt(premarketLow), text_color=color.white, bgcolor=rowBg, text_size=i_statsSize)
+
+    table.cell(statsTbl, 0, 11, "NY High", text_color=i_colNY, bgcolor=rowBg, text_size=i_statsSize)
+    table.cell(statsTbl, 1, 11, f_priceTxt(nyHigh), text_color=color.white, bgcolor=rowBg, text_size=i_statsSize)
+    table.cell(statsTbl, 0, 12, "NY Low", text_color=i_colNY, bgcolor=rowBg, text_size=i_statsSize)
+    table.cell(statsTbl, 1, 12, f_priceTxt(nyLow), text_color=color.white, bgcolor=rowBg, text_size=i_statsSize)
