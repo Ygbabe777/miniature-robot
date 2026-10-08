@@ -13,6 +13,7 @@ import pandas as pd
 
 from .config import FeaturesCfg
 from .data_loader import MarketData, _hhmm, rth_mask
+from .intermarket import UNKNOWN as IM_UNKNOWN, compute_intermarket
 
 
 # --------------------------------------------------------------------------- VWAP / ATR
@@ -167,18 +168,21 @@ def _ohlc(df: pd.DataFrame) -> dict[str, float]:
     }
 
 
-def split_sessions(md: MarketData, fcfg: FeaturesCfg) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, pd.DataFrame]]:
-    """(sessione precedente RTH, overnight, tutte le RTH valide per data)."""
-    df = md.bars
-    assert df is not None
+def split_df(df: pd.DataFrame, sessions: list[str], prev_date: str, fcfg: FeaturesCfg
+             ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, pd.DataFrame]]:
+    """(sessione precedente RTH, overnight, tutte le RTH per data) per un qualunque strumento."""
     mask = rth_mask(df, fcfg)
     dates = df["timestamp"].dt.date.astype(str)
-    rth_by_date = {d: df[mask & (dates == d)] for d in md.sessions}
-    prev = rth_by_date[md.prev_session_date]  # type: ignore[index]
-    prev_close_ts = pd.Timestamp.combine(
-        datetime.strptime(md.prev_session_date, "%Y-%m-%d").date(), _hhmm(fcfg.rth_end))  # type: ignore[arg-type]
-    overnight = df[df["timestamp"] >= prev_close_ts]
-    return prev, overnight, rth_by_date
+    rth_by_date = {d: df[mask & (dates == d)] for d in sessions}
+    prev = rth_by_date[prev_date]
+    prev_close_ts = pd.Timestamp.combine(datetime.strptime(prev_date, "%Y-%m-%d").date(), _hhmm(fcfg.rth_end))
+    return prev, df[df["timestamp"] >= prev_close_ts], rth_by_date
+
+
+def split_sessions(md: MarketData, fcfg: FeaturesCfg) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, pd.DataFrame]]:
+    """(sessione precedente RTH, overnight, tutte le RTH valide per data)."""
+    assert md.bars is not None and md.prev_session_date is not None
+    return split_df(md.bars, md.sessions, md.prev_session_date, fcfg)
 
 
 # --------------------------------------------------------------------------- Regime
@@ -288,7 +292,13 @@ def compute_features(md: MarketData, fcfg: FeaturesCfg) -> dict[str, Any]:
     def d(a: float | None, b: float | None) -> float | None:
         return None if a is None or b is None else round(a - b, 2)
 
+    es_block, es_warns = compute_es_block(md, fcfg)
+    base_nq = {"last_close": _r(last_close), "prev_session": {**{k: _r(v) for k, v in prev_ohlc.items()}},
+               "overnight": {**{k: _r(v) for k, v in on_ohlc.items()}, "vwap": _r(on_vwap)}}
+    im = (compute_intermarket(df, md.es_bars, base_nq, es_block, fcfg.intermarket)
+          if es_block is not None and md.es_bars is not None else dict(IM_UNKNOWN))
     return {
+        "es": es_block, "intermarket": im, "es_warnings": es_warns,
         "date": md.date,
         "spot": _r(spot),
         "last_close": _r(last_close),
@@ -327,6 +337,59 @@ def compute_features(md: MarketData, fcfg: FeaturesCfg) -> dict[str, Any]:
         },
         "regime": regime.to_dict(),
     }
+
+
+def compute_es_block(md: MarketData, fcfg: FeaturesCfg) -> tuple[dict[str, Any] | None, list[str]]:
+    """Feature ES (conferma). Ritorna (blocco|None, avvisi). Mai valori stimati."""
+    warns: list[str] = []
+    df = md.es_bars
+    if df is None or md.prev_session_date is None:
+        return None, warns
+    have = set(df["timestamp"].dt.date.astype(str))
+    if md.prev_session_date not in have or not set(md.sessions[-3:]) <= have:
+        return None, ["ES: sessioni RTH recenti mancanti, ES ignorato"]
+    try:
+        prev, on, rth = split_df(df, [d for d in md.sessions if d in have], md.prev_session_date, fcfg)
+    except KeyError:
+        return None, ["ES: sessione precedente mancante, ES ignorato"]
+    if prev.empty or on.empty:
+        return None, ["ES: sessione precedente o overnight vuoti, ES ignorato"]
+    bs, va = fcfg.intermarket.es_profile_bin_size, fcfg.value_area_pct
+    vp = volume_profile(prev, bs, va, fcfg.hvn_ratio, fcfg.lvn_ratio)
+    series = atr_series(df, fcfg.atr_period)
+    valid = series[~np.isnan(series)]
+    trs, pc = [], None
+    for d in sorted(rth):
+        sdf = rth[d]
+        h, l = float(sdf["high"].max()), float(sdf["low"].min())
+        trs.append(h - l if pc is None else max(h - l, abs(h - pc), abs(l - pc)))
+        pc = float(sdf["close"].iloc[-1])
+    dper = min(fcfg.atr_period, len(trs))
+    on_o, prev_o = _ohlc(on), _ohlc(prev)
+    lv = md.levels.es if md.levels else None
+    spot = lv.spot if lv else None
+    last = float(df["close"].iloc[-1])
+    atr_d = float(np.mean(trs[-dper:])) if dper else None
+    ratio = float(valid[-1] / np.median(valid)) if len(valid) > 1 and np.median(valid) > 0 else None
+    on_vwap = vwap(on)
+    regime = classify_regime(spot=spot if spot is not None else last, on_open=on_o["open"], on_range=on_o["high"] - on_o["low"],
+                             on_vwap=on_vwap, prev_val=vp.val if vp else None, prev_vah=vp.vah if vp else None,
+                             atr_daily=atr_d, atr_ratio=ratio, fcfg=fcfg)
+    if lv is None or lv.spot is None:
+        warns.append("ES: spot non fornito in levels.json (es.spot): uso solo l'ultimo close OHLCV per le metriche")
+    block = {
+        "spot": _r(spot), "last_close": _r(last),
+        "prev_session": {**{k: _r(v) for k, v in prev_o.items()}, "vwap": _r(vwap(prev)),
+                         "poc": _r(vp.poc) if vp else None, "vah": _r(vp.vah) if vp else None,
+                         "val": _r(vp.val) if vp else None},
+        "overnight": {**{k: _r(v) for k, v in on_o.items()}, "range": _r(on_o["high"] - on_o["low"]), "vwap": _r(on_vwap), "bars": int(len(on))},
+        "atr": {"atr_5m": _r(float(valid[-1]) if len(valid) else None), "atr_daily": _r(atr_d)},
+        "regime": regime.to_dict(),
+        "options": {"gamma_flip": lv.options.gamma_flip if lv else None, "call_wall": lv.options.call_wall if lv else None,
+                    "put_wall": lv.options.put_wall if lv else None,
+                    "available": bool(lv and any(v is not None for v in (lv.options.gamma_flip, lv.options.call_wall, lv.options.put_wall)))},
+    }
+    return block, warns
 
 
 def cross_check(md: MarketData, feats: dict[str, Any], fcfg: FeaturesCfg) -> list[str]:
@@ -389,6 +452,29 @@ EVIDENCE_SPEC: list[tuple[str, str, str, str, str]] = [
     ("gamma_regime_proxy", "features", "options.gamma_regime_proxy", "Proxy regime gamma (spot vs flip)", "text"),
     ("last_close", "features", "last_close", "Ultimo close OHLCV", "price"),
     ("atr_ratio", "features", "atr.atr_ratio", "ATR 5m / mediana storica", "metric"),
+    # --- ES e inter-mercato (aggiunte in coda: gli ID precedenti NON cambiano) ---
+    ("es.spot", "features", "es.spot", "ES spot", "es_price"),
+    ("es.last_close", "features", "es.last_close", "ES ultimo close OHLCV", "es_price"),
+    ("es.vwap_overnight", "features", "es.overnight.vwap", "ES VWAP overnight", "es_price"),
+    ("es.prev_high", "features", "es.prev_session.high", "ES max sessione precedente", "es_price"),
+    ("es.prev_low", "features", "es.prev_session.low", "ES min sessione precedente", "es_price"),
+    ("es.prev_close", "features", "es.prev_session.close", "ES close sessione precedente", "es_price"),
+    ("es.prev_poc", "features", "es.prev_session.poc", "ES POC sessione precedente", "es_price"),
+    ("es.prev_vah", "features", "es.prev_session.vah", "ES VAH sessione precedente", "es_price"),
+    ("es.prev_val", "features", "es.prev_session.val", "ES VAL sessione precedente", "es_price"),
+    ("es.overnight_high", "features", "es.overnight.high", "ES max overnight", "es_price"),
+    ("es.overnight_low", "features", "es.overnight.low", "ES min overnight", "es_price"),
+    ("es.options.gamma_flip", "features", "es.options.gamma_flip", "ES gamma flip", "es_price"),
+    ("es.options.call_wall", "features", "es.options.call_wall", "ES call wall", "es_price"),
+    ("es.options.put_wall", "features", "es.options.put_wall", "ES put wall", "es_price"),
+    ("es.regime", "features", "es.regime.state", "Regime ES", "text"),
+    ("im.state", "features", "intermarket.state", "Stato inter-mercato NQ/ES", "text"),
+    ("im.correlation", "features", "intermarket.correlation", "Correlazione 5m NQ/ES", "metric"),
+    ("im.nq_on_return_pct", "features", "intermarket.nq_on_return_pct", "Rendimento overnight NQ %", "metric"),
+    ("im.es_on_return_pct", "features", "intermarket.es_on_return_pct", "Rendimento overnight ES %", "metric"),
+    ("im.return_gap_bps", "features", "intermarket.return_gap_bps", "Gap rendimento NQ-ES (bps)", "metric"),
+    ("im.smt_high", "features", "intermarket.smt_high", "SMT sui massimi overnight", "text"),
+    ("im.smt_low", "features", "intermarket.smt_low", "SMT sui minimi overnight", "text"),
 ]
 
 

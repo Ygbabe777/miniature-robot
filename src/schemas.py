@@ -216,7 +216,23 @@ class JudgeOutput(_AgentBase):
     issues: list[JudgeIssue] = Field(default_factory=list)
 
 
+class VisionLevel(_Strict):
+    field: str
+    value: float
+    verbatim: str = Field(min_length=1)
+    instrument: str = "unknown"
+    confidence: int = Field(ge=0, le=100, default=50)
+
+
+class VisionOutput(_AgentBase):
+    """Estrazione di livelli da immagini: SOLO valori leggibili, con testo letterale."""
+
+    levels: list[VisionLevel] = Field(default_factory=list)
+    unreadable: list[str] = Field(default_factory=list)
+
+
 OUTPUT_MODELS: dict[str, type[_AgentBase]] = {
+    "vision_extractor": VisionOutput,
     "price_action": AnalystOutput,
     "options_flow": AnalystOutput,
     "strategist": StrategistOutput,

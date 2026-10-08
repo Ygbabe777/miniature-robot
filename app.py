@@ -5,7 +5,7 @@ import streamlit as st
 from src.journal import ensure_journal, read_journal
 from src.report_generator import DISCLAIMER
 from src.scoreboard import build_scoreboard
-from src.ui_common import (get_config, human_decision_panel, list_report_dates, load_report,
+from src.ui_common import (get_config, human_decision_panel, intake_panel, list_report_dates, load_report,
                            panic_proof_block, run_controls)
 
 st.set_page_config(page_title="OFO Council", page_icon="📊", layout="wide")
@@ -16,7 +16,7 @@ st.caption(DISCLAIMER)
 ran = run_controls(cfg, "std")
 dates = list_report_dates(cfg)
 tabs = st.tabs(["Dashboard", "Market Data", "Agent Council", "Scenarios", "Risk", "Judge", "PANIC-PROOF",
-                "Historical Reports", "Journal", "Scoreboard"])
+                "Historical Reports", "Journal", "Scoreboard", "Dati & Intake"])
 report = None
 if dates:
     date = st.sidebar.selectbox("Report", dates, index=dates.index(ran) if ran in dates else 0, key="std_report")
@@ -49,7 +49,7 @@ with tabs[1]:
         st.json({k: snap[k] for k in ("spot", "last_close", "prev_session", "overnight", "composite_3s", "atr",
                                       "distances", "options", "regime")})
         st.subheader("Registro evidenze")
-        st.dataframe(pd.DataFrame(report["evidence"]))
+        st.dataframe(pd.DataFrame(report["evidence"]).astype({"value": str}))
         st.subheader("Avvisi sui dati")
         for i in report["data_quality"]["issues"]:
             st.write(f"[{i['severity']}] {i['message']}")
@@ -140,3 +140,6 @@ with tabs[8]:
 with tabs[9]:
     st.dataframe(pd.DataFrame(build_scoreboard(cfg)["agents"]))
     st.caption("Gli agenti non sono giudicati solo dal win rate: vedi README.")
+
+with tabs[10]:
+    intake_panel(cfg, "std_in")

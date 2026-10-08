@@ -16,5 +16,20 @@
     "overnight_low": 28819.0,
     "previous_week_high": 28918.5,
     "previous_week_low": 28517.75
+  },
+  "es": {
+    "spot": 6473.75,
+    "options": {
+      "gamma_flip": 6460.0,
+      "call_wall": 6530.0,
+      "put_wall": 6435.0,
+      "notes": "Valori ES SINTETICI di esempio."
+    },
+    "levels": {
+      "previous_session_high": 6475.0,
+      "previous_session_low": 6440.75,
+      "overnight_high": 6480.5,
+      "overnight_low": 6446.0
+    }
   }
 }

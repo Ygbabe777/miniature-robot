@@ -37,6 +37,7 @@ class PipelineOptions:
     cfg: AppConfig | None = None
     levels_path: Path | None = None
     ohlcv_path: Path | None = None
+    es_ohlcv_path: Path | None = None
     client: LLMClient | None = None
     clock: Any = None
     rng: random.Random | None = None
@@ -110,8 +111,9 @@ def run_pipeline(opts: PipelineOptions) -> PipelineResult:
              data={"mode": mode, "date": opts.date})
 
     # [1/6] validazione dati
+    es_path = opts.es_ohlcv_path or cfg.path("data_dir") / "ohlcv_es.csv"
     md = timed_stage("data_validation", 1, "Data validation",
-                     lambda: prepare_market_data(levels_path, ohlcv_path, opts.date, cfg.features))
+                     lambda: prepare_market_data(levels_path, ohlcv_path, opts.date, cfg.features, es_path))
     issues = [i.to_dict() for i in md.issues]
     bus.emit(EventType.DATA_VALIDATED, ui_action="MONITORS_ON",
              message=f"Qualità dati {md.quality.value}: {len(md.errors)} errori, {len(md.warnings)} avvisi",
@@ -145,7 +147,8 @@ def run_pipeline(opts: PipelineOptions) -> PipelineResult:
             f = compute_features(md, cfg.features)
             return f, build_evidence(md, f), cross_check(md, f, cfg.features)
         features, evidence, xwarn = timed_stage("features", 2, "Feature calculation", feats)
-        warnings += xwarn
+        warnings += xwarn + features.get("es_warnings", [])
+        xwarn = xwarn + features.get("es_warnings", [])
         if xwarn and quality == DataQuality.GREEN:
             quality = DataQuality.YELLOW
         bus.emit(EventType.FEATURES_COMPUTED, ui_action="MONITORS_ON",
@@ -177,7 +180,8 @@ def run_pipeline(opts: PipelineOptions) -> PipelineResult:
     finished = clock.now()
     run_meta["finished_at"] = finished.isoformat()
     ev_dicts = [e.model_dump(mode="json") for e in bus.events]
-    report = build_report(run_meta=run_meta, quality=quality.value, data_issues=issues, features=features,
+    prov = (md.levels.model_extra or {}).get("provenance", {}) if md.levels else {}
+    report = build_report(run_meta=run_meta, provenance=prov, quality=quality.value, data_issues=issues, features=features,
                           evidence=evidence, warnings=warnings, debate=debate, decision=decision.to_dict(),
                           events=ev_dicts, stages=stages, max_daily_r=cfg.risk.max_daily_r)
     transcript = build_transcript(run_meta=run_meta, debate=debate, events=ev_dicts, stages=stages)

@@ -11,6 +11,8 @@ Interpretare gamma flip, call wall, put wall e la loro interazione con il prezzo
 4. COSA DEVI ANALIZZARE
 Posizione dello spot rispetto al gamma flip; distanza da call wall / put wall; supporti/resistenze derivati dalle opzioni; regime gamma (il campo "gamma_regime_proxy" è solo una stima da spot vs flip, NON un GEX completo); interazione tra struttura opzioni e prezzo.
 
+ES: se presenti, "features.es.options" contiene i livelli opzioni di ES (gamma flip, call wall, put wall). Confrontali con quelli di NQ solo come conferma/contraddizione; se mancano, dichiaralo: non dedurre i livelli ES da quelli NQ.
+
 5. COSA NON DEVI FARE
 Non fabbricare MAI dati GEX, open interest, delta o flussi non presenti. Se "features.options.available" è false o mancano i livelli, restituisci status INSUFFICIENT_DATA, bias UNKNOWN, confidence 0-20 e dichiaralo in "warnings". Non usare dati di price action oltre a quelli forniti.
 

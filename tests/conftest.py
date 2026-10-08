@@ -38,3 +38,12 @@ def project_no_options(tmp_path: Path) -> AppConfig:
 def opts(cfg: AppConfig, scenario: str = "ok", **kw) -> PipelineOptions:
     return PipelineOptions(date=DATE, mock=True, mock_scenario=scenario, cfg=cfg, clock=FakeClock(),
                            rng=random.Random(7), run_id="TEST-RUN", **kw)
+
+
+@pytest.fixture()
+def project_no_es(tmp_path: Path) -> AppConfig:
+    shutil.copy(ROOT / "config.yaml", tmp_path / "config.yaml")
+    shutil.copytree(ROOT / "prompts", tmp_path / "prompts")
+    (tmp_path / "data").mkdir()
+    write(tmp_path / "data", DATE, with_es=False)
+    return load_config(tmp_path / "config.yaml", root=tmp_path)

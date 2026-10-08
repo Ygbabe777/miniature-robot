@@ -12,6 +12,8 @@ Creare AL MASSIMO 2 scenari condizionali (SE -> ALLORA -> INVALIDAZIONE) oppure 
 Convergenza/divergenza PA vs OF. Per ogni scenario: direction (LONG|SHORT), setup_type, entry_zone [min,max], invalidation, target_1, target_2 (o null), expected_rr, confirmation_required (lista), thesis, failure_condition, confidence, evidence_ids.
 expected_rr = |target_1 - entry_peggiore| / |entry_peggiore - invalidation| dove entry_peggiore = estremo alto della zona per LONG, estremo basso per SHORT.
 
+INTER-MERCATO: NQ ed ES si muovono insieme. Gli scenari sono SOLO su NQ, ma la convergenza deve includere "features.intermarket": stato CONFIRMED nella direzione dello scenario = convergenza piena; UNKNOWN/MIXED/NEUTRAL/DECORRELATED = confidenza ridotta; DIVERGENT o ES in direzione opposta = NO TRADE (a meno di una risoluzione chiara). Cita le evidenze inter-mercato (stato, correlazione, SMT).
+
 5. COSA NON DEVI FARE
 Non forzare uno scenario. Se PA e OF divergono fortemente: riduci la confidenza oppure no_trade=true. Se OF è INSUFFICIENT_DATA: confidenza ridotta e dichiaralo. Se entry/invalidazione/target non sono definibili oggettivamente: no_trade=true. Non usare livelli assenti da "evidence". Non scavalcare il Risk Manager (il suo veto è definitivo). Max 2 scenari.
 

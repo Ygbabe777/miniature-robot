@@ -108,11 +108,59 @@ def generate(run_date: str, seed: int = 2026, n_days: int = 8, start_price: floa
     return df, levels
 
 
-def write(out_dir: Path, run_date: str, seed: int = 2026, with_options: bool = True) -> None:
+def build_es(df: pd.DataFrame, run_date: str, seed: int = 2026, es_scale: float = 4.45,
+             decorrelate: bool = False) -> tuple[pd.DataFrame, dict]:
+    """ES SINTETICO correlato a NQ (rendimenti NQ * 0.85 + rumore). `decorrelate` produce ES indipendente."""
+    rng = np.random.default_rng(seed + 1)
+    nq_ret = np.log(df["close"] / df["open"]).to_numpy()
+    o_a, h_a, l_a, c_a = (df[k].to_numpy(dtype=float) for k in ("open", "high", "low", "close"))
+    t_a, v_a = df["timestamp"].to_numpy(), df["volume"].to_numpy()
+    price = float(o_a[0]) / es_scale
+    rows = []
+    q = lambda x: round(x * 4) / 4  # noqa: E731
+    for i, r in enumerate(nq_ret):
+        o = price
+        noise = float(rng.normal(0, 0.00015))
+        ret = noise * 3 if decorrelate else 0.85 * r + noise
+        c = o * math.exp(ret)
+        up = (h_a[i] - max(o_a[i], c_a[i])) / c_a[i]
+        dn = (min(o_a[i], c_a[i]) - l_a[i]) / c_a[i]
+        hi, lo = max(o, c) * (1 + 0.85 * up), min(o, c) * (1 - 0.85 * dn)
+        o, hi, lo, c = q(o), q(hi), q(lo), q(c)
+        hi, lo = max(hi, o, c), min(lo, o, c)
+        rows.append((t_a[i], o, hi, lo, c, int(v_a[i] * 3)))
+        price = c
+    es = pd.DataFrame(rows, columns=df.columns)
+    ts = pd.to_datetime(es["timestamp"])
+    rth = (ts.dt.time >= datetime.strptime("09:30", "%H:%M").time()) & (ts.dt.time < datetime.strptime("16:00", "%H:%M").time())
+    d = datetime.strptime(run_date, "%Y-%m-%d").date()
+    prev_day = sorted(set(ts[rth].dt.date))[-1]
+    prev = es[rth & (ts.dt.date == prev_day)]
+    on = es[ts >= datetime.combine(prev_day, datetime.min.time()).replace(hour=16)]
+    spot = float(es["close"].iloc[-1])
+    block = {
+        "spot": spot,
+        "options": {"gamma_flip": float(math.floor((spot - 13) / 5) * 5), "call_wall": float(math.ceil((spot + 56) / 5) * 5),
+                    "put_wall": float(math.floor((spot - 34) / 5) * 5),
+                    "notes": "Valori ES SINTETICI di esempio."},
+        "levels": {"previous_session_high": float(prev["high"].max()), "previous_session_low": float(prev["low"].min()),
+                   "overnight_high": float(on["high"].max()), "overnight_low": float(on["low"].min())},
+    }
+    return es, block
+
+
+def write(out_dir: Path, run_date: str, seed: int = 2026, with_options: bool = True, with_es: bool = True,
+          decorrelate_es: bool = False) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     df, levels = generate(run_date, seed)
+    if with_es:
+        es, block = build_es(df, run_date, seed, decorrelate=decorrelate_es)
+        es.to_csv(out_dir / "ohlcv_es.csv", index=False)
+        levels["es"] = block
     if not with_options:
         levels["options"] = {"gamma_flip": 0, "call_wall": 0, "put_wall": 0, "notes": "dati opzioni non disponibili"}
+        if "es" in levels:
+            levels["es"]["options"] = {"gamma_flip": 0, "call_wall": 0, "put_wall": 0, "notes": ""}
     df.to_csv(out_dir / "ohlcv.csv", index=False)
     (out_dir / "levels.json").write_text(json.dumps(levels, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 

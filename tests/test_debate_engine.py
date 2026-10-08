@@ -12,6 +12,7 @@ from src.pipeline import run_pipeline
 from tests.conftest import opts
 
 R = RiskCfg()
+IM_OK = {"state": "CONFIRMED", "direction": "LONG", "es_dir": "LONG", "smt_high": "NONE", "smt_low": "NONE"}
 
 
 def sc(**kw):
@@ -35,7 +36,7 @@ def test_geometry_problems_detected():
 
 
 def pre(s, pa=Bias.LONG, of=Bias.LONG, dq=DataQuality.GREEN):
-    return precheck([s], pa_bias=pa, of_bias=of, data_quality=dq, rcfg=R)[0]
+    return precheck([s], pa_bias=pa, of_bias=of, data_quality=dq, rcfg=R, intermarket=IM_OK)[0]
 
 
 def test_low_rr_is_veto():
@@ -66,7 +67,7 @@ def test_red_data_never_approved():
 def test_daily_exposure_limit():
     scs = [sc(id=f"S{i}") for i in range(4)]
     out = precheck(scs, pa_bias=Bias.LONG, of_bias=Bias.LONG, data_quality=DataQuality.GREEN,
-                   rcfg=RiskCfg(max_daily_r=3.0, risk_per_scenario_r=1.0))
+                   rcfg=RiskCfg(max_daily_r=3.0, risk_per_scenario_r=1.0), intermarket=IM_OK)
     assert [o.verdict for o in out][:3] == [RiskVerdict.APPROVED] * 3 and out[3].verdict == RiskVerdict.VETO
 
 

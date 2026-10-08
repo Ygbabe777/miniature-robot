@@ -180,7 +180,8 @@ class DebateEngine:
         if strat is not None and strat.scenarios:
             risk_ran = True
             res.precheck = precheck(strat.scenarios, pa_bias=pa_b, of_bias=of_b,
-                                    data_quality=inp.data_quality, rcfg=self.cfg.risk)
+                                    data_quality=inp.data_quality, rcfg=self.cfg.risk,
+                                    intermarket=inp.features.get("intermarket"))
             self.bus.emit(EventType.AGENT_STARTED, agent="risk_manager", ui_action="MOVE_TO_COUNCIL",
                           message=TASKS["risk_manager"], data={"model": self.cfg.model_for("risk_manager"), "task": TASKS["risk_manager"]})
             self.bus.emit(EventType.AGENT_THINKING, agent="risk_manager", ui_action="THINK")

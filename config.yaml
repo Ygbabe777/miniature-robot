@@ -15,6 +15,7 @@ models:
   strategist: "ultra-550b"
   risk_manager: "super-120b"
   judge: "gemma-4-31b-it"
+  vision_extractor: "super-120b"   # deve supportare immagini: cambia con il tuo modello vision
 
 fallback_models:
   price_action: "gemma-4-31b-it"
@@ -22,6 +23,7 @@ fallback_models:
   strategist: "super-120b"
   risk_manager: "gemma-4-31b-it"
   judge: "super-120b"
+  vision_extractor: "gemma-4-31b-it"
 
 debate:
   max_scenarios: 2
@@ -44,6 +46,13 @@ features:
   rth_end: "16:00"
   min_sessions: 3
   tick_size: 0.25
+  intermarket:             # ES come strumento di conferma di NQ
+    enabled: true
+    es_profile_bin_size: 1.0
+    direction_threshold_pct: 0.10
+    min_correlation: 0.60
+    corr_bars: 1200
+    divergence_bps: 15
   regime:
     high_vol_ratio: 1.6
     low_vol_ratio: 0.6
@@ -68,3 +77,30 @@ ui:
   event_seconds: 1.6
   default_speed: 1.0
   speeds: [0.5, 1.0, 2.0, 4.0]
+
+# Integrazione GexBot (docs.gexbot.com). La chiave GEXBOT_API_KEY sta SOLO in .env
+gexbot:
+  base_url: "https://api.gex.bot/v2"
+  ticker: "NQ_NDX"
+  category: "zero"
+  convert: true            # converte i livelli NDX -> NQ con /futures/conversion
+  conversion_ticker: "NDX"
+  future: "NQ"
+  es_ticker: "ES_SPX"
+  es_conversion_ticker: "SPX"
+  es_future: "ES"
+  wall_basis: "vol"        # vol | oi
+  max_age_hours: 18
+  timeout_seconds: 30
+  max_retries: 3
+
+# Intake di screenshot / messaggi / PDF (sempre con conferma umana prima dell'uso)
+intake:
+  inbox_dir: "data/inbox"
+  max_file_mb: 10
+  plausible_min: 1000
+  plausible_max: 100000
+  es_plausible_min: 1000
+  es_plausible_max: 20000
+  vision_enabled: true
+  max_pdf_pages: 20

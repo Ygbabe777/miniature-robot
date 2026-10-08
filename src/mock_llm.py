@@ -84,6 +84,16 @@ def _price_action(p: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
         {"text": f"POC/VAH/VAL sessione precedente: {prev['poc']}/{prev['vah']}/{prev['val']}.", "evidence_ids": ev.id("prev_poc") + ev.id("prev_vah") + ev.id("prev_val")},
         {"text": f"Regime calcolato: {reg['state']}.", "evidence_ids": ev.id("regime")},
     ]
+    im = f.get("intermarket") or {}
+    warnings: list[str] = []
+    if f.get("es"):
+        facts.append({"text": f"ES: ultimo close {f['es']['last_close']}, VWAP overnight {f['es']['overnight']['vwap']}; "
+                              f"stato inter-mercato NQ/ES {im.get('state')} (correlazione {im.get('correlation')}).",
+                      "evidence_ids": ev.id("es.last_close") + ev.id("es.vwap_overnight") + ev.id("im.state") + ev.id("im.correlation")})
+        for r in im.get("reasons", [])[:3]:
+            facts.append({"text": r, "evidence_ids": ev.id("im.state") + ev.id("im.nq_on_return_pct") + ev.id("im.es_on_return_pct")})
+    else:
+        warnings.append("ES non disponibile: nessuna conferma inter-mercato (non inventata).")
     interp = [{"text": f"Struttura {'rialzista' if bias == 'LONG' else 'ribassista' if bias == 'SHORT' else 'bilanciata'} "
                        f"(punteggio strutturale {score}/4): ipotesi, non fatto.",
                "evidence_ids": ev.id("vwap_overnight") + ev.id("prev_poc")}]
@@ -96,7 +106,7 @@ def _price_action(p: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
            "SHORT": f"Struttura ribassista finché lo spot resta sotto il VWAP overnight ({on['vwap']}).",
            "NEUTRAL": "Struttura senza direzionalità chiara: serve accettazione oltre i livelli chiave."}[bias]
     return {"agent": "price_action", "status": "OK", "bias": bias, "confidence": conf, "facts": facts,
-            "interpretations": interp, "key_levels": key_levels, "scenarios": [], "warnings": [],
+            "interpretations": interp, "key_levels": key_levels, "scenarios": [], "warnings": warnings,
             "messages": [{"addressed_to": "strategist", "message_type": "ANALYSIS", "message": msg,
                           "evidence_ids": ev.id("vwap_overnight")}],
             "reasoning_summary": f"Bias {bias} dalla posizione dello spot rispetto a VWAP, POC e close precedenti."}
@@ -121,6 +131,13 @@ def _options_flow(p: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
             facts.append({"text": f"{label} a {v}.", "evidence_ids": ev.id(key)})
             kl.append({"name": label, "value": v, "evidence_ids": ev.id(key)})
     warnings: list[str] = []
+    eo = (f.get("es") or {}).get("options") or {}
+    if eo.get("available"):
+        for label, key in (("ES gamma flip", "gamma_flip"), ("ES call wall", "call_wall"), ("ES put wall", "put_wall")):
+            if eo.get(key) is not None:
+                facts.append({"text": f"{label} a {eo[key]}.", "evidence_ids": ev.id(f"es.options.{key}")})
+    elif f.get("es"):
+        warnings.append("Livelli opzioni ES non disponibili: nessuna conferma opzioni su ES.")
     if any(v is None for v in vals):
         warnings.append("Struttura opzioni incompleta: bias limitato.")
         bias, conf = "NEUTRAL", 30
@@ -231,6 +248,17 @@ def _strategist(p: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
     d = directions[0]
     both = pb == ob == d
     conf = min(85, (pc + oc) // 2) if both else min(45, max(pc, oc))
+    im = f.get("intermarket") or {}
+    opp = "SHORT" if d == "LONG" else "LONG"
+    if im.get("es_dir") == opp or im.get("state") == "DIVERGENT":
+        out = no_trade(f"NQ/ES in divergenza (ES {im.get('es_dir')}, stato {im.get('state')}): nessuno scenario {d} forzato.", "DISAGREEMENT")
+        out["messages"].insert(0, {"addressed_to": "price_action", "message_type": "CHALLENGE",
+                                   "message": f"La struttura {d} di NQ non è confermata da ES ({im.get('state')}).",
+                                   "evidence_ids": ev.id("im.state")})
+        return out
+    im_ok = im.get("state") == "CONFIRMED" and im.get("direction") == d
+    if not im_ok:
+        conf = min(conf, 55)
     atr5 = f["atr"]["atr_5m"] or 0
     tick = 0.25
     levels = _levels(p["evidence"])
@@ -252,6 +280,8 @@ def _strategist(p: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
     warnings = []
     if not both:
         warnings.append("Convergenza parziale: una sola fonte supporta la direzione; confidenza ridotta.")
+    if not im_ok:
+        warnings.append(f"Conferma ES assente o parziale (stato {im.get('state', 'UNKNOWN')}): confidenza limitata.")
     msgs = []
     if pb == d:
         msgs.append({"addressed_to": "price_action", "message_type": "AGREEMENT",
@@ -325,7 +355,14 @@ def _judge(p: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
             "reasoning_summary": text}
 
 
-_HANDLERS = {"price_action": _price_action, "options_flow": _options_flow, "strategist": _strategist,
+def _vision(p: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    # Il mock NON legge le immagini: lo dichiara, non inventa livelli.
+    return {"agent": "vision_extractor", "status": "INSUFFICIENT_DATA", "confidence": 0, "levels": [],
+            "unreadable": ["Modalità MOCK: le immagini non vengono lette. Usa un modello vision reale o inserisci i livelli come testo."],
+            "warnings": [], "messages": [], "reasoning_summary": "Mock: nessuna lettura di immagini."}
+
+
+_HANDLERS = {"vision_extractor": _vision, "price_action": _price_action, "options_flow": _options_flow, "strategist": _strategist,
              "risk_manager": _risk, "judge": _judge}
 
 
@@ -353,7 +390,8 @@ class MockLLMClient:
             raise LLMError(f"HTTP {code}", status_code=code, kind="http", retryable=code in (429, 500, 502, 503, 504))
         if fault == "timeout":
             raise LLMError(f"timeout dopo {timeout}s", kind="timeout", retryable=True)
-        payload = json.loads(next(m["content"] for m in messages if m["role"] == "user"))
+        first = next(m["content"] for m in messages if m["role"] == "user")
+        payload = json.loads(first[0]["text"] if isinstance(first, list) else first)
         payload["max_scenarios"] = payload.get("max_scenarios", 2)
         body = _HANDLERS[agent](payload, self.cfg)
         text = json.dumps(body, ensure_ascii=False)

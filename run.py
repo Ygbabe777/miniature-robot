@@ -20,10 +20,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--date", required=True, help="Data analisi YYYY-MM-DD")
     ap.add_argument("--mock", action="store_true", help="LLM simulato deterministico (nessuna chiamata di rete)")
     ap.add_argument("--mock-scenario", default="ok", choices=sorted(SCENARIOS), help="Scenario di guasto/comportamento mock")
+    ap.add_argument("--gexbot", action="store_true", help="Aggiorna prima i livelli opzioni NQ/ES da GexBot (richiede GEXBOT_API_KEY; con --mock usa dati sintetici)")
     ap.add_argument("--verbose", action="store_true", help="Log strutturati su stderr")
     ap.add_argument("--no-ui", action="store_true", help="Non mostrare il suggerimento per avviare la UI")
     ap.add_argument("--levels", type=Path, help="Percorso levels.json alternativo")
     ap.add_argument("--ohlcv", type=Path, help="Percorso ohlcv.csv alternativo")
+    ap.add_argument("--ohlcv-es", type=Path, help="Percorso ohlcv ES alternativo (default data/ohlcv_es.csv)")
     ap.add_argument("--config", type=Path, help="Percorso config.yaml alternativo")
     a = ap.parse_args(argv)
 
@@ -35,9 +37,21 @@ def main(argv: list[str] | None = None) -> int:
 
     print("OFO COUNCIL — ANALISI AI — NESSUN ORDINE AUTOMATICO")
     print(f"Modalità: {'MOCK (' + a.mock_scenario + ')' if a.mock else 'REALE (OmniRoute)'} · data {a.date}\n")
+    if a.gexbot:
+        from src.gexbot import GexBotError, refresh_levels
+        try:
+            msgs, warns = refresh_levels(cfg, a.date, a.levels or cfg.path("data_dir") / "levels.json", mock=a.mock)
+        except GexBotError as exc:
+            print(f"ERRORE GexBot: {redact(str(exc))}", file=sys.stderr)
+            return 2
+        for m in msgs:
+            print(m)
+        for w in warns:
+            print(f"AVVISO: {w}")
+        print()
     try:
         res = run_pipeline(PipelineOptions(date=a.date, mock=a.mock, mock_scenario=a.mock_scenario, cfg=cfg,
-                                           levels_path=a.levels, ohlcv_path=a.ohlcv, progress=progress))
+                                           levels_path=a.levels, ohlcv_path=a.ohlcv, es_ohlcv_path=a.ohlcv_es, progress=progress))
     except ConfigurationError as exc:
         print(f"\nERRORE DI CONFIGURAZIONE: {redact(str(exc))}", file=sys.stderr)
         return 2

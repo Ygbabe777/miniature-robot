@@ -16,6 +16,7 @@ _PATTERNS = [
     re.compile(r"(?i)(authorization['\"]?\s*[:=]\s*['\"]?)(?!\[REDACTED\])[^\s'\",}]+(?:\s+[^\s'\",}]+)?"),
     re.compile(r"(?i)(" + ENV_KEY + r"['\"]?\s*[:=]\s*['\"]?)(?!\[REDACTED\])[^\s'\",}]+"),
     re.compile(r"(?i)(api[_-]?key['\"]?\s*[:=]\s*['\"]?)(?!\[REDACTED\])[^\s'\",}]{6,}"),
+    re.compile(r"(?i)(GEXBOT_API_KEY['\"]?\s*[:=]\s*['\"]?)(?!\[REDACTED\])[^\s'\",}]+"),
     re.compile(r"\bsk-[A-Za-z0-9_\-]{8,}"),
 ]
 
@@ -26,14 +27,19 @@ def load_env(root: Path | None = None) -> None:
     load_dotenv(env_path if env_path.exists() else None, override=False)
 
 
-def get_api_key(root: Path | None = None) -> str | None:
+def get_secret(name: str, root: Path | None = None) -> str | None:
+    """Legge un segreto SOLO da ambiente/.env (mai da config o argomenti)."""
     load_env(root)
-    key = os.getenv(ENV_KEY)
-    return key.strip() if key and key.strip() else None
+    val = os.getenv(name)
+    return val.strip() if val and val.strip() else None
+
+
+def get_api_key(root: Path | None = None) -> str | None:
+    return get_secret(ENV_KEY, root)
 
 
 def _literal_secrets(extra: tuple[str, ...] = ()) -> list[str]:
-    vals = [os.getenv(ENV_KEY, ""), *extra]
+    vals = [os.getenv(ENV_KEY, ""), os.getenv("GEXBOT_API_KEY", ""), *extra]
     return [v for v in vals if v and len(v) >= 6]
 
 

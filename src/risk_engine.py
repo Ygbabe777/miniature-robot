@@ -9,10 +9,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .config import RiskCfg
+from .intermarket import scenario_gate
 from .schemas import (Bias, DataQuality, Direction, RiskAssessment, RiskOutput, RiskVerdict,
                       Scenario, worst_verdict)
 
-GATES = ("data", "structure", "risk", "confluence")
+GATES = ("data", "structure", "risk", "confluence", "intermarket")
 
 
 def worst_case_entry(s: Scenario) -> float:
@@ -83,7 +84,7 @@ def confluence(direction: Direction, pa: Bias, of: Bias) -> tuple[str, str]:
 
 
 def precheck(scenarios: list[Scenario], *, pa_bias: Bias, of_bias: Bias, data_quality: DataQuality,
-             rcfg: RiskCfg) -> list[ScenarioPrecheck]:
+             rcfg: RiskCfg, intermarket: dict | None = None) -> list[ScenarioPrecheck]:
     out: list[ScenarioPrecheck] = []
     exposure = 0.0
     for s in scenarios:
@@ -124,6 +125,16 @@ def precheck(scenarios: list[Scenario], *, pa_bias: Bias, of_bias: Bias, data_qu
         elif state == "WARN":
             verdicts.append(RiskVerdict.APPROVED_WITH_CAUTION)
             reasons.append(f"Convergenza parziale: {why}")
+        im_state, im_why = scenario_gate(s.direction.value, intermarket)
+        gates["intermarket"] = im_state
+        if im_state == "FAIL":
+            verdicts.append(RiskVerdict.NO_TRADE)
+            reasons.append(f"Inter-mercato NQ/ES: {im_why}")
+        elif im_state == "WARN":
+            verdicts.append(RiskVerdict.APPROVED_WITH_CAUTION)
+            reasons.append(f"Inter-mercato NQ/ES: {im_why}")
+        else:
+            reasons.append(f"Inter-mercato NQ/ES: {im_why}")
         if s.confidence < 40:
             verdicts.append(RiskVerdict.APPROVED_WITH_CAUTION)
             reasons.append(f"Confidenza dello scenario bassa ({s.confidence})")

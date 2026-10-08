@@ -19,10 +19,10 @@ def _near_any(value: float, levels: list[float], tol: float) -> bool:
     return any(abs(value - lv) <= tol for lv in levels)
 
 
-def evidence_price_values(evidence: list[dict[str, Any]]) -> list[float]:
+def evidence_price_values(evidence: list[dict[str, Any]], kinds: tuple[str, ...] = ("price",)) -> list[float]:
     vals: list[float] = []
     for e in evidence:
-        if e["kind"] == "price":
+        if e["kind"] in kinds:
             vals.extend(float(v) for v in (e["value"] if isinstance(e["value"], list) else [e["value"]]))
     return vals
 
@@ -33,7 +33,8 @@ def deterministic_findings(
     atr5: float | None, gcfg: GroundingCfg, minimum_rr: float,
 ) -> list[JudgeIssue]:
     ids = {e["id"] for e in evidence}
-    price_vals = evidence_price_values(evidence)
+    price_vals = evidence_price_values(evidence)  # livelli NQ: validano gli scenari
+    any_vals = evidence_price_values(evidence, ('price', 'es_price'))  # anche ES: validano i key_levels degli analisti
     tol = tolerance(atr5, gcfg)
     issues: list[JudgeIssue] = []
 
@@ -58,7 +59,7 @@ def deterministic_findings(
             check_ids(agent_id, "interpretazione", it.evidence_ids, Severity.MINOR)
         for kl in out.key_levels:
             check_ids(agent_id, f"livello {kl.name}", kl.evidence_ids, Severity.MAJOR)
-            if not _near_any(kl.value, price_vals, 0.26):
+            if not _near_any(kl.value, any_vals, 0.26):
                 issues.append(JudgeIssue(type=IssueType.FABRICATED_LEVEL, severity=Severity.MAJOR,
                                          target_agent=agent_id, evidence_ids=kl.evidence_ids,
                                          description=f"Livello «{kl.name}» = {kl.value} non presente nelle evidenze"))

@@ -47,6 +47,7 @@ def build_panic_proof(*, features: dict[str, Any], evidence: list[dict[str, Any]
     status = decision["status"]
     out: dict[str, Any] = {
         "market_regime": reg["state"], "regime_reasons": reg["reasons"],
+        "intermarket_state": (features.get("intermarket") or {}).get("state", "UNKNOWN") if features else "UNKNOWN",
         "primary_bias": decision.get("primary_bias", "NEUTRAL"),
         "secondary_bias": decision.get("secondary_bias", "NESSUNO"),
         "key_levels": kl,
@@ -70,7 +71,7 @@ def build_panic_proof(*, features: dict[str, Any], evidence: list[dict[str, Any]
     return out
 
 
-def build_report(*, run_meta: dict[str, Any], quality: str, data_issues: list[dict[str, str]],
+def build_report(*, run_meta: dict[str, Any], provenance: dict[str, Any] | None = None, quality: str, data_issues: list[dict[str, str]],
                  features: dict[str, Any] | None, evidence: list[dict[str, Any]], warnings: list[str],
                  debate: DebateResult | None, decision: dict[str, Any], events: list[dict[str, Any]],
                  stages: dict[str, Any], max_daily_r: float) -> dict[str, Any]:
@@ -92,6 +93,7 @@ def build_report(*, run_meta: dict[str, Any], quality: str, data_issues: list[di
         "run": run_meta,
         "data_quality": {"status": quality, "issues": data_issues, "warnings": warnings},
         "market_snapshot": features,
+        "data_provenance": provenance or {},
         "evidence": evidence,
         "agents": agents,
         "risk": {
@@ -174,6 +176,22 @@ def render_markdown(rep: dict[str, Any]) -> str:
                 ("Gamma flip / Call wall / Put wall", f"{op['gamma_flip']} / {op['call_wall']} / {op['put_wall']}"),
                 ("Proxy regime gamma", op["gamma_regime_proxy"])]
         L.extend(f"| {k} | {v} |" for k, v in rows)
+        es, im = snap.get("es"), snap.get("intermarket") or {}
+        L.append("\n**ES / inter-mercato NQ-ES** (ES = strumento di conferma; gli scenari restano su NQ)\n")
+        if es:
+            L.append(f"- ES: close {es['last_close']} · VWAP overnight {es['overnight']['vwap']} · "
+                     f"H/L overnight {es['overnight']['high']} / {es['overnight']['low']} · regime {es['regime']['state']}")
+            eo = es["options"]
+            L.append(f"- ES gamma flip / call wall / put wall: {eo['gamma_flip']} / {eo['call_wall']} / {eo['put_wall']}")
+        L.append(f"- Stato: **{im.get('state', 'UNKNOWN')}** · correlazione 5m {im.get('correlation')} · rendimento overnight "
+                 f"NQ {im.get('nq_on_return_pct')}% / ES {im.get('es_on_return_pct')}% · SMT massimi {im.get('smt_high')} / minimi {im.get('smt_low')}")
+        L.extend(f"  - {r}" for r in im.get("reasons", []))
+        prov = rep.get("data_provenance") or {}
+        if prov:
+            L.append("\n**Origine dei livelli importati** (provenance)\n")
+            for k, v in prov.items():
+                L.append(f"- `{k}` ← {v.get('source')} ({v.get('detail') or v.get('file') or ''}) "
+                         f"{'· convertito su future ' if v.get('converted') else ''}{'· confermato da ' + str(v.get('confirmed_by')) if v.get('confirmed_by') else ''}")
         L.append("\n**Regime:** " + snap["regime"]["state"] + " — " + " ".join(snap["regime"]["reasons"]) + "\n")
     else:
         L.append("_Dati di mercato non disponibili (qualità ROSSA)._\n")
@@ -248,6 +266,7 @@ def render_panic_proof(pp: dict[str, Any]) -> str:
         bar, "PANIC-PROOF", bar,
         f"MARKET REGIME:        {pp['market_regime']}",
         f"STATO CONSIGLIO:      {pp['council_status']}   (qualità dati {pp['data_quality']})",
+        f"NQ/ES:               {pp.get('intermarket_state', 'UNKNOWN')}",
         f"PRIMARY BIAS:         {pp['primary_bias']}",
         f"SECONDARY BIAS:       {pp['secondary_bias']}",
         "KEY LEVELS:", kl,

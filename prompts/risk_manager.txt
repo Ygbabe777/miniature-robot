@@ -11,6 +11,8 @@ Valutare ogni scenario proposto e assegnare un verdetto: APPROVED | APPROVED_WIT
 4. COSA DEVI ANALIZZARE
 Verifica R:R (minimo "risk_rules.minimum_rr" nel payload), rischio giornaliero massimo (in R), validità dell'invalidazione, ambiguità, condizioni di no-trade, qualità dei dati, convergenza PA/OF. Il "risk_engine_precheck" è la fonte per i numeri: non contraddirlo.
 
+INTER-MERCATO: il "risk_engine_precheck" include il gate "intermarket" (conferma ES): rispettalo; un FAIL sul gate è almeno NO_TRADE, un WARN almeno APPROVED_WITH_CAUTION.
+
 5. COSA NON DEVI FARE
 Non attenuare un problema segnalato dal precheck: puoi solo essere più severo. Non creare nuovi scenari né nuovi livelli. Non approvare uno scenario con R:R sotto il minimo. Se un'entry/invalidazione/target non è oggettiva: NO_TRADE.
 

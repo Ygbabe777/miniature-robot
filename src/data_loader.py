@@ -51,6 +51,14 @@ class LevelsBlock(BaseModel):
     previous_week_low: float | None = None
 
 
+class EsBlock(BaseModel):
+    """Livelli ES (strumento di conferma). Tutti opzionali."""
+    model_config = ConfigDict(extra="allow")
+    spot: float | None = None
+    options: OptionsLevels = Field(default_factory=OptionsLevels)
+    levels: LevelsBlock = Field(default_factory=LevelsBlock)
+
+
 class LevelsFile(BaseModel):
     model_config = ConfigDict(extra="allow")
     date: str
@@ -59,6 +67,7 @@ class LevelsFile(BaseModel):
     source: str | None = None
     options: OptionsLevels = Field(default_factory=OptionsLevels)
     levels: LevelsBlock = Field(default_factory=LevelsBlock)
+    es: EsBlock | None = None
 
 
 def _clean(v: float | None) -> float | None:
@@ -83,6 +92,12 @@ def load_levels(path: Path, run_date: str) -> tuple[LevelsFile | None, list[Data
     for name in LevelsBlock.model_fields:
         setattr(lv.levels, name, _clean(getattr(lv.levels, name)))
 
+    if lv.es is not None:
+        lv.es.spot = _clean(lv.es.spot)
+        for name in ("gamma_flip", "call_wall", "put_wall"):
+            setattr(lv.es.options, name, _clean(getattr(lv.es.options, name)))
+        for name in LevelsBlock.model_fields:
+            setattr(lv.es.levels, name, _clean(getattr(lv.es.levels, name)))
     if lv.date != run_date:
         issues.append(DataIssue("ERROR", "LEVELS_DATE_MISMATCH",
                                 f"levels.json e' datato {lv.date}, richiesta analisi per {run_date}"))
@@ -176,6 +191,7 @@ class MarketData:
     issues: list[DataIssue]
     data_hash: str
     quality: DataQuality
+    es_bars: pd.DataFrame | None = None
     extras: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -187,19 +203,26 @@ class MarketData:
         return [i for i in self.issues if i.severity == "WARNING"]
 
 
-def _file_hash(*paths: Path) -> str:
+def _file_hash(*paths: Path | None) -> str:
     h = hashlib.sha256()
     for p in paths:
+        if p is None:
+            continue
         h.update(p.read_bytes() if p.exists() else b"<missing>")
     return h.hexdigest()[:16]
 
 
-def prepare_market_data(levels_path: Path, ohlcv_path: Path, run_date: str, fcfg: FeaturesCfg) -> MarketData:
+def prepare_market_data(levels_path: Path, ohlcv_path: Path, run_date: str, fcfg: FeaturesCfg,
+                        es_ohlcv_path: Path | None = None) -> MarketData:
     """Valida i due file e restituisce i dati utilizzabili per `run_date` (no look-ahead)."""
     levels, issues = load_levels(levels_path, run_date)
     df, ohlcv_issues = load_ohlcv(ohlcv_path, fcfg)
     issues = issues + ohlcv_issues
-    dhash = _file_hash(levels_path, ohlcv_path)
+    dhash = _file_hash(levels_path, ohlcv_path, es_ohlcv_path)
+
+    es_df: pd.DataFrame | None = None
+    if fcfg.intermarket.enabled:
+        es_df = _load_es(es_ohlcv_path, run_date, fcfg, issues)
 
     def finish(bars: pd.DataFrame | None, prev: str | None, sessions: list[str]) -> MarketData:
         if any(i.severity == "ERROR" for i in issues):
@@ -208,7 +231,7 @@ def prepare_market_data(levels_path: Path, ohlcv_path: Path, run_date: str, fcfg
             q = DataQuality.YELLOW
         else:
             q = DataQuality.GREEN
-        return MarketData(run_date, levels, bars, prev, sessions, issues, dhash, q)
+        return MarketData(run_date, levels, bars, prev, sessions, issues, dhash, q, es_bars=es_df if bars is not None else None)
 
     if df is None:
         return finish(None, None, [])
@@ -252,3 +275,27 @@ def prepare_market_data(levels_path: Path, ohlcv_path: Path, run_date: str, fcfg
                                 f"Nessuna barra overnight tra {prev} {fcfg.rth_end} e {run_date} {fcfg.rth_start}"))
         return finish(None, prev, valid_sessions)
     return finish(df, prev, valid_sessions)
+
+
+def _load_es(path: Path | None, run_date: str, fcfg: FeaturesCfg, issues: list[DataIssue]) -> pd.DataFrame | None:
+    """ES e' un dato di CONFERMA opzionale: ogni problema e' un avviso (YELLOW), mai un errore."""
+    if path is None or not path.exists():
+        issues.append(DataIssue("WARNING", "ES_FILE_MISSING",
+                                "ohlcv ES mancante: nessuna conferma inter-mercato NQ/ES (non inventata)"))
+        return None
+    df, es_issues = load_ohlcv(path, fcfg)
+    if df is None:
+        issues.extend(DataIssue("WARNING", "ES_" + i.code, "ES non utilizzabile — " + i.message) for i in es_issues)
+        return None
+    try:
+        cutoff = pd.Timestamp(datetime.combine(datetime.strptime(run_date, "%Y-%m-%d").date(), _hhmm(fcfg.rth_start)))
+    except ValueError:
+        return None
+    df = df[df["timestamp"] < cutoff].reset_index(drop=True)
+    mask = rth_mask(df, fcfg) if not df.empty else None
+    n_sess = df[mask]["timestamp"].dt.date.nunique() if mask is not None else 0
+    if n_sess < fcfg.min_sessions:
+        issues.append(DataIssue("WARNING", "ES_INSUFFICIENT_HISTORY",
+                                f"ES: sessioni disponibili {n_sess}, minimo {fcfg.min_sessions}: ES ignorato"))
+        return None
+    return df

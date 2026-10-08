@@ -3,7 +3,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.room_view import build_room_html
-from src.ui_common import (get_config, human_decision_panel, list_report_dates, load_report,
+from src.ui_common import (get_config, human_decision_panel, intake_panel, list_report_dates, load_report,
                            panic_proof_block, run_controls)
 
 st.set_page_config(page_title="OFO Council — Trading Room", page_icon="🏛️", layout="wide")
@@ -12,6 +12,8 @@ st.markdown("<style>.block-container{padding-top:1rem;max-width:1320px}</style>"
 
 ran = run_controls(cfg, "px")
 dates = list_report_dates(cfg)
+with st.sidebar.expander("📥 Dati & Intake (screenshot, PDF, GexBot)"):
+    intake_panel(cfg, "px_in")
 if not dates:
     st.title("🏛️ OFO COUNCIL")
     st.info("Nessun report disponibile. Dalla sidebar esegui un'analisi (modalità MOCK per provare) oppure lancia "

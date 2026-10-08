@@ -308,7 +308,9 @@ def build_view(report: dict[str, Any], ui_cfg: Any = None) -> dict[str, Any]:
     ticker = [("NQ", snap.get("spot")), ("SPOT", snap.get("spot")), ("VWAP", on.get("vwap")),
               ("ATR", at.get("atr_5m")), ("ON HIGH", on.get("high")), ("ON LOW", on.get("low")),
               ("GAMMA FLIP", op.get("gamma_flip")), ("CALL WALL", op.get("call_wall")),
-              ("PUT WALL", op.get("put_wall")), ("REGIME", (snap.get("regime") or {}).get("state"))]
+              ("PUT WALL", op.get("put_wall")), ("REGIME", (snap.get("regime") or {}).get("state")),
+              ("ES", (snap.get("es") or {}).get("last_close")), ("NQ/ES", (snap.get("intermarket") or {}).get("state")),
+              ("CORR", (snap.get("intermarket") or {}).get("correlation"))]
     run = report["run"]
     return {
         "frames": frames, "steps": steps, "transcript": transcript, "details": details,

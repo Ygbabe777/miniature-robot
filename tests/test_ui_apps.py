@@ -26,10 +26,10 @@ def no_exc(at):
 def test_standard_app_renders_all_sections(seeded):
     at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60).run()
     no_exc(at)
-    assert len(at.tabs) == 10
+    assert len(at.tabs) == 11
     labels = [t.label for t in at.tabs]
     for want in ("Dashboard", "Market Data", "Agent Council", "Scenarios", "Risk", "Judge", "PANIC-PROOF",
-                 "Historical Reports", "Journal", "Scoreboard"):
+                 "Historical Reports", "Journal", "Scoreboard", "Dati & Intake"):
         assert want in labels
     assert any("AI COUNCIL VERDICT" in s.value for s in at.subheader)
 
@@ -73,3 +73,17 @@ def test_run_button_executes_mock_analysis(project, monkeypatch):
     next(b for b in at.sidebar.button if "Esegui" in b.label).click().run()
     no_exc(at)
     assert (project.path("reports_dir") / f"{DATE}.json").exists()
+
+
+def test_intake_panel_text_message_flow(project, monkeypatch):
+    from src import intake as it
+    monkeypatch.setenv("OFO_ROOT", str(project.root))
+    st.cache_resource.clear()
+    at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60).run()
+    no_exc(at)
+    at.text_area(key="std_in_msg").set_value("NQ gamma flip 28900 call wall 29250").run()
+    next(b for b in at.button if b.label == "Salva e analizza").click().run()
+    no_exc(at)
+    state = it.load_state(project, "2026-10-08")
+    assert {c["field"] for c in state["candidates"]} == {"options.gamma_flip", "options.call_wall"}
+    assert all(c["status"] == "pending" for c in state["candidates"])  # niente applicato senza conferma

@@ -9,8 +9,8 @@ strutturato, verificabile e riproducibile.
 *(Il repository contiene anche, separati, `agx_dealer_mechanics.pine` e il sito `index.html`/`css`/`js`: non fanno parte di OFO Council.)*
 
 ## Indice
-1. [Architettura](#architettura) · 2. [Installazione](#installazione) · 3. [Chiave API (.env)](#chiave-api-env) ·
-4. [Formato dati](#formato-dati) · 5. [Uso](#uso) · 6. [Modalità mock](#modalità-mock) · 7. [Streamlit](#interfacce-streamlit) ·
+1. [Architettura](#architettura) · 2. [Installazione](#installazione) · 3. [Chiavi API (.env)](#chiave-api-env) ·
+4. [Formato dati](#formato-dati) · **[ES e inter-mercato](#es-e-inter-mercato) · [GexBot](#gexbot) · [Intake da screenshot/PDF/messaggi](#intake-da-screenshot-pdf-e-messaggi)** · 5. [Uso](#uso) · 6. [Modalità mock](#modalità-mock) · 7. [Streamlit](#interfacce-streamlit) ·
 8. [Report e transcript](#report-transcript-e-journal) · 9. [Test](#test) · 10. [Sicurezza](#sicurezza) ·
 11. [Troubleshooting](#troubleshooting) · 12. [Limiti](#limiti)
 
@@ -75,10 +75,11 @@ Dipendenze minime: pandas, numpy, pydantic, python-dotenv, PyYAML, requests, str
 
 ## Chiave API (.env)
 
-L'**unico** posto ammesso per la chiave è `.env` nella radice del progetto:
+L'**unico** posto ammesso per le chiavi è `.env` nella radice del progetto:
 
 ```
 OMNIROUTE_API_KEY=la-tua-chiave
+GEXBOT_API_KEY=la-tua-chiave-gexbot
 ```
 
 Vedi `.env.example`. `.env` è in `.gitignore`. La chiave non viene mai stampata, loggata, salvata in report/transcript,
@@ -109,6 +110,77 @@ Le barre dalle 09:30 del giorno in poi sono ignorate (no look-ahead).
 
 > I file in `data/` forniti con il repository sono **DATI SINTETICI DI ESEMPIO** (`"source": "SYNTHETIC_SAMPLE"`), generati da
 > `python tools/sample_data.py`. Report e UI li segnalano con un avviso. Sostituiscili con i tuoi dati reali ogni giorno.
+
+## ES e inter-mercato
+
+NQ ed ES si muovono insieme: **ES è strumento di conferma** (gli scenari restano su NQ). Fornisci `data/ohlcv_es.csv`
+(stesso formato dell'NQ) e, in `levels.json`, un blocco opzionale `"es": {"spot":…, "options":{…}, "levels":{…}}`.
+
+Calcoli deterministici (`src/intermarket.py`): correlazione e beta sui rendimenti 5m, rendimento overnight NQ vs ES,
+gap in bps, rapporto NQ/ES, **divergenze SMT** su massimi/minimi (nuovo estremo overnight solo su uno dei due),
+accordo sul VWAP. Stato: `CONFIRMED` · `DIVERGENT` · `MIXED` · `NEUTRAL` · `DECORRELATED` · `UNKNOWN`.
+
+* Price Action, Options Flow e Strategist ricevono le feature ES/inter-mercato e le evidenze (ID `E035…` aggiunti in coda:
+  gli ID precedenti non cambiano).
+* Il Risk Manager ha un gate **intermarket**: ES contro lo scenario o `DIVERGENT` ⇒ `NO_TRADE`; ES assente, parziale,
+  decorrelato o SMT sul livello estremo ⇒ al massimo `APPROVED_WITH_CAUTION`; solo `CONFIRMED` nella direzione ⇒ `PASS`.
+* Se ES manca o non è valido: avviso, qualità `YELLOW`, stato `UNKNOWN` dichiarato in report e agenti. **Mai stimato.**
+* I livelli ES non vengono mai usati per validare gli scenari NQ (e viceversa).
+
+## GexBot
+
+Connettore per i livelli opzioni (`src/gexbot.py`, docs: <https://docs.gexbot.com/apidocs/>). Chiave **solo** in `.env`
+(`GEXBOT_API_KEY`). Usa `GET {base}/{ticker}/classic/{category}` e `GET /futures/conversion`, con
+`Authorization: Bearer …` e `User-Agent`; retry con backoff su 429/5xx.
+
+```powershell
+.\venv\Scripts\python fetch_gex.py --date 2026-10-08                 # NQ (NQ_NDX) + ES (ES_SPX) -> data/levels.json
+.\venv\Scripts\python run.py --date 2026-10-08 --gexbot              # aggiorna e analizza
+.\venv\Scripts\python fetch_gex.py --date 2026-10-08 --mock          # livelli SINTETICI per provare
+```
+
+| GexBot | levels.json |
+|---|---|
+| `zero_gamma` | `options.gamma_flip` |
+| `major_pos_vol` (o `_oi`, `gexbot.wall_basis`) | `options.call_wall` |
+| `major_neg_vol` (o `_oi`) | `options.put_wall` |
+
+I livelli sono su NDX/SPX: vengono portati su NQ/ES con `valore × multiplier + additive` da `/futures/conversion`
+(se la conversione non è valida, l'aggiornamento viene **annullato**, mai applicato non convertito). Origine, endpoint,
+mappatura, orario dei dati e conversione sono salvati in `levels.json → provenance` e mostrati nel report.
+Avvisi automatici: dati più vecchi di `max_age_hours`, o generati **dopo le 09:30** del giorno (non pre-market).
+Un errore GexBot non cancella i livelli esistenti (backup `levels.json.bak`).
+> La mappatura `major_pos/neg → call/put wall` è un'interpretazione (strike con GEX positivo/negativo massimo): verificala
+> con il tuo flusso di lavoro; categoria, ticker e base (`vol`/`oi`) sono in `config.yaml → gexbot`.
+
+## Intake da screenshot, PDF e messaggi
+
+`python intake.py` / scheda **Dati & Intake** (app.py) / expander nella sidebar di app_pixel.py. Principio: **l'estrazione
+produce solo candidati; nulla entra in `levels.json` finché non lo accetti tu.**
+
+1. `add` / `text` / upload UI: i file vanno in `data/inbox/<data>/` (estensioni ammesse, max 10 MB, nomi sanificati, in `.gitignore`).
+2. `scan`: *messaggi e testo* → regex deterministica IT/EN (gamma flip, call/put wall, spot, max/min sessione precedente,
+   overnight, settimana precedente; separatori `29,250` / `29.250` / `28.964,5`; sezioni `ES` / `NQ`);
+   *screenshot* → modello **vision** (`models.vision_extractor`, deve supportare immagini) con testo letterale (`verbatim`):
+   un livello il cui testo non contiene il valore, fuori intervallo plausibile o con campo sconosciuto è **scartato**;
+   *PDF* → testo di ogni pagina, più immagini incorporate delle pagine scansionate.
+3. `list` / `accept --id N [--value X]` / `reject` / `accept --all`: vedi per ogni candidato il testo letto, il metodo, i conflitti (⚠).
+4. `apply`: scrive i soli candidati accettati, con `provenance` (file, metodo, testo, `confirmed_by: human`, valore precedente).
+   Conflitti tra accettati ⇒ errore. Se `levels.json` è di un altro giorno viene archiviato in `data/archive/`.
+
+```powershell
+.\venv\Scripts\python intake.py text --date 2026-10-08 "NQ gamma flip 28900 call wall 29250 put wall 28800`nES gamma flip 6460"
+.\venv\Scripts\python intake.py add  --date 2026-10-08 screenshot.png gex.pdf
+.\venv\Scripts\python intake.py scan --date 2026-10-08
+.\venv\Scripts\python intake.py accept --date 2026-10-08 --all ; .\venv\Scripts\python intake.py apply --date 2026-10-08
+```
+
+**Barre OHLCV**: estrarre centinaia di barre da immagini non è affidabile, quindi le barre vanno fornite come **CSV**
+(export della piattaforma). Un CSV con intestazione `timestamp,open,high,low,close,volume` nell'inbox viene riconosciuto e si
+unisce a `ohlcv.csv`/`ohlcv_es.csv` con `intake.py import-ohlcv --instrument nq|es file.csv` (barre identiche ok, barre
+in conflitto = errore senza modifiche, validazione prima e dopo, backup `.bak`).
+Le immagini sono inviate al modello configurato in OmniRoute (locale per default); in `--mock` le immagini **non vengono lette** e
+il sistema lo dichiara. Il testo di file/immagini è trattato come dato: eventuali "istruzioni" al loro interno non vengono eseguite.
 
 ## Uso
 
@@ -193,7 +265,8 @@ I test usano progetti temporanei: non toccano `reports/`, `journal.csv` né i tu
 
 ## Limiti
 
-* Nessun dato opzioni/GEX viene scaricato: `levels.json` è compilato dall'utente; il "proxy regime gamma" è solo spot vs gamma flip.
+* I livelli opzioni arrivano da GexBot (opzionale), da intake confermato o da `levels.json` manuale; il "proxy regime gamma" è solo spot vs gamma flip. Lo schema GexBot è stato ricavato dalla documentazione pubblica e testato contro un server locale che lo imita, **non** contro l'API reale: al primo uso controlla `provenance` e i livelli convertiti.
+* La lettura di screenshot dipende dal modello vision configurato e resta soggetta a errori di lettura: per questo ogni valore richiede conferma umana.
 * Orari RTH configurabili ma pensati per NQ (America/New_York); festività/mezze sessioni sono segnalate come sessioni incomplete.
 * Il volume profile usa distribuzione uniforme del volume su ogni barra 5m (approssimazione); HVN/LVN sono euristiche configurabili.
 * Le metriche di scoreboard/valutazione richiedono esiti registrati a mano nel journal e sono deboli con pochi campioni.

@@ -39,7 +39,7 @@ class LLMResponse:
 
 
 class LLMClient(Protocol):
-    def complete(self, *, agent: str, model: str, messages: list[dict[str, str]],
+    def complete(self, *, agent: str, model: str, messages: list[dict[str, Any]],
                  timeout: float) -> LLMResponse: ...
 
 
@@ -51,7 +51,7 @@ class OmniRouteClient:
         self._key = api_key
         self._session = session or requests.Session()
 
-    def complete(self, *, agent: str, model: str, messages: list[dict[str, str]],
+    def complete(self, *, agent: str, model: str, messages: list[dict[str, Any]],
                  timeout: float) -> LLMResponse:
         if not self._key:
             raise LLMError("OMNIROUTE_API_KEY mancante: impostarla in .env", kind="auth", retryable=False)
@@ -239,12 +239,16 @@ class AgentRunner:
         self.cfg, self.client, self.prompts_dir = cfg, client, prompts_dir
         self.clock, self.sleep, self.rng = clock, sleep, rng or random.Random()
 
-    def run(self, agent: str, payload: dict[str, Any]) -> AgentResult:
+    def run(self, agent: str, payload: dict[str, Any], attachments: list[dict[str, str]] | None = None) -> AgentResult:
         prompt = load_prompt(self.prompts_dir, agent)
         model = self.cfg.model_for(agent)
         models = [model] + ([fb] if (fb := self.cfg.fallback_for(agent)) else [])
-        messages = [{"role": "system", "content": prompt.text},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}]
+        text = json.dumps(payload, ensure_ascii=False, default=str)
+        user_content: Any = text
+        if attachments:  # immagini come data URI (formato OpenAI vision)
+            user_content = [{"type": "text", "text": text}] + [
+                {"type": "image_url", "image_url": {"url": a["data_uri"]}} for a in attachments]
+        messages = [{"role": "system", "content": prompt.text}, {"role": "user", "content": user_content}]
         t0 = self.clock.monotonic()
         errors: list[str] = []
         correction = False

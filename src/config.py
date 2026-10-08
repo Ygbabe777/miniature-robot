@@ -26,6 +26,7 @@ class ModelsCfg(BaseModel):
     strategist: str = "ultra-550b"
     risk_manager: str = "super-120b"
     judge: str = "gemma-4-31b-it"
+    vision_extractor: str = "super-120b"  # DEVE supportare input immagini
 
 
 class FallbackCfg(BaseModel):
@@ -34,6 +35,37 @@ class FallbackCfg(BaseModel):
     strategist: str = "super-120b"
     risk_manager: str = "gemma-4-31b-it"
     judge: str = "super-120b"
+    vision_extractor: str = "gemma-4-31b-it"
+
+
+class GexBotCfg(BaseModel):
+    base_url: str = "https://api.gex.bot/v2"
+    ticker: str = "NQ_NDX"
+    category: str = "zero"          # full|gex_full|zero|gex_zero|one|gex_one
+    convert: bool = True
+    conversion_ticker: str = "NDX"  # ticker sorgente per /futures/conversion
+    future: str = "NQ"
+    conversion_model: str | None = None  # additive|multiplicative|affine (None = default del server)
+    es_ticker: str = "ES_SPX"
+    es_conversion_ticker: str = "SPX"
+    es_future: str = "ES"
+    wall_basis: str = "vol"         # vol|oi: quale major_pos/major_neg usare per call/put wall
+    max_age_hours: float = 18.0
+    timeout_seconds: float = 30.0
+    max_retries: int = 3
+    backoff_base_seconds: float = 1.0
+    user_agent: str = "ofo-council/1.0"
+
+
+class IntakeCfg(BaseModel):
+    inbox_dir: str = "data/inbox"
+    max_file_mb: float = 10.0
+    plausible_min: float = 1000.0
+    plausible_max: float = 100000.0
+    es_plausible_min: float = 1000.0
+    es_plausible_max: float = 20000.0
+    vision_enabled: bool = True
+    max_pdf_pages: int = 20
 
 
 class DebateCfg(BaseModel):
@@ -55,6 +87,15 @@ class RegimeCfg(BaseModel):
     overnight_range_hv_atr: float = 1.0
 
 
+class IntermarketCfg(BaseModel):
+    enabled: bool = True
+    es_profile_bin_size: float = 1.0     # punti ES per bin del volume profile
+    direction_threshold_pct: float = 0.10  # |rendimento overnight| minimo per dire "su/giù"
+    min_correlation: float = 0.60        # sotto: NQ/ES decorrelati (avviso)
+    corr_bars: int = 1200                # barre 5m usate per correlazione/beta
+    divergence_bps: float = 15.0         # differenza di rendimento overnight NQ-ES oltre cui e' "divergenza"
+
+
 class FeaturesCfg(BaseModel):
     timeframe_minutes: int = 5
     atr_period: int = 14
@@ -67,6 +108,7 @@ class FeaturesCfg(BaseModel):
     min_sessions: int = 3
     tick_size: float = 0.25
     regime: RegimeCfg = Field(default_factory=RegimeCfg)
+    intermarket: IntermarketCfg = Field(default_factory=IntermarketCfg)
 
 
 class GroundingCfg(BaseModel):
@@ -99,6 +141,8 @@ class AppConfig(BaseModel):
     risk: RiskCfg = Field(default_factory=RiskCfg)
     features: FeaturesCfg = Field(default_factory=FeaturesCfg)
     grounding: GroundingCfg = Field(default_factory=GroundingCfg)
+    gexbot: GexBotCfg = Field(default_factory=GexBotCfg)
+    intake: IntakeCfg = Field(default_factory=IntakeCfg)
     paths: PathsCfg = Field(default_factory=PathsCfg)
     ui: UiCfg = Field(default_factory=UiCfg)
     root: Path = Field(default=Path("."), exclude=True)
