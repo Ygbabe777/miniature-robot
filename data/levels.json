@@ -1,0 +1,20 @@
+{
+  "date": "2026-10-08",
+  "instrument": "NQ",
+  "spot": 28964.5,
+  "source": "SYNTHETIC_SAMPLE",
+  "options": {
+    "gamma_flip": 28900.0,
+    "call_wall": 29250.0,
+    "put_wall": 28800.0,
+    "notes": "Valori SINTETICI di esempio, non derivati da dati opzioni reali."
+  },
+  "levels": {
+    "previous_session_high": 28916.0,
+    "previous_session_low": 28777.0,
+    "overnight_high": 28980.5,
+    "overnight_low": 28819.0,
+    "previous_week_high": 28918.5,
+    "previous_week_low": 28517.75
+  }
+}
