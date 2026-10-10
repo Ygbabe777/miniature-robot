@@ -24,3 +24,13 @@ def test_split_is_chronological():
     df = pd.DataFrame({"close": range(10)}, index=pd.date_range("2025-01-01", periods=10))
     a, b = split_blocked(df, 0.3)
     assert len(a) == 7 and a.index.max() < b.index.min()
+
+
+def test_walk_forward_test_windows_never_overlap_training():
+    from ofo.data import walk_forward_windows
+    idx = pd.date_range("2025-01-01", periods=100, freq="D")
+    wins = list(walk_forward_windows(idx, train_days=40, test_days=20))
+    assert len(wins) == 3
+    for (tr0, tr1), (te0, te1) in wins:
+        assert tr1 < te0
+    assert wins[1][1][0] == wins[0][1][1] + pd.Timedelta(days=1)

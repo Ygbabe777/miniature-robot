@@ -15,11 +15,20 @@ class Thresholds:
     max_p_bust: float = 0.40
 
 
+APPROVED = "APPROVED"
+REJECTED = "REJECTED"
+INSUFFICIENT = "INSUFFICIENT_EVIDENCE"
+
+
 @dataclass
 class Verdict:
-    approved: bool
+    status: str
     checks: dict = field(default_factory=dict)
     mc: dict = field(default_factory=dict)
+
+    @property
+    def approved(self) -> bool:
+        return self.status == APPROVED
 
 
 def judge(oos_daily_pnl, rules: PropRules, n_trials: int, var_sr_trials: float,
@@ -29,9 +38,9 @@ def judge(oos_daily_pnl, rules: PropRules, n_trials: int, var_sr_trials: float,
     x = list(oos_daily_pnl)
     checks = {"enough_days": len(x) >= th.min_days}
     if not checks["enough_days"]:
-        return Verdict(False, checks)
+        return Verdict(INSUFFICIENT, checks)
     checks["dsr"] = deflated_sharpe(x, n_trials, var_sr_trials) >= th.min_dsr
     mc = pass_probability(x, rules)
     checks["pass_prob_ci_lower"] = mc["p_pass_ci95"][0] >= th.min_p_pass_lower
     checks["bust_risk"] = mc["p_bust"] <= th.max_p_bust
-    return Verdict(all(checks.values()), checks, mc)
+    return Verdict(APPROVED if all(checks.values()) else REJECTED, checks, mc)

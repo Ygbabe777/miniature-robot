@@ -57,3 +57,18 @@ def split_blocked(df: pd.DataFrame, oos_fraction: float = 0.3) -> tuple[pd.DataF
     may read it, and only once per candidate."""
     cut = int(len(df) * (1 - oos_fraction))
     return df.iloc[:cut], df.iloc[cut:]
+
+
+def walk_forward_windows(index: pd.DatetimeIndex, train_days: int, test_days: int,
+                         step_days: int | None = None):
+    """Yield (train_slice, test_slice) as (start, end) timestamp pairs over trading days.
+
+    Every test window is judged by parameters fitted ONLY on data before it. Stitching
+    the test windows gives one out-of-sample series covering most of the sample.
+    """
+    days = index.normalize().unique().sort_values()
+    step = step_days or test_days
+    i = train_days
+    while i + test_days <= len(days):
+        yield ((days[i - train_days], days[i - 1]), (days[i], days[i + test_days - 1]))
+        i += step

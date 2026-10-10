@@ -60,3 +60,9 @@ def test_backtest_no_lookahead_and_costs():
 def test_psr_prefers_stronger_signal():
     rng = np.random.default_rng(3)
     assert probabilistic_sharpe(rng.normal(0.2, 1, 500)) > probabilistic_sharpe(rng.normal(0.0, 1, 500))
+
+
+def test_short_sample_is_insufficient_not_rejected():
+    from ofo.judge import INSUFFICIENT
+    v = judge(np.random.default_rng(0).normal(100, 300, 60), PRESETS["50k"], 10, 0.01)
+    assert v.status == INSUFFICIENT and not v.approved
