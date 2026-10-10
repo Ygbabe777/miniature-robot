@@ -7,6 +7,7 @@ dependencies = ["numpy", "scipy", "pandas"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
+data = ["boto3"]
 
 [build-system]
 requires = ["setuptools>=61"]
