@@ -1,0 +1,19 @@
+[project]
+name = "ofo"
+version = "0.1.0"
+description = "OFO Prop Project - automated strategy research, validation and prop-firm pass probability"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "pandas"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
