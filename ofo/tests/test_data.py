@@ -34,3 +34,14 @@ def test_walk_forward_test_windows_never_overlap_training():
     for (tr0, tr1), (te0, te1) in wins:
         assert tr1 < te0
     assert wins[1][1][0] == wins[0][1][1] + pd.Timedelta(days=1)
+
+
+def test_massive_format_filters_ticker_and_converts_tz(tmp_path):
+    p = tmp_path / "m.csv"
+    p.write_text("ticker,volume,open,close,high,low,window_start,transactions\n"
+                 "AAPL,10,200.29,200.5,200.63,200.29,1744792500000000000,129\n"
+                 "NQM5,5,100,101,102,99,1744792560000000000,3\n")
+    df = load_ohlcv(str(p), "massive", ticker="NQM5")
+    assert len(df) == 1 and df.iloc[0]["close"] == 101
+    # 1744792560 s = 2025-04-16 08:36:00 UTC = 04:36 New York (EDT)
+    assert df.index[0] == pd.Timestamp("2025-04-16 04:36:00")

@@ -4,6 +4,8 @@ Supported CSV layouts:
   - ninjatrader : `yyyyMMdd HHmmss;open;high;low;close;volume` (no header, ';' sep)
   - firstrate   : `YYYY-MM-DD HH:MM:SS,open,high,low,close,volume` (no header)
   - databento   : header row with `ts_event,open,high,low,close,volume`
+  - massive     : header `ticker,volume,open,close,high,low,window_start,transactions`,
+                  window_start = UTC epoch nanoseconds. Converted to `tz`.
 All timestamps are returned as tz-naive in the file's own timezone; record the
 timezone with the dataset (NinjaTrader exports use the platform's local time).
 """
@@ -14,8 +16,19 @@ import pandas as pd
 COLS = ["open", "high", "low", "close", "volume"]
 
 
-def load_ohlcv(path: str, fmt: str) -> pd.DataFrame:
-    if fmt == "ninjatrader":
+def load_ohlcv(path: str, fmt: str, ticker: str | None = None,
+               tz: str = "America/New_York") -> pd.DataFrame:
+    """`ticker` filters multi-ticker files (massive). `tz` is the output timezone for
+    UTC-based formats; the result is tz-naive local time."""
+    if fmt == "massive":
+        df = pd.read_csv(path)
+        if ticker is not None:
+            df = df[df["ticker"] == ticker]
+        if df.empty:
+            raise ValueError(f"no rows for ticker {ticker!r} in {path}")
+        df["ts"] = (pd.to_datetime(df["window_start"], unit="ns", utc=True)
+                    .dt.tz_convert(tz).dt.tz_localize(None))
+    elif fmt == "ninjatrader":
         df = pd.read_csv(path, sep=";", header=None, names=["ts", *COLS])
         df["ts"] = pd.to_datetime(df["ts"], format="%Y%m%d %H%M%S")
     elif fmt == "firstrate":
