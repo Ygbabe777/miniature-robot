@@ -36,7 +36,7 @@ from ..strategies import INDICATOR_HELP, TEMPLATES
 
 
 LANGS = {"it": "Italian", "en": "English"}
-MAX_CANDLES = 20000
+MAX_CANDLES = 120000                    # about 85 sessions of 1-minute bars
 TFS = ("1min", "5min", "15min", "30min", "60min", "1D")
 
 
@@ -350,6 +350,10 @@ class Lab:
         with self.lock:
             nxt = next(iter(self.pending.items()), None)
         if nxt is None:
+            self._refill()                             # nothing waiting: seed starters, then brainstorm
+            with self.lock:
+                nxt = next(iter(self.pending.items()), None)
+        if nxt is None:
             return False
         sid, item = nxt
         why = self._ap_budget(item["spec"].n_candidates)
@@ -364,12 +368,77 @@ class Lab:
         self.events.emit("lab", "autostart", f"autopilot starts: {item['spec'].name}")
         return not self.start(sid).get("error")
 
+    STARTER_FILES = ("starter.json", "two.json")
+
+    def seed_specs(self) -> int:
+        """The classic families (opening range, VWAP, EMA, breakout, z-score) are tested first, so the lab never sits idle
+        waiting for the first paper. Specs already tested or queued are skipped."""
+        n, lp = 0, self.loop()
+        have = {_fingerprint(v["spec"]) for v in self.pending.values()}
+        for base in (Path(__file__).resolve().parents[3] / "specs", Path("specs")):
+            if not base.is_dir():
+                continue
+            for fn in self.STARTER_FILES:
+                f = base / fn
+                if not f.exists():
+                    continue
+                for d in json.loads(f.read_text()).get("strategies", []):
+                    try:
+                        sp = from_dict(d)
+                    except Exception:
+                        continue
+                    fp = _fingerprint(sp)
+                    if fp not in lp.done_specs and fp not in have:
+                        have.add(fp); self._add_pending(sp, "starter"); n += 1
+            break
+        return n
+
+    def brainstorm(self, now: float | None = None) -> int:
+        """Starters exhausted: the Researcher proposes new hypotheses from what the lab learned (its memory),
+        at most one request every 20 minutes. Every proposal still goes through the same validation and tests."""
+        from ..papers import propose_specs
+        now = now or time.time()
+        if now - getattr(self, "_last_brainstorm", 0) < 20 * 60 or isinstance(self.llm, NoLLM):
+            return 0
+        self._last_brainstorm = now
+        lp = self.loop()
+        llm = self.llm["researcher"] if isinstance(self.llm, dict) else self.llm
+        text = ("BRAINSTORM (no paper this time). Using the lab memory above, propose new, different, testable "
+                "strategies for NQ/MNQ intraday futures: combine untested concepts, avoid what already failed, and give "
+                "an economic mechanism for each. Explain it as if it came from the trading literature on opening "
+                "range, volatility regimes, VWAP and session structure.")
+        n = 0
+        with self.working("research"):
+            self.events.emit("researcher", "working", "brainstorming new hypotheses from the lab memory")
+            try:
+                specs, _ = propose_specs(llm, text, source="lab brainstorm", language=self.language, memory=self.memory_text())
+            except Exception as e:
+                self.events.emit("researcher", "idle", f"brainstorm failed: {e}"[:200])
+                return 0
+            have = {_fingerprint(v["spec"]) for v in self.pending.values()}
+            for sp in specs:
+                fp = _fingerprint(sp)
+                if fp not in lp.done_specs and fp not in have:
+                    have.add(fp); self._add_pending(sp, "brainstorm"); n += 1
+            self.events.emit("researcher", "done", f"brainstorm: {n} new proposals")
+        return n
+
+    def _refill(self) -> None:
+        if self.busy["research"] > 0:
+            return
+        if self.seed_specs() == 0:
+            self.brainstorm()
+
     def autopilot_state(self) -> dict:
         sc = self.scout()
         last = sc.state["last_run"]
         nxt = (last["at"] + self.scout_gap()) if (sc.state["auto"]["enabled"] and last) else None
         self._ap_budget(0)
-        return {"enabled": self.ap["enabled"] and not isinstance(self.llm, NoLLM), "paused": self.ap.get("paused"),
+        enabled = self.ap["enabled"] and not isinstance(self.llm, NoLLM)
+        running = any(j["status"] in ("queued", "running") for j in self.jobs.values())
+        phase = ("off" if not enabled else "paused" if self.ap.get("paused") else "testing" if running
+                 else "researching" if self.busy["research"] > 0 else "waiting")
+        return {"enabled": enabled, "phase": phase, "paused": self.ap.get("paused"),
                 "trials_today": self.ap["trials_today"], "max_trials_per_day": self.ap["max_trials_per_day"],
                 "max_trials_total": self.ap["max_trials_total"], "queue": len(self.pending),
                 "next_search": nxt, "searching": self._scout_running, "working": sorted(self.working_agents()),

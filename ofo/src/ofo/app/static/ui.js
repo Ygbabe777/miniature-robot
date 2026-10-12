@@ -133,7 +133,7 @@
   function renderAutopilot(a) {
     if (window.LabScene) LabScene.setServer(a.working, a.enabled, a.deployed > 0);
     const mins = a.next_search ? Math.max(0, Math.round((a.next_search - Date.now() / 1000) / 60)) : null;
-    const bits = [t('ap_budget', { a: a.trials_today, b: a.max_trials_per_day }), t('ap_queue', { n: a.queue }), t('ap_ready', { n: a.ready })];
+    const bits = [t('ap_phase_' + a.phase), t('ap_budget', { a: a.trials_today, b: a.max_trials_per_day }), t('ap_queue', { n: a.queue }), t('ap_ready', { n: a.ready })];
     if (a.searching) bits.push(t('ap_searching')); else if (mins !== null && a.enabled) bits.push(t('ap_next', { m: mins }));
     const key = JSON.stringify([a.enabled, bits, a.paused, LANG]);
     if (key === apKey) return; apKey = key;
@@ -258,6 +258,7 @@
       });
       lg.innerHTML = `<div><b>${t('ind_title')}:</b> ${html}<span style="color:var(--dim)">(${t('ind_tf', { tf: d.tf })})</span></div>` + (d.help && d.help[LANG] ? `<div style="color:var(--dim)">${esc(d.help[LANG])}</div>` : '');
     }
+    let bumpNote = null;
     async function load() {
       ensure(); fit();
       const days = RNG.find(r => r[0] === rng)[1];
@@ -265,7 +266,7 @@
       const d = await api(`/api/candles?tf=${tf}&days=${days}` + (before ? `&before=${before}` : ''));
       if (d.error === 'too_many') {                       // too many candles: step up to a coarser timeframe
         const next = order[order.indexOf(tf) + 1]; if (!next) { $('#tinfo').textContent = t('t_err', { e: d.error }); return; }
-        tf = next; draw(); return load();
+        bumpNote = { a: tf, b: next }; tf = next; draw(); return load();
       }
       if (d.error) { $('#tinfo').textContent = t('t_err', { e: d.error }); return; }
       symbol = d.symbol; loaded = d.candles;
@@ -273,6 +274,7 @@
       vs.setData(d.candles.map(c => ({ time: c[0], value: c[5], color: c[4] >= c[1] ? THEME.up + '40' : THEME.down + '40' })));
       chart.timeScale().fitContent(); applyMarkers(); drawIndicators();
       last = `${symbol} ${tf} · ` + t('t_sessions', { n: d.n_sessions, a: d.from, b: d.to }); $('#tinfo').textContent = last; note();
+      if (bumpNote) { $('#tinfo').textContent = last + ' · ' + t('t_bumped', bumpNote); bumpNote = null; }
     }
     async function pick(s) {
       slug = s; trades = null;

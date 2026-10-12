@@ -171,3 +171,22 @@ def test_refresh_downloads_new_days_and_rebuilds(tmp_path):
                            download=download, build=build)
     assert out == {"ok": True, "new_files": 1, "rebuilt": True} and calls["args"][0] == "us_futures/min/2025/01/" and calls["n"] == 2
     assert (tmp_path / "NQ_1min.csv.gz").exists()
+
+
+def test_idle_lab_seeds_starters_then_brainstorms_and_starts_testing_by_itself(tmp_path, bars_csv):
+    lab = make(tmp_path, bars_csv)
+    assert not lab.pending and lab.autopilot_state()["phase"] == "waiting"
+    assert lab.autopilot_tick() is True                    # nothing queued: a classic family is seeded and started
+    assert any(j["status"] in ("queued", "running", "done", "error") for j in lab.jobs.values())
+    assert len(lab.pending) >= 1                           # the other starters wait their turn
+    wait_jobs(lab)
+    assert lab.autopilot_state()["phase"] in ("waiting", "paused")
+
+
+def test_brainstorm_asks_the_researcher_with_the_memory_and_is_rate_limited(tmp_path, bars_csv):
+    from test_knowledge import Fake
+    lab = make(tmp_path, bars_csv, llm={"researcher": Fake({"strategies": [SPEC], "concepts": ["opening range"]})})
+    assert lab.brainstorm(now=10_000.0) == 1
+    assert list(lab.pending.values())[0]["origin"] == "brainstorm"
+    assert lab.brainstorm(now=10_100.0) == 0               # at most one request every 20 minutes
+    assert lab.working_agents() == set()
