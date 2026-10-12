@@ -1,0 +1,56 @@
+{
+  "_README": "UNVERIFIED. Collected from third-party websites that DISAGREE with each other. Check every number on the firm's own site (and the exact plan you would buy) before trusting any result, then set verified=true. null = unknown: fill it in. Fees are deliberately null: the EV simulator refuses to run until you enter them.",
+  "_collected": "2026-10-12",
+  "plans": [
+    {
+      "firm": "Topstep", "plan": "Trading Combine 50K", "size_k": 50, "verified": false,
+      "eval": {"start_balance": 50000, "profit_target": 3000, "max_drawdown": 2000, "trailing": "eod",
+               "lock_at_start": true, "daily_loss_limit": null, "min_days": null, "max_days": null, "consistency_pct": 0.5},
+      "payout": {"split": 0.9, "min_winning_days": null, "min_day_profit": null, "min_payout": null, "max_payout": null, "buffer": null, "consistency_pct": null},
+      "fees": {"eval_fee_monthly": null, "activation_fee": null},
+      "max_contracts": 50,
+      "notes": "Sources conflict on: daily loss limit ($1,000 or none/optional), activation and monthly fees, and a 2026 change adding Standard/Consistency payout paths. Consistency 50% applies to the Combine only. No 25K tier found.",
+      "sources": ["https://blog.traderspost.io/article/how-to-get-funded-with-topstep", "https://intercom.help/topstep-llc/en/articles/8284197", "https://tradingfunder.com/topstep-rules"]
+    },
+    {
+      "firm": "Lucid Trading", "plan": "LucidFlex 50K", "size_k": 50, "verified": false,
+      "eval": {"start_balance": 50000, "profit_target": 3000, "max_drawdown": 2000, "trailing": "eod",
+               "lock_at_start": true, "daily_loss_limit": null, "min_days": 2, "max_days": null, "consistency_pct": 0.5},
+      "payout": {"split": 0.9, "min_winning_days": null, "min_day_profit": null, "min_payout": null, "max_payout": null, "buffer": 0, "consistency_pct": null},
+      "fees": {"eval_fee_monthly": null, "activation_fee": null},
+      "max_contracts": 40,
+      "notes": "4 minis / 40 micros. Min days 2 per one source. Funded consistency rule: sources disagree (none vs 40%). Must be flat by 4:45 PM ET. Where the drawdown locks is unconfirmed.",
+      "sources": ["https://blog.traderspost.io/article/how-to-get-funded-with-lucid-trading", "https://proptradingvibes.com/blog/lucid-trading-50k-account-rules", "https://tradetanto.com/learn/lucid-trading-rules-explained-every-plan-rule-and-limit"]
+    },
+    {
+      "firm": "Lucid Trading", "plan": "LucidPro 50K", "size_k": 50, "verified": false,
+      "eval": {"start_balance": 50000, "profit_target": 3000, "max_drawdown": 2000, "trailing": "eod",
+               "lock_at_start": true, "daily_loss_limit": 1200, "min_days": null, "max_days": null, "consistency_pct": null},
+      "payout": {"split": 0.9, "min_winning_days": null, "min_day_profit": null, "min_payout": null, "max_payout": null, "buffer": 100, "consistency_pct": 0.4},
+      "fees": {"eval_fee_monthly": null, "activation_fee": null},
+      "max_contracts": null,
+      "notes": "Daily loss limit $1,200 (optional per one source). Payout needs balance above initial max-loss level + $100. Funded consistency 40% per one source.",
+      "sources": ["https://tradingfunder.com/compare/lucid-trading-vs-apex/", "https://proptradingvibes.com/blog/lucid-trading-consistency-rules"]
+    },
+    {
+      "firm": "Tradeify", "plan": "Growth 50K", "size_k": 50, "verified": false,
+      "eval": {"start_balance": 50000, "profit_target": 3000, "max_drawdown": 2000, "trailing": "eod",
+               "lock_at_start": true, "daily_loss_limit": 1250, "min_days": 1, "max_days": null, "consistency_pct": null},
+      "payout": {"split": 0.9, "min_winning_days": 5, "min_day_profit": null, "min_payout": null, "max_payout": null, "buffer": null, "consistency_pct": 0.35},
+      "fees": {"eval_fee_monthly": null, "activation_fee": null},
+      "max_contracts": null,
+      "notes": "One source: funded drawdown locks at $50,100, 35% funded consistency, 5 profitable days before first payout. The Select 50K plan differs (target $2,500 or $3,000, 40% eval consistency, 3-day minimum).",
+      "sources": ["https://tradecopia.com/propfirms/tradeify", "https://tradingfunder.com/tradeify-rules", "https://www.luxalgo.com/mcp/prop-firm-sim/tradeify-50k-select/"]
+    },
+    {
+      "firm": "My Funded Futures", "plan": "Rapid 50K", "size_k": 50, "verified": false,
+      "eval": {"start_balance": 50000, "profit_target": 3000, "max_drawdown": 2000, "trailing": "eod",
+               "lock_at_start": true, "daily_loss_limit": null, "min_days": 2, "max_days": null, "consistency_pct": 0.5},
+      "payout": {"split": 0.9, "min_winning_days": null, "min_day_profit": null, "min_payout": null, "max_payout": null, "buffer": null, "consistency_pct": null},
+      "fees": {"eval_fee_monthly": null, "activation_fee": null},
+      "max_contracts": null,
+      "notes": "Plans differ a lot: Core (80/20, payout every 5 winning days, ~$77/month, drawdown $1,500 or $2,000 by source), Rapid (90/10), Rapid EOD (30% consistency, 4 days). Activation fee reportedly removed July 2025. Open losses count toward drawdown.",
+      "sources": ["https://tradetanto.com/learn/my-funded-futures-rules-a-trader-s-guide", "https://blog.traderspost.io/article/how-to-get-funded-with-my-funded-futures", "https://www.financemagnates.com/forex/myfundedfutures-trades-intraday-drawdown-for-a-30-consistency-rule/"]
+    }
+  ]
+}

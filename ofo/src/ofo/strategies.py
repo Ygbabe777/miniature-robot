@@ -2,6 +2,9 @@
 computed ONLY from data up to and including that bar (the backtester shifts it)."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Callable
+
 import numpy as np
 import pandas as pd
 
@@ -59,6 +62,69 @@ def flatten_overnight(pos: pd.Series, flat_from: str = "16:45", flat_to: str = "
     stop = pd.Timedelta(hours=int(flat_to[:2]), minutes=int(flat_to[3:]))
     tod = pd.to_timedelta(pos.index.hour, unit="h") + pd.to_timedelta(pos.index.minute, unit="m")
     return pos.where(~((tod > limit) & (tod < stop)), 0.0)
+
+
+def _minutes(index: pd.DatetimeIndex) -> np.ndarray:
+    return np.asarray(index.hour * 60 + index.minute)
+
+
+def orb(bars: pd.DataFrame, or_minutes: int) -> pd.Series:
+    """Opening-range breakout on the US cash open (09:30 exchange time). The range is
+    built from bars starting inside [09:30, 09:30+or_minutes); signals start after it and
+    stop at 16:45. Long above the range high, short below the low, held until flat."""
+    idx = bars.index
+    tod = _minutes(idx)
+    day = idx.normalize()
+    in_or = (tod >= 570) & (tod < 570 + or_minutes)
+    hi = bars["high"].where(in_or).groupby(day).transform("max")
+    lo = bars["low"].where(in_or).groupby(day).transform("min")
+    post = (tod >= 570 + or_minutes) & (tod < 16 * 60 + 45)
+    c = bars["close"]
+    sig = pd.Series(np.nan, index=idx)
+    sig[~post] = 0.0
+    sig[post & (c > hi)] = 1.0
+    sig[post & (c < lo)] = -1.0
+    return _hold(sig)
+
+
+def vwap_dev(bars: pd.DataFrame, window: int, z: float) -> pd.Series:
+    """Fade stretches away from the session VWAP, measured in rolling standard deviations
+    of the deviation. Session VWAP resets with the trading session."""
+    key = bars["session"] if "session" in bars.columns else bars.index.normalize()
+    vol = bars["volume"].astype(float)
+    vwap = (bars["close"] * vol).groupby(key).cumsum() / vol.groupby(key).cumsum()
+    dev = bars["close"] - vwap
+    score = dev / dev.rolling(window).std()
+    sig = pd.Series(np.nan, index=bars.index)
+    sig[score < -z] = 1.0
+    sig[score > z] = -1.0
+    sig[score.abs() < 0.25] = 0.0
+    return _hold(sig)
+
+
+@dataclass(frozen=True)
+class Template:
+    fn: Callable
+    params: dict            # name -> (type, lo, hi): hard bounds a spec must respect
+    valid: Callable = lambda p: True
+    control: bool = False   # zero-edge controls are never offered to the LLM
+    doc: str = ""
+
+
+TEMPLATES = {
+    "ema_cross": Template(ema_cross, {"fast": (int, 2, 60), "slow": (int, 5, 400)},
+                          lambda p: p["fast"] < p["slow"], doc="trend: fast/slow EMA cross"),
+    "breakout": Template(breakout, {"lookback": (int, 5, 300)},
+                         doc="trend: Donchian channel breakout"),
+    "mean_reversion": Template(mean_reversion, {"window": (int, 10, 300), "z": (float, 0.5, 4.0)},
+                               doc="reversion: z-score of close vs rolling mean"),
+    "orb": Template(orb, {"or_minutes": (int, 5, 120)},
+                    doc="opening-range breakout at the 09:30 ET cash open"),
+    "vwap_dev": Template(vwap_dev, {"window": (int, 10, 300), "z": (float, 0.5, 4.0)},
+                         doc="reversion: deviation from session VWAP"),
+    "random_control": Template(random_control, {"seed": (int, 0, 100_000)}, control=True,
+                               doc="zero-edge control"),
+}
 
 
 GRIDS = {
