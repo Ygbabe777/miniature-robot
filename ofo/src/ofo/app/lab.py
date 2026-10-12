@@ -76,9 +76,13 @@ class Lab:
         self.busy = {"research": 0, "job": 0, "chat": 0}          # real activity, not event timeouts
         self.ap_file = self.data / "autopilot.json"
         first = not self.ap_file.exists()
-        self.ap = {"enabled": True, "max_trials_per_day": 4000, "max_trials_total": 60000, "day": "", "trials_today": 0}
+        self.ap = {"v": 2, "enabled": True, "max_trials_per_day": 30000, "max_trials_total": 300000, "day": "", "trials_today": 0}
         if not first:
-            self.ap.update(json.loads(self.ap_file.read_text()))
+            saved = json.loads(self.ap_file.read_text())
+            if saved.get("v", 1) < 2:                 # v1 capped at 4000/day: queued strategies sat there for hours
+                saved.pop("max_trials_per_day", None); saved.pop("max_trials_total", None)
+            self.ap.update(saved)
+            self.ap["v"] = 2
         self.ap_first_run = first
         self.dossier_dir = self.work / "dossiers"
         self.obs_file = self.data / "obsidian.json"
@@ -348,16 +352,20 @@ class Lab:
         if any(j["status"] in ("queued", "running") for j in self.jobs.values()):
             return False
         with self.lock:
-            nxt = next(iter(self.pending.items()), None)
-        if nxt is None:
+            queue = list(self.pending.items())
+        if not queue:
             self._refill()                             # nothing waiting: seed starters, then brainstorm
             with self.lock:
-                nxt = next(iter(self.pending.items()), None)
-        if nxt is None:
+                queue = list(self.pending.items())
+        if not queue:
             return False
-        sid, item = nxt
-        why = self._ap_budget(item["spec"].n_candidates)
-        if why:
+        # first strategy that FITS the budget: one huge proposal must not block the small ones behind it
+        why = "day"
+        for sid, item in queue:
+            why = self._ap_budget(item["spec"].n_candidates)
+            if not why:
+                break
+        else:
             if self.ap.get("paused") != why:
                 self.ap["paused"] = why
                 self.events.emit("lab", "budget", f"autopilot paused: {why} trial budget reached")

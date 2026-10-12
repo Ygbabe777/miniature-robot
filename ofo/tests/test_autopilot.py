@@ -190,3 +190,23 @@ def test_brainstorm_asks_the_researcher_with_the_memory_and_is_rate_limited(tmp_
     assert list(lab.pending.values())[0]["origin"] == "brainstorm"
     assert lab.brainstorm(now=10_100.0) == 0               # at most one request every 20 minutes
     assert lab.working_agents() == set()
+
+
+def test_a_huge_proposal_does_not_block_the_small_ones_behind_it(tmp_path, bars_csv):
+    lab = make(tmp_path, bars_csv)
+    big = from_dict(SPEC)                                              # 16 candidates
+    small = from_dict({**SPEC, "name": "Tiny", "ranges": {"or_minutes": [15], "retest_bars": [3], "tol": [0.0]},
+                       "timeframes": ["15min"]})                       # 1 candidate
+    lab._add_pending(big, "paper"); lab._add_pending(small, "paper")
+    lab.ap["max_trials_per_day"] = 5
+    assert lab.autopilot_tick() is True
+    wait_jobs(lab)
+    assert [j["name"] for j in lab.jobs.values()] == ["Tiny"] and [v["spec"].name for v in lab.pending.values()] == [big.name]
+    assert lab.autopilot_tick() is False and lab.autopilot_state()["paused"] == "day"
+
+
+def test_old_autopilot_caps_are_raised_on_upgrade(tmp_path, bars_csv):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "autopilot.json").write_text(json.dumps({"enabled": True, "max_trials_per_day": 4000, "max_trials_total": 60000}))
+    lab = make(tmp_path, bars_csv)
+    assert lab.ap["max_trials_per_day"] == 30000 and lab.ap["max_trials_total"] == 300000

@@ -105,7 +105,7 @@
     $('#c-ai').textContent = s.ai ? t('ai_on') : t('ai_off'); $('#c-ai-chip').className = 'chip ' + (s.ai ? 'ok' : 'bad');
     $('#ideas').innerHTML = s.ideas.length ? s.ideas.map(i => `<div><span>${esc(i.name)}</span><span>${i.read ? '<i>' + t('read_ok') + '</i>' : i.kb + ' KB'}</span></div>`).join('') : `<div class="empty">${t('no_files')}</div>`;
     $('#n-strat').textContent = s.pending.length || ''; $('#n-strat').style.display = s.pending.length ? 'inline' : 'none';
-    const pend = $('#pending'); pend.innerHTML = s.pending.length ? `<h2>${t('pending_title')}</h2>` : '';
+    const pend = $('#pending'); pend.innerHTML = s.pending.length ? `<h2>${t(s.autopilot && s.autopilot.enabled ? 'pending_auto' : 'pending_title')}</h2>` : '';
     s.pending.forEach(sp => { const o = document.createElement('div'); o.style.cssText = 'color:var(--dim);font-size:10px;margin-bottom:2px'; o.textContent = t('origin') + ': ' + t('o_' + sp.origin); pend.appendChild(o); pend.appendChild(specCard(sp)); });
     $('#jobs').innerHTML = s.jobs.filter(j => j.status === 'queued' || j.status === 'running').map(j => `<div class="card"><span class="spin"></span>${t('job_run', { n: '<b>' + esc(j.name) + '</b>', c: j.n_candidates })}</div>`).join('')
       + s.jobs.filter(j => j.status === 'error').slice(-1).map(j => `<div class="card" style="border-color:var(--down)">${t('job_err', { n: esc(j.name), e: esc(j.error) })}</div>`).join('');
