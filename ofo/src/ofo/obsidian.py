@@ -9,6 +9,7 @@ dashboard nicer). Everything OFO writes lives in <vault>/OFO/ and nowhere else:
   Deployment/<name>.md   paper-trading ledger summary
   Concetti/<concept>.md  the knowledge network: every concept links the papers and strategies about it, with what was learned
   Paper/<title>.md       papers the Scout found (abstract, why chosen, strategies that came from it)
+  Proposte AI.md         what the agents think is worth your attention (updated by them, you annotate below the marker)
   Idee/<A x B>.md        new ideas the Researcher built by connecting two concepts (with links to both)
   Diario/<date>.md       what happened each day
   Ideas/                 YOU drop notes here; the Researcher reads them like PDFs (treated as untrusted text)
@@ -34,14 +35,18 @@ T = {
            "notes": "Le mie note", "papers": "Strategie nate da questo paper", "none": "nessuna ancora",
            "ready": "Pronte", "deployed": "In linea (paper)", "recent": "Ultimi test", "events": "Eventi del giorno",
            "idea_hint": "Metti qui le tue note: il Researcher le legge come i PDF.", "abstract": "Abstract",
-           "why": "Perché è stato scelto", "concepts": "Concetti", "related": "Concetti collegati", "learned": "Cosa abbiamo imparato",
+           "why": "Perché è stato scelto", "prop_title": "Proposte dell'AI", "prop_ok": "Approvate dal Giudice",
+           "prop_prom": "Promettenti (reggono i controlli sui parametri ma non il Giudice)", "prop_ideas": "Nuove idee da collegamenti",
+           "prop_next": "Prossimo passo", "prop_hint": "Scritto dagli agenti. Annota sotto la riga di fine: resta.", "concepts": "Concetti", "related": "Concetti collegati", "learned": "Cosa abbiamo imparato",
            "tested": "Strategie testate", "ledger": "Registro paper trading", "size": "Dimensione", "empty": "–"},
     "en": {"rationale": "Hypothesis", "source": "Source", "verdict": "Verdict", "surface": "Parameter robustness",
            "exits": "Risk / reward", "planner": "Planner", "auditor": "Auditor", "dossier": "Ready strategy",
            "notes": "My notes", "papers": "Strategies from this paper", "none": "none yet",
            "ready": "Ready", "deployed": "Deployed (paper)", "recent": "Latest tests", "events": "Events of the day",
            "idea_hint": "Drop your notes here: the Researcher reads them like PDFs.", "abstract": "Abstract",
-           "why": "Why it was picked", "concepts": "Concepts", "related": "Related concepts", "learned": "What we learned",
+           "why": "Why it was picked", "prop_title": "AI proposals", "prop_ok": "Approved by the Judge",
+           "prop_prom": "Promising (pass the parameter checks but not the Judge)", "prop_ideas": "New ideas from connections",
+           "prop_next": "Next step", "prop_hint": "Written by the agents. Annotate below the end line: it stays.", "concepts": "Concepts", "related": "Related concepts", "learned": "What we learned",
            "tested": "Strategies tested", "ledger": "Paper-trading ledger", "size": "Size", "empty": "–"},
 }
 
@@ -232,6 +237,20 @@ def sync(vault: str | Path, studies: list[dict], dossiers: list[dict], deploymen
     for c, d in ((graph or {}).get("concepts") or {}).items():
         front, body = concept_note(c, d, L)
         wrote["concepts"] += write_note(root / "Concetti" / f"Concetto - {safe(c)}.md", front, body, L["notes"])
+    ok = [st for st in studies if st["report"]["locked"]["status"] == "APPROVED"]
+    prom = [st for st in studies if st not in ok and st["report"]["surface"]["robust"] and st["report"]["wf_oos_pnl"] > 0]
+    ideas = sorted(p.stem for p in (root / "Idee").glob("*.md"))
+
+    def entry(st):
+        r, a, pl = st["report"], st.get("auditor") or {}, st.get("planner") or {}
+        nxt = a.get("next_step") or pl.get("reason") or ""
+        return [f"- [[{safe(r['name'])}]] — {r['locked']['status']}", f"  - {r.get('rationale', '')[:200]}"] + (
+            [f"  - {L['prop_next']}: {nxt[:200]}"] if nxt else [])
+    prop = [f"# {L['prop_title']}", "", L["prop_hint"], "", f"## {L['prop_ok']}"] + (sum((entry(x) for x in ok), []) or [f"- {L['none']}"])
+    prop += ["", f"## {L['prop_prom']}"] + (sum((entry(x) for x in prom), []) or [f"- {L['none']}"])
+    prop += ["", f"## {L['prop_ideas']}"] + ([f"- [[{x}]]" for x in ideas] or [f"- {L['none']}"])
+    wrote["proposals"] = write_note(root / "Proposte AI.md", {"tags": ["ofo/proposals"], "approved": len(ok), "promising": len(prom)},
+                                    "\n".join(prop), L["notes"])
     today = now.strftime("%Y-%m-%d")
     todays = [e for e in events if e.get("t", "")[:10] == today and (e["agent"], e["type"]) in KEY_EVENTS]
     if todays:
@@ -239,7 +258,7 @@ def sync(vault: str | Path, studies: list[dict], dossiers: list[dict], deploymen
         wrote["diary"] += write_note(root / "Diario" / f"{today}.md", {"tags": ["ofo/diary"], "date": today},
                                      f"# {today}\n\n## {L['events']}\n" + "\n".join(lines), L["notes"])
     recent = sorted(studies, key=lambda s: s.get("saved_at") or "", reverse=True)[:10]
-    dash = [f"# OFO", "", f"{L['idea_hint']} → `OFO/Ideas/`", "",
+    dash = [f"# OFO", "", f"{L['idea_hint']} → `OFO/Ideas/`", "", f"[[Proposte AI]]", "",
             f"## {L['ready']} ({len(dossiers)})"] + ([f"- [[{safe(d['name'])} (pronta)]]" for d in dossiers] or [f"- {L['none']}"])
     dash += ["", f"## {L['deployed']}"] + ([f"- [[{safe(x['name'])}]] — {x['status']}" for x in deployments if x.get("status") != "not_deployed"] or [f"- {L['none']}"])
     dash += ["", f"## {L['recent']}"] + [f"- [[{safe(s['report']['name'])}]] — {s['report']['locked']['status']}" for s in recent]

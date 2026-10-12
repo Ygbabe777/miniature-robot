@@ -75,3 +75,16 @@ def test_lab_exports_and_reads_notes_from_the_vault(tmp_path, bars_csv):
         lab.set_obsidian(str(tmp_path / "nope"))
     again = make(tmp_path, bars_csv)                                  # a restart remembers the vault
     assert again.obsidian_state()["vault"] == str(vault)
+
+
+def test_proposals_note_lists_approved_promising_and_connection_ideas(tmp_path):
+    root = ob.ensure_vault(tmp_path)
+    (root / "Idee" / "a x b.md").write_text("x", encoding="utf-8")
+    good = study("Good one", "APPROVED")
+    prom = study("Promising one", "REJECTED"); prom["report"]["surface"]["robust"] = True; prom["report"]["wf_oos_pnl"] = 50.0
+    junk = study("Junk", "REJECTED"); junk["report"]["surface"]["robust"] = False
+    res = ob.sync(tmp_path, [good, prom, junk], [], [], {}, [], "it")
+    assert res["proposals"] == 1
+    txt = (root / "Proposte AI.md").read_text(encoding="utf-8")
+    assert "[[Good one]]" in txt and "[[Promising one]]" in txt and "Junk" not in txt and "[[a x b]]" in txt
+    assert "[[Proposte AI]]" in (root / "OFO.md").read_text(encoding="utf-8")
