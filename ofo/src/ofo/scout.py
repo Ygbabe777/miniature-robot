@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .agents.roles import make_curator
 from .papers import relevance
-from .web import Polite, WebError, download_pdf, pdf_allowed, search_arxiv, search_semantic_scholar
+from .web import Polite, WebError, download_pdf, pdf_allowed, search_arxiv, search_semantic_scholar, search_ssrn
 
 TOPICS = [
     "opening range breakout futures", "intraday momentum index futures", "time series momentum intraday",
@@ -41,13 +41,14 @@ def safe_name(pid: str) -> str:
 
 class Scout:
     def __init__(self, workdir, ideas_dir, llm=None, events=None, fetch=None, now=time.time, language: str = "Italian",
-                 topics=None, use_semantic_scholar: bool = True, queries_per_run: int = 3, max_picks: int = 4):
+                 topics=None, use_semantic_scholar: bool = True, queries_per_run: int = 3, max_picks: int = 4,
+                 use_ssrn: bool = True):
         self.dir = Path(workdir); self.dir.mkdir(parents=True, exist_ok=True)
         self.out = Path(ideas_dir) / "web"
         self.llm, self.events, self.now, self.language = llm, events, now, language
         self.fetch = fetch or Polite()
         self.topics = topics or TOPICS
-        self.use_s2, self.queries_per_run, self.max_picks = use_semantic_scholar, queries_per_run, max_picks
+        self.use_s2, self.queries_per_run, self.max_picks, self.use_ssrn = use_semantic_scholar, queries_per_run, max_picks, use_ssrn
         self.file = self.dir / "scout_state.json"
         self.state = json.loads(self.file.read_text()) if self.file.exists() else {}
         self.state.setdefault("queries", {}); self.state.setdefault("papers", {})
@@ -72,6 +73,8 @@ class Scout:
                 batch = search_arxiv(q, self.fetch)
                 if self.use_s2:
                     batch += search_semantic_scholar(q)
+                if self.use_ssrn:
+                    batch += search_ssrn(q, self.fetch)
             except WebError as e:
                 self._emit("error", f"{q}: {e}")
                 continue
@@ -120,13 +123,17 @@ class Scout:
                     self._emit("download", f"{p['title'][:90]}", {"url": p["url"], "why": p["why"]})
                 except WebError as e:
                     rec["status"] = "failed"; self._emit("error", f"download failed: {e}")
+            elif p["source"] == "ssrn":
+                rec["status"] = "manual"                  # SSRN PDFs need a login: the owner downloads them into ideas/
+                self._emit("manual", f"SSRN: {p['title'][:80]} - download it from SSRN and drop it in ideas/", {"url": p["url"], "why": p["why"]})
             else:
                 rec["status"] = "no open PDF"
             self.state["papers"][p["id"]] = rec
         for p in cands:                                  # remember rejected ones too, never show them again
             self.state["papers"].setdefault(p["id"], {"title": p["title"], "url": p["url"], "published": p["published"],
                                                       "why": "", "source": p["source"], "found": self.now(), "status": "skipped"})
-        summary = {"at": self.now(), "queries": queries, "found": len(cands), "downloaded": got}
+        summary = {"at": self.now(), "queries": queries, "found": len(cands), "downloaded": got,
+                   "manual": sum(1 for p in picks if p["source"] == "ssrn")}
         self.state["last_run"] = summary
         self._save()
         self._emit("done", f"{len(cands)} new candidates, {got} papers downloaded", summary)

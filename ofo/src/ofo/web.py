@@ -122,6 +122,29 @@ def search_semantic_scholar(query: str, fetch=None, limit: int = 8) -> list[dict
     return out
 
 
+def search_ssrn(query: str, fetch=None, rows: int = 8) -> list[dict]:
+    """SSRN papers through Crossref's official API (every SSRN item has a DOI with prefix 10.2139).
+    Metadata only: SSRN offers no public API and its PDFs need a login and acceptance of its terms,
+    so these are listed for the owner to download by hand. Best effort: failures return []."""
+    fetch = fetch or Polite(interval=1.0)
+    url = ("https://api.crossref.org/works?" + urllib.parse.urlencode(
+        {"query": query, "filter": "prefix:10.2139", "rows": rows, "select": "DOI,title,abstract,issued"}))
+    try:
+        items = json.loads(fetch(url))["message"]["items"]
+    except (WebError, ValueError, KeyError):
+        return []
+    out = []
+    for it in items:
+        doi, title = it.get("DOI", ""), _clean((it.get("title") or [""])[0])
+        if not doi or not title:
+            continue
+        abstract = _clean(re.sub(r"<[^>]+>", " ", it.get("abstract") or "")).removeprefix("Abstract").strip()
+        year = ((it.get("issued") or {}).get("date-parts") or [[""]])[0][0]
+        out.append({"id": "ssrn:" + doi.lower().split("ssrn.")[-1], "source": "ssrn", "title": title, "abstract": abstract,
+                    "url": f"https://doi.org/{doi}", "pdf_url": "", "published": str(year or ""), "authors": []})
+    return out
+
+
 def pdf_allowed(url: str) -> bool:
     try:
         u = urllib.parse.urlparse(url)

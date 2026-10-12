@@ -24,12 +24,18 @@ def feed(papers=PAPERS):
 
 
 PDF = b"%PDF-1.4 fake body"
+CROSSREF = json.dumps({"message": {"items": [
+    {"DOI": "10.2139/SSRN.7008318", "title": ["Intraday Momentum in Spot FX and Currency Futures"], "issued": {"date-parts": [[2025]]},
+     "abstract": "<jats:p>Abstract We test trading rules on futures price returns and volatility with a momentum strategy in the market.</jats:p>"},
+    {"DOI": "10.2139/ssrn.123", "title": [], "abstract": "x"}]}}).encode()
 
 
 class FakeNet:
     def __init__(self, papers=PAPERS): self.papers, self.urls = papers, []
     def __call__(self, url, **kw):
         self.urls.append(url)
+        if "crossref" in url:
+            return CROSSREF
         return PDF if "/pdf/" in url else feed(self.papers)
 
 
@@ -59,7 +65,7 @@ def test_filters_drop_non_financial_noise():
 
 def scout(tmp_path, llm, papers=PAPERS, **kw):
     net = FakeNet(papers)
-    return Scout(tmp_path / "w", tmp_path / "ideas", llm, EventLog(tmp_path / "e.jsonl"), fetch=net, use_semantic_scholar=False,
+    return Scout(tmp_path / "w", tmp_path / "ideas", llm, EventLog(tmp_path / "e.jsonl"), fetch=net, use_semantic_scholar=False, use_ssrn=kw.pop("ssrn", False),
                  topics=["topic a", "topic b", "topic c", "topic d"], **kw), net
 
 
@@ -127,3 +133,22 @@ def test_any_curator_failure_falls_back_to_keywords_instead_of_stopping(tmp_path
     assert res["downloaded"] == 2 and res["found"] == 2
     msgs = [e["message"] for e in EventLog(tmp_path / "e.jsonl").read() if e["type"] == "error"]
     assert any("keyword ranking" in m for m in msgs)
+
+
+def test_ssrn_papers_are_found_through_crossref_but_never_downloaded(tmp_path):
+    items = web.search_ssrn("intraday momentum", fetch=lambda u, **k: CROSSREF)
+    assert len(items) == 1                                             # the entry without a title is dropped
+    p = items[0]
+    assert p["id"] == "ssrn:7008318" and p["url"] == "https://doi.org/10.2139/SSRN.7008318" and p["pdf_url"] == "" and p["published"] == "2025"
+    assert p["abstract"].startswith("We test trading rules") and "<" not in p["abstract"]
+    assert web.search_ssrn("x", fetch=lambda u, **k: b"not json") == []        # a bad answer never raises
+    pick = json.dumps({"picks": [{"id": "ssrn:7008318", "why": "momentum intraday FX/futures"}]})
+    sc, net = scout(tmp_path, Scripted(curator=[pick]), ssrn=True)
+    res = sc.run_once()
+    assert res["manual"] == 1 and res["downloaded"] == 0
+    st = {p["id"]: p for p in sc.public_state()["papers"]}["ssrn:7008318"]
+    assert st["status"] == "manual" and st["url"].startswith("https://doi.org/")
+    assert not any("ssrn.com" in u for u in net.urls)                  # SSRN's own site is never contacted
+    assert not list((tmp_path / "ideas").rglob("*ssrn*"))              # nothing was written for it
+    kinds = [e["type"] for e in EventLog(tmp_path / "e.jsonl").read() if e["agent"] == "scout"]
+    assert "manual" in kinds

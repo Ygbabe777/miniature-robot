@@ -133,3 +133,4 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 .spapers a{color:var(--txt);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .spapers a:hover{text-decoration:underline}
 .spapers i{font-style:normal;color:var(--dim);white-space:nowrap} .spapers i.ok{color:var(--up)}
 .tlegend{font-size:11px;line-height:1.5;margin:2px 0 6px;min-height:0}
+.spapers i.man{color:var(--warn)}
