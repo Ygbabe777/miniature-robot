@@ -60,8 +60,10 @@ def validate(df: pd.DataFrame) -> dict:
 
 def resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     """Aggregate bars, e.g. rule='5min', '15min', '1h'. Empty buckets are dropped."""
-    out = df.resample(rule, label="left", closed="left").agg(
-        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+    agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    if "session" in df.columns:
+        agg["session"] = "last"
+    out = df.resample(rule, label="left", closed="left").agg(agg)
     return out.dropna(subset=["close"])
 
 

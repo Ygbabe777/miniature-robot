@@ -41,8 +41,14 @@ def run_backtest(bars: pd.DataFrame, position, contract: Contract,
     cost = traded * (contract.commission_per_side
                      + slippage_ticks * contract.tick_value)
     out = pd.DataFrame({"pnl": gross - cost, "position": held})
+    if "session" in bars.columns:
+        out["session"] = bars["session"]
     return out
 
 
 def daily_pnl(result: pd.DataFrame) -> pd.Series:
-    return result["pnl"].groupby(result.index.normalize()).sum()
+    """Per trading session when a `session` column exists (futures sessions start the
+    evening before and prop firms count the day by session), else per calendar day."""
+    key = pd.to_datetime(result["session"]) if "session" in result.columns \
+        else result.index.normalize()
+    return result["pnl"].groupby(key).sum()
