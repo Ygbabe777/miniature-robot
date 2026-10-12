@@ -106,14 +106,14 @@
     $('#ideas').innerHTML = s.ideas.length ? s.ideas.map(i => `<div><span>${esc(i.name)}</span><span>${i.read ? '<i>' + t('read_ok') + '</i>' : i.kb + ' KB'}</span></div>`).join('') : `<div class="empty">${t('no_files')}</div>`;
     $('#n-strat').textContent = s.pending.length || ''; $('#n-strat').style.display = s.pending.length ? 'inline' : 'none';
     const pend = $('#pending'); pend.innerHTML = s.pending.length ? `<h2>${t(s.autopilot && s.autopilot.enabled ? 'pending_auto' : 'pending_title')}</h2>` : '';
-    s.pending.forEach(sp => { const o = document.createElement('div'); o.style.cssText = 'color:var(--dim);font-size:10px;margin-bottom:2px'; o.textContent = t('origin') + ': ' + t('o_' + sp.origin); pend.appendChild(o); pend.appendChild(specCard(sp)); });
+    s.pending.forEach(sp => { const o = document.createElement('div'); o.style.cssText = 'color:var(--dim);font-size:10px;margin-bottom:2px'; o.textContent = t('origin') + ': ' + t('o_' + sp.origin) + (sp.market ? ' · ' + sp.market : ''); pend.appendChild(o); pend.appendChild(specCard(sp)); });
     $('#jobs').innerHTML = s.jobs.filter(j => j.status === 'queued' || j.status === 'running').map(j => `<div class="card"><span class="spin"></span>${t('job_run', { n: '<b>' + esc(j.name) + '</b>', c: j.n_candidates })}</div>`).join('')
       + s.jobs.filter(j => j.status === 'error').slice(-1).map(j => `<div class="card" style="border-color:var(--down)">${t('job_err', { n: esc(j.name), e: esc(j.error) })}</div>`).join('');
     $('#studies').innerHTML = `<h2>${t('studies_title')}</h2>` + (s.strategies.length ? s.strategies.map(x => `<div class="row" data-slug="${esc(x.slug)}"><div><b>${esc(x.name)}</b><small>${esc(x.template)} · ${x.n_candidates} ${t('combos')} · ${t('med_sharpe')} ${num(x.median_sharpe, 3)} · ${x.robust ? t('robust') : t('fragile')}</small></div><span class="badge b-${x.status}">${t('v_' + x.status)}</span></div>`).join('') : `<div class="empty">${t('none_yet')}</div>`);
     $('#studies').querySelectorAll('.row').forEach(r => r.onclick = () => openDetail(r.dataset.slug));
     $('#reqs').innerHTML = s.template_requests.length ? `<h2>${t('reqs_title')}</h2>` + s.template_requests.map(r => `<div class="card"><b>${esc(r.name)}</b><div class="meta">${esc(r.when)}</div>${esc(r.description)}</div>`).join('') : '';
     if (window.LabScene) LabScene.setTrader(s.strategies.filter(x => x.status === 'APPROVED').map(x => x.name), { wait: t('tr_wait'), desk: t('tr_desk'), ready: t('tr_ready'), head: t('tr_head'), none: t('tr_none') });
-    trader.symbol = s.symbol; trader.setStrategies(s.strategies);
+    trader.symbol = s.symbol; trader.setMarkets(s.markets, s.primary); trader.setStrategies(s.strategies);
   }
   async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); if (s.autopilot) renderAutopilot(s.autopilot); if (s.obsidian) renderObsidian(s.obsidian); } catch (e) {} }
 
@@ -180,7 +180,7 @@
     const TFS = [['1min', '1m'], ['5min', '5m'], ['15min', '15m'], ['30min', '30m'], ['60min', '1h'], ['1D', '1D']];
     const RNG = [['1D', 1, '1min'], ['5D', 5, '5min'], ['1M', 21, '30min'], ['3M', 63, '60min'], ['6M', 126, '1D'], ['1Y', 252, '1D'], ['ALL', 'all', '1D']];
     let tf = '15min', rng = '5D', chart = null, cs = null, vs = null, last = null, symbol = 'NQ', before = null;
-    let trades = null, loaded = [], slug = '', listKey = '', indSeries = [];
+    let trades = null, loaded = [], slug = '', listKey = '', indSeries = [], market = '', markets = [];
     const order = TFS.map(x => x[0]);
     const seg = (el, items, cur, fn) => { el.innerHTML = items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${label}</button>`).join(''); el.querySelectorAll('button').forEach(b => b.onclick = () => fn(b.dataset.k)); };
     function draw() {
@@ -264,7 +264,7 @@
       ensure(); fit();
       const days = RNG.find(r => r[0] === rng)[1];
       $('#tinfo').textContent = t('t_loading');
-      const d = await api(`/api/candles?tf=${tf}&days=${days}` + (before ? `&before=${before}` : ''));
+      const d = await api(`/api/candles?tf=${tf}&days=${days}` + (before ? `&before=${before}` : '') + (market ? `&market=${market}` : ''));
       if (d.error === 'too_many') {                       // too many candles: step up to a coarser timeframe
         const next = order[order.indexOf(tf) + 1]; if (!next) { $('#tinfo').textContent = t('t_err', { e: d.error }); return; }
         bumpNote = { a: tf, b: next }; tf = next; draw(); return load();
@@ -283,6 +283,7 @@
       const d = await api('/api/trades/' + encodeURIComponent(s));
       if (d.error) { note(); return; }
       trades = d;
+      if (d.market && d.market !== market) { market = d.market; $('#tmarket').value = market; }
       const lastTrade = d.trades.length ? d.trades[d.trades.length - 1].session : null;
       if (lastTrade) {                                    // show the most recent trades, on the strategy's own timeframe
         const dt = new Date(lastTrade + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + 1);
@@ -291,12 +292,19 @@
       } else { applyMarkers(); drawIndicators(); note(); }
     }
     $('#tstrat').onchange = (e) => pick(e.target.value);
+    $('#tmarket').onchange = (e) => { market = e.target.value; last = null; load(); };
+    function setMarkets(list, primary) {
+      if (!list || JSON.stringify(list) === JSON.stringify(markets)) return;
+      markets = list; if (!market) market = primary;
+      $('#tmarket').innerHTML = list.map(m => `<option value="${m.sym}">${esc(m.name)} (${m.micro})</option>`).join(''); $('#tmarket').value = market;
+      $('#tmwrap').style.display = list.length > 1 ? '' : 'none';
+    }
     function setStrategies(list) {
       const key = list.map(x => x.slug).join('|'); if (key === listKey) return; listKey = key;
       $('#tstrat').innerHTML = `<option value="">${t('t_none')}</option>` + list.map(x => `<option value="${esc(x.slug)}">${esc(x.name)} · ${t('v_' + x.status)}</option>`).join('');
       $('#tstrat').value = slug;
     }
-    return { show() { draw(); ensure(); setTimeout(() => { fit(); if (!last) load(); }, 30); }, fit, setStrategies, set symbol(v) { symbol = v; }, get symbol() { return symbol; } };
+    return { show() { draw(); ensure(); setTimeout(() => { fit(); if (!last) load(); }, 30); }, fit, setStrategies, setMarkets, set symbol(v) { symbol = v; }, get symbol() { return symbol; } };
   })();
   (async () => {   // the same data on the 3D trading monitors
     try { const d = await api('/api/candles?tf=15min&days=3'); if (d.candles && window.LabScene) LabScene.setTraderChart(d.candles, d.symbol); } catch (e) {}

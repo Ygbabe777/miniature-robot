@@ -64,7 +64,8 @@ def build(studies: list[dict], papers: dict, specs_dir: Path, notes: dict | None
         paper_concepts[p["title"]] = cs
         file_title[stem] = p["title"]
     strategy_concepts, concepts = {}, defaultdict(lambda: {"papers": [], "strategies": [], "gates": Counter(),
-                                                           "verdicts": Counter()})
+                                                           "verdicts": Counter(), "bym": defaultdict(Counter)})
+    tmpl_market: dict = defaultdict(lambda: defaultdict(Counter))      # template -> market -> verdict counts
     for title, cs in paper_concepts.items():
         for c in cs:
             concepts[c]["papers"].append(title)
@@ -77,7 +78,10 @@ def build(studies: list[dict], papers: dict, specs_dir: Path, notes: dict | None
             cs.append(tc)
         strategy_concepts[rep["name"]] = cs
         status = rep["locked"]["status"]
+        mk = rep.get("market") or "NQ"
+        tmpl_market[rep["template"]][mk][status] += 1
         for c in cs:
+            concepts[c]["bym"][mk][status] += 1
             concepts[c]["strategies"].append(rep["name"])
             concepts[c]["verdicts"][status] += 1
             for g in failed_gates(rep):
@@ -116,8 +120,11 @@ def build(studies: list[dict], papers: dict, specs_dir: Path, notes: dict | None
         out[c] = {"papers": sorted(set(d["papers"])), "strategies": sorted(set(d["strategies"])),
                   "tested": n, "approved": ok, "gates": dict(d["gates"]),
                   "related": [x for x, _ in co[c].most_common(6)], "lessons": lessons,
-                  "owner_notes": [t[:300] for t in ann.get(c, [])][:3]}
-    return {"concepts": out, "paper_concepts": paper_concepts, "strategy_concepts": strategy_concepts}
+                  "owner_notes": [t[:300] for t in ann.get(c, [])][:3],
+                  "by_market": {m: {"tested": sum(v.values()), "approved": v.get("APPROVED", 0)} for m, v in d["bym"].items()}}
+    templates = {t: {m: {"tested": sum(v.values()), "approved": v.get("APPROVED", 0)} for m, v in ms.items()}
+                 for t, ms in tmpl_market.items()}
+    return {"concepts": out, "paper_concepts": paper_concepts, "strategy_concepts": strategy_concepts, "templates": templates}
 
 
 def memory_text(graph: dict, limit: int = 1800) -> str:
@@ -127,6 +134,8 @@ def memory_text(graph: dict, limit: int = 1800) -> str:
         if d["tested"]:
             gates = ", ".join(f"{g}" for g in list(d["gates"])[:2])
             rows.append(f"- {c}: {d['tested']} tested, {d['approved']} approved" + (f"; usually fails: {gates}" if gates and not d["approved"] else ""))
+    mk_rows = [f"- {t}: " + ", ".join(f"{m} {v['tested']} tested/{v['approved']} approved" for m, v in sorted(ms.items()))
+               for t, ms in graph.get("templates", {}).items() if len(ms) > 1 or any(v["approved"] for v in ms.values())][:8]
     unexplored = [c for c, d in graph["concepts"].items() if not d["tested"]][:8]
     owner = [f"- {c}: \"{t}\"" for c, d in graph["concepts"].items() for t in d.get("owner_notes", [])[:1]][:5]
     if not rows and not unexplored:
@@ -134,6 +143,8 @@ def memory_text(graph: dict, limit: int = 1800) -> str:
     txt = "WHAT THIS LAB ALREADY LEARNED (facts from past tests; use them):\n" + "\n".join(rows[:12])
     if unexplored:
         txt += "\nConcepts read but not yet tested: " + ", ".join(unexplored)
+    if mk_rows:
+        txt += "\nResults by market (an idea can work on one index and fail on another):\n" + "\n".join(mk_rows)
     if owner:
         txt += "\nNotes written by the OWNER in Obsidian (their opinion, not a test result):\n" + "\n".join(owner)
     txt += ("\nDo not re-propose an idea that failed here unless the text brings a NEW mechanism; "

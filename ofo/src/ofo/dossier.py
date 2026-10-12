@@ -29,7 +29,7 @@ T = {
         "head_slow": "{name}: approvata dal Giudice ma TROPPO LENTA per l'obiettivo di {days} giorni",
         "strat": "Strategia: {doc} ({tmpl}) su barre {tf}, parametri {params}. {why}",
         "src": " Fonte: {src}.",
-        "size": "Per passare la valutazione in {days} giorni usa {n} micro (MNQ){mini}. Probabilità di passare entro {days} giorni: {pf:.0%} (intervallo 95%: {flo:.0%}-{fhi:.0%}); di bruciare l'account in quella settimana: {bf:.0%}. Senza limite di tempo: passi nel {p:.0%} dei casi; tempo mediano per passare {d} giorni.",
+        "size": "Per passare la valutazione in {days} giorni usa {n} micro ({micro}){mini}. Probabilità di passare entro {days} giorni: {pf:.0%} (intervallo 95%: {flo:.0%}-{fhi:.0%}); di bruciare l'account in quella settimana: {bf:.0%}. Senza limite di tempo: passi nel {p:.0%} dei casi; tempo mediano per passare {d} giorni.",
         "goal_ok": " ✔ Soddisfa il tuo obiettivo (passare in {days} giorni con almeno il {minp:.0%} nel caso peggiore dell'intervallo).",
         "goal_no": " ✘ NON soddisfa il tuo obiettivo: entro {days} giorni passi solo con il {pf:.0%} (caso peggiore {flo:.0%}, serve almeno {minp:.0%}). Tempo mediano per passare quando passa: {d} giorni.",
         "cost": " Costo per passare: un tentativo costa circa ${fee:,.0f} (una mensilità); servono in media {k:.1f} tentativi per un passaggio, quindi ≈ ${cpp:,.0f} + ${act:,.0f} di attivazione a passaggio avvenuto.",
@@ -54,7 +54,7 @@ T = {
         "head_slow": "{name}: approved by the Judge but TOO SLOW for the {days}-day goal",
         "strat": "Strategy: {doc} ({tmpl}) on {tf} bars, parameters {params}. {why}",
         "src": " Source: {src}.",
-        "size": "To pass the evaluation in {days} days use {n} micro (MNQ){mini}. Probability of passing within {days} days: {pf:.0%} (95% interval: {flo:.0%}-{fhi:.0%}); of busting the account that week: {bf:.0%}. With no time limit: you pass in {p:.0%} of cases; median time to pass {d} days.",
+        "size": "To pass the evaluation in {days} days use {n} micro ({micro}){mini}. Probability of passing within {days} days: {pf:.0%} (95% interval: {flo:.0%}-{fhi:.0%}); of busting the account that week: {bf:.0%}. With no time limit: you pass in {p:.0%} of cases; median time to pass {d} days.",
         "goal_ok": " ✔ Meets your goal (pass within {days} days with at least {minp:.0%} even at the pessimistic end of the interval).",
         "goal_no": " ✘ Does NOT meet your goal: within {days} days you pass only {pf:.0%} of the time (pessimistic {flo:.0%}, need at least {minp:.0%}). Median time to pass when it passes: {d} days.",
         "cost": " Cost to pass: one attempt costs about ${fee:,.0f} (one month); on average {k:.1f} attempts per pass, so ≈ ${cpp:,.0f} + ${act:,.0f} activation once passed.",
@@ -130,7 +130,7 @@ def risk_plan(pnl, rules: PropRules, base_contracts: int, n_micro: int) -> dict:
 
 def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_contracts: int, trials_total: int,
                   language: str = "it", doc: str = "", audit: dict | None = None, economics: dict | None = None,
-                  goal: dict | None = None) -> dict | None:
+                  goal: dict | None = None, market: str = "NQ", micro: str = "MNQ", point_value: float = 2.0) -> dict | None:
     """Only for APPROVED studies. Returns None for anything else (nothing is ever dressed up).
     `fast_ok` says whether the strategy meets YOUR goal: pass the evaluation within `goal['max_eval_days']`
     sessions with an acceptable pass rate (lower bound of the 95% interval) on at least one account."""
@@ -164,7 +164,7 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
             d = pick["median_days"]
             entry["fast_ok"] = bool(pick["p_fast_lo"] >= minp)
             entry["text"] = " ".join([
-                L["size"].format(days=days, n=n, mini=mini, pf=pick["p_fast"], flo=pick["p_fast_lo"], fhi=pick["p_fast_hi"],
+                L["size"].format(days=days, n=n, micro=micro, mini=mini, pf=pick["p_fast"], flo=pick["p_fast_lo"], fhi=pick["p_fast_hi"],
                                  bf=pick["p_bust_fast"], p=pick["p_pass"], d=f"{d:.0f}" if d else "n/d")
                 + (L["goal_ok"].format(days=days, minp=minp) if entry["fast_ok"] else
                    L["goal_no"].format(days=days, pf=pick["p_fast"], flo=pick["p_fast_lo"], minp=minp, d=f"{d:.0f}" if d else "n/d")),
@@ -218,7 +218,7 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
     for a in accounts.values():
         if a.get("recommended") and stop_pts:
             n = a["recommended"]["micro_equiv"]
-            r = stop_pts * 2.0 * n                       # 1 MNQ = $2 per index point
+            r = stop_pts * point_value * n               # dollars per point of ONE micro contract (MNQ $2, MES $5, MGC $10)
             a["risk"]["risk_per_trade"] = r
             a["text"] += L["rpt"].format(n=n, r=r, pdd=r / a["risk"]["max_drawdown_allowed"])
     params = {k: v for k, v in (report["series"].get("best_params") or {}).items() if k != "tf"}
@@ -232,7 +232,8 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
     if report.get("source"):
         strat += L["src"].format(src=str(report["source"])[:160])
     caveat = L["caveat"].format(n=len(pnl), trials=trials_total)
-    return {"name": report["name"], "template": report["template"], "tf": tf, "params": params, "headline": head,
+    return {"name": report["name"], "market": market, "micro": micro, "point_value": point_value,
+            "template": report["template"], "tf": tf, "params": params, "headline": head,
             "strategy_text": strat, "comparison": comparison, "economics_assumed": True, "fast_ok": fast_ok,
             "goal": {"max_eval_days": days, "min_p_fast_lower": minp},
             "exits": {"chosen": report["series"].get("exit"), "grid": ex.get("grid", [])}, "accounts": accounts, "caveat": caveat,

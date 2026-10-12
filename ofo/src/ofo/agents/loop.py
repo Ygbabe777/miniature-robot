@@ -45,13 +45,15 @@ class ResearchLoop:
         return self._bars() if callable(self._bars) else self._bars
 
     def __init__(self, bars, contract, rules, registry, llm, events, workdir, contracts: int = 2,
-                 max_cycle_trials: int = 3000, max_depth: int = 2, language: str = "Italian"):
+                 max_cycle_trials: int = 3000, max_depth: int = 2, language: str = "Italian",
+                 market: str = "NQ", state_name: str = "loop_state.json"):
         self._bars, self.contract, self.rules, self.registry = bars, contract, rules, registry
         self.llm, self.events, self.contracts = llm, events, contracts   # one LLM, or {role: LLM}
         self.max_cycle_trials, self.max_depth, self.language = max_cycle_trials, max_depth, language
         self.work = Path(workdir)
         self.work.mkdir(parents=True, exist_ok=True)
-        self.state_file = self.work / "loop_state.json"
+        self.market = market                 # which market this loop tests on (report["market"])
+        self.state_file = self.work / state_name
         st = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
         self.processed_ideas: set = set(st.get("processed_ideas", []))
         self.done_specs: set = set(st.get("done_specs", []))
@@ -148,6 +150,7 @@ class ResearchLoop:
             except (AgentError, LLMError) as e:
                 ev.emit("auditor", "error", str(e)[:300])
         dec = {**decision, "spec": dataclasses.asdict(decision["spec"]) if decision["spec"] else None}
+        rep['market'] = self.market
         save_study(self.work, rep, dec, audit)
         nxt = decision["spec"]
         if nxt is not None and depth < self.max_depth and self.enqueue(nxt, depth + 1):

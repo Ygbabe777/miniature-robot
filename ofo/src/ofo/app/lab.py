@@ -17,6 +17,7 @@ from ..agents.base import AgentError
 from ..agents.loop import IDEA_SUFFIXES, ResearchLoop
 from ..agents.roles import make_strategist
 from ..backtest import MNQ
+from ..markets import MARKETS, root_of
 from ..events import EventLog
 from ..llm.client import LLMError
 from ..metrics import chart_pack
@@ -46,15 +47,48 @@ class NoLLM:
         raise LLMError("AI non configurata: imposta OFO_LLM_BASE_URL e OFO_LLM_API_KEY e riavvia il Lab")
 
 
-def spec_summary(sid: str, spec: StrategySpec, origin: str, registry_trials: int) -> dict:
-    return {"id": sid, "name": spec.name, "template": spec.template, "n_candidates": spec.n_candidates,
+class MarketCtx:
+    """One market: its own continuous 1-minute file, micro contract and research loop."""
+
+    def __init__(self, lab, sym: str, path: str, contract, primary: bool):
+        self.lab, self.sym, self.path, self.contract, self.primary = lab, sym, path, contract, primary
+        self._bars = None
+        self._sess = None
+        self.sessions = None
+        self._loop = None
+
+    def bars(self) -> pd.DataFrame:
+        with self.lab.lock:
+            if self._bars is None:
+                self._bars = pd.read_csv(self.path, index_col=0, parse_dates=True)
+                key = pd.to_datetime(self._bars["session"]) if "session" in self._bars.columns \
+                    else pd.Series(self._bars.index.normalize(), index=self._bars.index)
+                self._sess = key
+                self.sessions = sorted(key.unique())
+        return self._bars
+
+    def loop(self) -> ResearchLoop:
+        if self._loop is None:
+            lab = self.lab
+            self._loop = ResearchLoop(self.bars, self.contract, lab.rules, lab.registry, lab.llm, lab.events, lab.work,
+                                      contracts=lab.contracts, language=lab.language, market=self.sym,
+                                      state_name="loop_state.json" if self.primary else f"loop_state_{self.sym}.json")
+            self._loop.memory = lab.memory_text
+        return self._loop
+
+    def reset(self) -> None:
+        self._bars = None
+
+
+def spec_summary(sid: str, spec: StrategySpec, origin: str, registry_trials: int, market: str | None = None) -> dict:
+    return {"id": sid, "market": market, "name": spec.name, "template": spec.template, "n_candidates": spec.n_candidates,
             "rationale": spec.rationale, "ranges": spec.ranges, "timeframes": spec.timeframes,
             "source": spec.source, "origin": origin, "registry_trials": registry_trials}
 
 
 class Lab:
     def __init__(self, bars_path: str, data_dir: str = "data", ideas_dir: str = "ideas", contract=MNQ,
-                 rules=None, contracts: int = 2, llm=None, pool=None, fetch=None):
+                 rules=None, contracts: int = 2, llm=None, pool=None, fetch=None, markets: dict | None = None):
         self.bars_path, self.ideas = bars_path, Path(ideas_dir)
         self.data = Path(data_dir)
         self.work = self.data / "loop"
@@ -65,9 +99,11 @@ class Lab:
         self.pending: dict[str, dict] = {}
         self.jobs: dict[str, dict] = {}
         self.lock, self.run_lock = threading.Lock(), threading.Lock()
-        self._loop_obj: ResearchLoop | None = None
-        self._bars: pd.DataFrame | None = None
-        self._sessions = None
+        self.primary = root_of(contract.symbol)
+        self.mk: dict[str, MarketCtx] = {self.primary: MarketCtx(self, self.primary, bars_path, contract, True)}
+        for root, path in (markets or {}).items():            # other markets: S&P 500, gold ... (files built like the main one)
+            if root != self.primary and root in MARKETS and Path(path).exists():
+                self.mk[root] = MarketCtx(self, root, path, MARKETS[root]["micro"], False)
         self.language = "Italian"
         self._trades_cache: dict = {}
         self._ind_cache: dict = {}
@@ -95,47 +131,57 @@ class Lab:
         self._last_forward = 0.0
 
     # -- engine -------------------------------------------------------------------------
-    def bars(self) -> pd.DataFrame:
-        with self.lock:
-            if self._bars is None:
-                self._bars = pd.read_csv(self.bars_path, index_col=0, parse_dates=True)
-                key = pd.to_datetime(self._bars["session"]) if "session" in self._bars.columns \
-                    else pd.Series(self._bars.index.normalize(), index=self._bars.index)
-                self._sess = key
-                self._sessions = sorted(key.unique())
-        return self._bars
+    def ctx(self, market: str | None = None) -> MarketCtx:
+        return self.mk.get(market or self.primary) or self.mk[self.primary]
 
-    def loop(self) -> ResearchLoop:
-        if self._loop_obj is None:
-            self._loop_obj = ResearchLoop(self.bars, self.contract, self.rules, self.registry, self.llm,
-                                          self.events, self.work, contracts=self.contracts, language=self.language)
-            self._loop_obj.memory = self.memory_text
-        return self._loop_obj
+    def bars(self, market: str | None = None) -> pd.DataFrame:
+        return self.ctx(market).bars()
+
+    def loop(self, market: str | None = None) -> ResearchLoop:
+        return self.ctx(market).loop()
+
+    @property
+    def _sessions(self):
+        return self.mk[self.primary].sessions
+
+    @property
+    def _sess(self):
+        return self.mk[self.primary]._sess
+
+    @property
+    def _loop_obj(self):
+        return self.mk[self.primary]._loop
+
+    def market_of(self, report: dict) -> str:
+        m = report.get("market") or self.primary
+        return m if m in self.mk else self.primary
 
     def set_lang(self, code: str | None) -> None:
         if code in LANGS:
             self.language = LANGS[code]
-            if self._loop_obj is not None:
-                self._loop_obj.language = self.language
+            for c in self.mk.values():
+                if c._loop is not None:
+                    c._loop.language = self.language
 
-    def candles(self, tf: str = "15min", days: int | None = 10, before: str | None = None) -> dict:
+    def candles(self, tf: str = "15min", days: int | None = 10, before: str | None = None, market: str | None = None) -> dict:
         """OHLCV candles from the user's own historical file, for the Trader chart.
         Times are exchange (New York) clock time, sent as if UTC so the chart shows them unchanged."""
         if tf not in TFS:
             return {"error": "bad_tf"}
-        df = self.bars()
-        sessions = self._sessions
+        c = self.ctx(market)
+        df = c.bars()
+        sessions = c.sessions
         if before:
             cut = pd.Timestamp(before)
             sessions = [x for x in sessions if x < cut]
         if days:
             sessions = sessions[-int(days):]
         if not sessions:
-            return {"error": "no_data", "first": str(self._sessions[0])[:10], "last": str(self._sessions[-1])[:10]}
-        mask = (self._sess >= sessions[0]) & (self._sess <= sessions[-1])
+            return {"error": "no_data", "first": str(c.sessions[0])[:10], "last": str(c.sessions[-1])[:10]}
+        mask = (c._sess >= sessions[0]) & (c._sess <= sessions[-1])
         sub = df[mask]
         if tf == "1D":
-            g = sub.groupby(self._sess[mask].values)
+            g = sub.groupby(c._sess[mask].values)
             d = g.agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
             rows = [[str(pd.Timestamp(i))[:10], float(r.open), float(r.high), float(r.low), float(r.close), float(r.volume)]
                     for i, r in d.iterrows()]
@@ -147,14 +193,27 @@ class Lab:
             rows = [[t[i], float(o), float(h), float(l), float(c), float(v)] for i, (o, h, l, c, v) in
                     enumerate(zip(r["open"], r["high"], r["low"], r["close"], r["volume"]))]
         return {"tf": tf, "candles": rows, "from": str(sessions[0])[:10], "to": str(sessions[-1])[:10],
-                "n_sessions": len(sessions), "first_available": str(self._sessions[0])[:10],
-                "last_available": str(self._sessions[-1])[:10], "symbol": self.contract.symbol}
+                "n_sessions": len(sessions), "first_available": str(c.sessions[0])[:10],
+                "last_available": str(c.sessions[-1])[:10], "symbol": c.contract.symbol, "market": c.sym}
 
-    def _add_pending(self, spec: StrategySpec, origin: str) -> dict:
+    def _add_pending_all(self, spec: StrategySpec, origin: str) -> int:
+        """Queue a strategy once per market (skipping what that market already tested or has queued): the lab learns
+        on which index each idea works. Returns how many queue entries were added."""
+        n = 0
+        fp = _fingerprint(spec)
+        for m in self.mk:
+            queued = any(v.get("market") == m and _fingerprint(v["spec"]) == fp for v in self.pending.values())
+            if fp in self.loop(m).done_specs or queued:
+                continue
+            self._add_pending(spec, origin, m)
+            n += 1
+        return n
+
+    def _add_pending(self, spec: StrategySpec, origin: str, market: str | None = None) -> dict:
         sid = uuid.uuid4().hex[:8]
         with self.lock:
-            self.pending[sid] = {"spec": spec, "origin": origin}
-        return spec_summary(sid, spec, origin, self.registry.n_trials)
+            self.pending[sid] = {"spec": spec, "origin": origin, "market": market or self.primary}
+        return spec_summary(sid, spec, origin, self.registry.n_trials, market or self.primary)
 
     @contextlib.contextmanager
     def working(self, kind: str):
@@ -204,23 +263,25 @@ class Lab:
             item = self.pending.pop(spec_id, None)
         if item is None:
             return {"error": "strategia non trovata (già avviata?)"}
-        spec = item["spec"]
-        job = {"id": uuid.uuid4().hex[:8], "name": spec.name, "status": "queued", "slug": None,
+        spec, market = item["spec"], item.get("market") or self.primary
+        if market != self.primary and not spec.name.endswith(f"[{market}]"):
+            spec = dataclasses.replace(spec, name=f"{spec.name} [{market}]")      # unique name per market
+        job = {"id": uuid.uuid4().hex[:8], "name": spec.name, "market": market, "status": "queued", "slug": None,
                "verdict": None, "error": None, "n_candidates": spec.n_candidates}
         self.jobs[job["id"]] = job
-        threading.Thread(target=self._run_job, args=(job, spec), daemon=True).start()
+        threading.Thread(target=self._run_job, args=(job, spec, market), daemon=True).start()
         return job
 
-    def _run_job(self, job: dict, spec: StrategySpec) -> None:
+    def _run_job(self, job: dict, spec: StrategySpec, market: str | None = None) -> None:
         with self.working("job"), self.run_lock:  # one study at a time: they are CPU heavy
             job["status"] = "running"
             try:
-                lp = self.loop()
+                lp = self.loop(market)
                 res = lp.process(spec, 0)
                 job.update(status="done", slug=slugify(spec.name), verdict=res["verdict"])
                 while lp.queue:                   # planner proposals: the autopilot runs them, otherwise they wait
                     nxt, _ = lp.queue.pop(0)
-                    self._add_pending(nxt, "planner")
+                    self._add_pending(nxt, "planner", market)
                 if res["verdict"] == "APPROVED":
                     self.make_dossier(job["slug"])
                     self.deploy_ready()                # approved -> deployed (paper) with no click
@@ -239,7 +300,7 @@ class Lab:
                 lp.ingest_ideas(vi)                       # your Obsidian notes in OFO/Ideas
             while lp.queue:
                 spec, _ = lp.queue.pop(0)
-                self._add_pending(spec, "paper")
+                self._add_pending_all(spec, "paper")
 
     def ingest(self) -> dict:
         def work():
@@ -382,8 +443,7 @@ class Lab:
     def seed_specs(self) -> int:
         """The classic families (opening range, VWAP, EMA, breakout, z-score) are tested first, so the lab never sits idle
         waiting for the first paper. Specs already tested or queued are skipped."""
-        n, lp = 0, self.loop()
-        have = {_fingerprint(v["spec"]) for v in self.pending.values()}
+        n = 0
         for base in (Path(__file__).resolve().parents[3] / "specs", Path("specs")):
             if not base.is_dir():
                 continue
@@ -396,9 +456,7 @@ class Lab:
                         sp = from_dict(d)
                     except Exception:
                         continue
-                    fp = _fingerprint(sp)
-                    if fp not in lp.done_specs and fp not in have:
-                        have.add(fp); self._add_pending(sp, "starter"); n += 1
+                    n += self._add_pending_all(sp, "starter")
             break
         return n
 
@@ -424,11 +482,8 @@ class Lab:
             except Exception as e:
                 self.events.emit("researcher", "idle", f"brainstorm failed: {e}"[:200])
                 return 0
-            have = {_fingerprint(v["spec"]) for v in self.pending.values()}
             for sp in specs:
-                fp = _fingerprint(sp)
-                if fp not in lp.done_specs and fp not in have:
-                    have.add(fp); self._add_pending(sp, "brainstorm"); n += 1
+                n += self._add_pending_all(sp, "brainstorm")
             self.events.emit("researcher", "done", f"brainstorm: {n} new proposals")
         return n
 
@@ -469,12 +524,9 @@ class Lab:
             except Exception as e:
                 self.events.emit("researcher", "idle", f"connection failed: {e}"[:200])
                 return 0
-            lp = self.loop()
-            have = {_fingerprint(v["spec"]) for v in self.pending.values()}
             for sp in specs:
-                fp = _fingerprint(sp)
-                if fp not in lp.done_specs and fp not in have:
-                    have.add(fp); self._add_pending(sp, "connection"); n += 1; names.append(sp.name)
+                if self._add_pending_all(sp, "connection"):
+                    n += 1; names.append(sp.name)
             done.add(f"{a}|{b}")
             f.write_text(json.dumps(sorted(done)))
             if self.obs["vault"] and specs:
@@ -537,9 +589,11 @@ class Lab:
             return None
         rep = {**d["report"], "series": d["series"]}
         lang = "it" if self.language == "Italian" else "en"
+        c = self.ctx(self.market_of(rep))
         dos = build_dossier(rep, {k: PRESETS[k] for k in ("50k", "25k")}, self.contracts, self.registry.n_trials,
                             lang, TEMPLATES[rep["template"]].doc, d.get("auditor"),
-                            economics=load_assumptions(self._econ_path()), goal=load_goal(self._econ_path()))
+                            economics=load_assumptions(self._econ_path()), goal=load_goal(self._econ_path()),
+                            market=c.sym, micro=c.contract.symbol, point_value=c.contract.point_value)
         if dos is None:
             return None
         dos["slug"], dos["created"] = slug, time.strftime("%Y-%m-%d %H:%M")
@@ -655,8 +709,9 @@ class Lab:
         for d in self.dossiers():
             if self.deployments.get(d["slug"]):
                 continue
-            self.bars()
-            last = str(self._sessions[-1])[:10]
+            c = self.ctx(d.get("market"))
+            c.bars()
+            last = str(c.sessions[-1])[:10]
             item = dep.make_deployment(d, last, time.strftime("%Y-%m-%d %H:%M")) if d.get("fast_ok", True) else None
             if item is None and not d.get("fast_ok", True):
                 item = {"slug": d["slug"], "name": d["name"], "status": "not_deployed", "forward": {"days": 0},
@@ -686,12 +741,13 @@ class Lab:
             info = self._refresh_data()
             self.deployments.d["data"] = {**info, "at": time.strftime("%Y-%m-%d %H:%M"),
                                           "last_bar": str(self.bars().index[-1])[:16]}
-            bars = self.bars()
             for x in live:
                 try:
-                    r = dep.forward_update(bars, x, self.contract, self.contracts, self.rules_for(x["account"]))
+                    c = self.ctx(x.get("market"))
+                    bars = c.bars()
+                    r = dep.forward_update(bars, x, c.contract, self.contracts, self.rules_for(x["account"]))
                     x["forward"] = r["forward"]
-                    sig = dep.new_signals(bars, x, self.contract, self.contracts)
+                    sig = dep.new_signals(bars, x, c.contract, self.contracts)
                     fresh = sig[x["n_signals"]:]
                     dep.append_signals(self.data / "signals", x["slug"], fresh)
                     for t in fresh[-3:]:
@@ -710,30 +766,31 @@ class Lab:
         return PRESETS.get(account, self.rules)
 
     def _refresh_data(self) -> dict:
-        import re
-        root = (re.match(r"([A-Za-z]+)_", Path(self.bars_path).name) or [None, "NQ"])[1].upper()
-        info = dep.refresh_data(self.data, self.bars_path, root)
-        if info.get("rebuilt"):
-            with self.lock:                                   # drop the cached 700k-row frame: the next read gets the new days
-                self._bars = None; self._trades_cache.clear(); self._ind_cache.clear()
-            self.bars()
+        info = {"ok": True}
+        for sym, c in self.mk.items():                       # the day files hold every product: one download, one rebuild per market
+            r = dep.refresh_data(self.data, c.path, sym)
+            if r.get("rebuilt"):
+                with self.lock:                               # drop the cached frame: the next read gets the new days
+                    c.reset(); self._trades_cache.clear(); self._ind_cache.clear()
+                c.bars()
+            if sym == self.primary:
+                info = r
+            elif not r.get("ok", True):
+                info = {**info, "ok": False, "why": f"{sym}: {r.get('why')}"}
         return info
 
     def deployments_view(self) -> dict:
         return {"items": self.deployments.d["items"], "data": self.deployments.d.get("data", {}),
-                "last_bar": str(self.bars().index[-1])[:10] if Path(self.bars_path).exists() else None}
+                "last_bar": str(self.bars().index[-1])[:10] if Path(self.bars_path).exists() else None,
+                "markets": list(self.mk)}
 
     def recover_specs(self) -> int:
         """Proposals the Researcher wrote before a restart but that were never tested come back to the queue."""
-        n, lp = 0, self.loop()
-        have = {_fingerprint(v["spec"]) for v in self.pending.values()}
+        n = 0
         for f in sorted((self.work / "specs_auto").glob("*.json")) if (self.work / "specs_auto").exists() else []:
             try:
                 for d in json.loads(f.read_text()).get("strategies", []):
-                    sp = from_dict(d)
-                    fp = _fingerprint(sp)
-                    if fp not in lp.done_specs and fp not in have:
-                        have.add(fp); self._add_pending(sp, "paper"); n += 1
+                    n += self._add_pending_all(from_dict(d), "paper")
             except Exception:
                 continue
         return n
@@ -779,7 +836,7 @@ class Lab:
                 ideas.append({"name": str(p.relative_to(self.ideas)), "kb": round(p.stat().st_size / 1024),
                               "read": h in processed})
         with self.lock:
-            pending = [spec_summary(i, v["spec"], v["origin"], self.registry.n_trials) for i, v in self.pending.items()]
+            pending = [spec_summary(i, v["spec"], v["origin"], self.registry.n_trials, v.get("market")) for i, v in self.pending.items()]
         reqs = json.loads(self.requests_file.read_text()) if self.requests_file.exists() else []
         return {"trials": self.registry.n_trials, "locked_looks": self.registry.data["locked_looks"],
                 "calls_last_hour": self.pool.calls_last_hour() if self.pool else None,
@@ -789,6 +846,7 @@ class Lab:
                 "ideas": ideas, "pending": pending, "jobs": list(self.jobs.values())[-10:],
                 "strategies": list_studies(self.work), "template_requests": reqs,
                 "templates": {k: t.doc for k, t in TEMPLATES.items() if not t.control}, "symbol": self.contract.symbol,
+                "primary": self.primary, "markets": [{"sym": k, "name": MARKETS[k]["name"], "micro": c.contract.symbol} for k, c in self.mk.items()],
                 "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state(),
                 "autopilot": self.autopilot_state(), "obsidian": self.obsidian_state(),
                 "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed"))}
@@ -824,15 +882,16 @@ class Lab:
         key = (slug, d.get("saved_at"))
         if key not in self._trades_cache:
             params = dict(ser["best_params"]); tf = params.pop("tf")
-            self._trades_cache[key] = extract_trades(self.bars(), TEMPLATES[rep["template"]].fn, params, tf,
-                                                     self.contract, self.contracts, exit=ser.get("exit"))
+            c = self.ctx(self.market_of(rep))
+            self._trades_cache[key] = extract_trades(c.bars(), TEMPLATES[rep["template"]].fn, params, tf,
+                                                     c.contract, self.contracts, exit=ser.get("exit"))
         allt = self._trades_cache[key]
         looked = "checks" in rep["locked"]
         vis = allt if looked else [t for t in allt if t["session"] < ser["cut"]]
         tf = ser["best_params"]["tf"]
         return {"trades": vis, "n_hidden": len(allt) - len(vis), "locked_visible": looked, "tf": tf,
                 "params": {k: v for k, v in ser["best_params"].items() if k != "tf"}, "cut": ser["cut"], "exit": ser.get("exit"),
-                "summary": summarize(vis), "name": rep["name"]}
+                "summary": summarize(vis), "name": rep["name"], "market": self.market_of(rep)}
 
     def indicators(self, slug: str, start: int | None = None, end: int | None = None) -> dict | None:
         """The indicator lines the strategy's best candidate really uses, on its own timeframe."""
@@ -846,7 +905,8 @@ class Lab:
         params = dict(d["series"]["best_params"]); tf = params.pop("tf")
         key = (slug, d.get("saved_at"))
         if key not in self._ind_cache:
-            b = self.bars() if tf == "1min" else resample(self.bars(), tf)
+            mb = self.ctx(self.market_of(rep)).bars()
+            b = mb if tf == "1min" else resample(mb, tf)
             self._ind_cache[key] = (b.index, t.indicators(b, **params))
         index, lines = self._ind_cache[key]
         secs = ((index - pd.Timestamp("1970-01-01")) // pd.Timedelta(seconds=1)).to_numpy()

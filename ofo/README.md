@@ -122,3 +122,18 @@ sul funded dopo il passaggio. **"Va bene" solo se il limite inferiore dell'inter
 "approvata ma troppo lenta" e la strategia NON viene messa in paper trading. Giorni e soglia si cambiano in `rules/economics.json`
 (`goal`). Attenzione: passare in 5 giorni richiede dimensioni aggressive, quindi il rischio di bruciare l'account in quella
 settimana è alto: il numero è nel fascicolo.
+
+## Più mercati: Nasdaq, S&P 500 e oro
+I file giornalieri di Massive contengono **tutti** i ticker CME: non serve scaricare altro. Costruisci un file continuo per
+ogni mercato (stessa cartella `data/`):
+```
+python scripts/build_dataset.py data ES data/ES_1min.csv.gz
+python scripts/build_dataset.py data GC data/GC_1min.csv.gz
+```
+Al riavvio il Lab trova i file `ES_1min.csv.gz` e `GC_1min.csv.gz` accanto a quello principale e li aggiunge da solo
+("Mercati attivi" nel terminale). Ogni strategia (da paper, brainstorm, collegamenti, famiglie classiche) viene messa in coda
+**una volta per mercato** e testata con il suo contratto micro (MNQ, MES, MGC) e le stesse regole del Giudice; le strategie sugli
+altri mercati si chiamano `nome [ES]` / `nome [GC]`. Le prove di tutti i mercati contano nel registro. I report, il fascicolo, il
+deployment in paper e le note Obsidian riportano il mercato; la memoria degli agenti dice per ogni famiglia su quale indice è
+stata testata e con che esito ("orb: NQ 3 testate/0 approvate, ES 3/1"), così i Researcher/Planner la usano. Nel tab Trader c'è il
+selettore del mercato. Se i file giornalieri non contengono l'oro (COMEX), `build_dataset.py` dà "no outright GC contracts found".

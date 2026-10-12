@@ -26,6 +26,8 @@ MES = Contract("MES", 0.25, 1.25)
 MNQ = Contract("MNQ", 0.25, 0.50)
 ES = Contract("ES", 0.25, 12.50, 2.0)
 NQ = Contract("NQ", 0.25, 5.00, 2.0)
+GC = Contract("GC", 0.10, 10.00, 2.0)      # COMEX gold: $100 per point
+MGC = Contract("MGC", 0.10, 1.00)          # micro gold: $10 per point
 
 
 def run_backtest(bars: pd.DataFrame, position, contract: Contract,

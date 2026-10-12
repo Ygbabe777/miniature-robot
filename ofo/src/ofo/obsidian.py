@@ -115,7 +115,8 @@ def strategy_note(rep: dict, planner, auditor, papers_by_title: dict, dossier_na
     front = {"tags": ["ofo/strategy", f"ofo/{lk['status'].lower()}"], "template": rep["template"],
              "verdict": lk["status"], "candidates": rep["n_candidates"], "median_sharpe": s["median_sharpe"],
              "robust": s["robust"], "plateau": s["plateau_ratio"], "wf_oos_pnl": rep["wf_oos_pnl"],
-             "p_pass": lk.get("p_pass"), "paper": paper, "ready": rep["name"] in dossier_names}
+             "p_pass": lk.get("p_pass"), "paper": paper, "ready": rep["name"] in dossier_names,
+             "market": rep.get("market") or "NQ"}
     b = [f"# {rep['name']}", "", f"## {L['rationale']}", rep.get("rationale") or L["empty"], ""]
     if paper:
         b += [f"{L['source']}: [[Paper - {safe(paper)}]]", ""]
@@ -197,6 +198,8 @@ def concept_note(name: str, d: dict, L: dict) -> tuple[dict, str]:
     b = [f"# {name}", "", f"## {L['learned']}"] + ([f"- {x}" for x in d["lessons"]] or [f"- {L['none']}"])
     b += ["", "## Paper"] + ([f"- [[Paper - {safe(t)}|{t}]]" for t in d["papers"]] or [f"- {L['none']}"])
     b += ["", f"## {L['tested']}"] + ([f"- [[{safe(x)}]]" for x in d["strategies"]] or [f"- {L['none']}"])
+    if d.get("by_market"):
+        b += ["", "## Per mercato / by market"] + [f"- {m}: {v['tested']} tested, {v['approved']} approved" for m, v in sorted(d["by_market"].items())]
     if d["related"]:
         b += ["", f"## {L['related']}"] + [f"- {concept_link(x)}" for x in d["related"]]
     return front, "\n".join(b)

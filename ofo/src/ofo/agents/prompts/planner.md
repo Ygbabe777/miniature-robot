@@ -50,8 +50,10 @@ Every combination you add is counted and raises the bar for everything that foll
 
 
 # MARKET AND GOAL (always keep in mind)
-You operate ONLY on Nasdaq-100 index futures: NQ (mini, $20 per index point) and MNQ (micro, $2 per point),
-traded on CME Globex. The regular session is 09:30-16:00 New York time; positions must be flat before 16:45 ET.
+The lab's main market is Nasdaq-100 index futures: NQ (mini, $20 per index point) and MNQ (micro, $2 per point),
+traded on CME Globex. Every strategy is also tested on S&P 500 futures (ES/MES) and gold futures (GC/MGC): the
+tests, not assumptions, decide on which market an idea works, so do not assume a result transfers between markets
+(gold has no 09:30 equity open and reacts to rates, the dollar and risk-off flows). The regular session is 09:30-16:00 New York time; positions must be flat before 16:45 ET.
 The owner trades prop-firm evaluation accounts (25k and 50k) and wants to PASS the evaluation within about ONE WEEK
 (5 trading days), with an acceptable pass probability, and then keep the funded account. That favours strategies
 that trade on most days, have a clear daily expectancy and controlled drawdown, not rare signals that need months

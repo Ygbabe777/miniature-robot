@@ -49,7 +49,7 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     q = parse_qs(u.query)
                     days = q.get("days", ["10"])[0]
                     return self._json(lab.candles(q.get("tf", ["15min"])[0], None if days == "all" else int(days),
-                                                  q.get("before", [None])[0]))
+                                                  q.get("before", [None])[0], q.get("market", [None])[0]))
                 if u.path == "/api/scout":
                     return self._json(lab.scout_state())
                 if u.path == "/api/deployments":

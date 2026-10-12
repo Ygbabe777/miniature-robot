@@ -46,7 +46,7 @@ def list_studies(work: str | Path) -> list[dict]:
             r, s = d["report"], d["report"]["surface"]
             rows.append({"slug": f.stem, "name": r["name"], "template": r["template"],
                          "status": r["locked"]["status"], "robust": s["robust"],
-                         "median_sharpe": s["median_sharpe"], "n_candidates": r["n_candidates"],
+                         "median_sharpe": s["median_sharpe"], "n_candidates": r["n_candidates"], "market": r.get("market"),
                          "saved_at": d.get("saved_at")})
         except (KeyError, ValueError):
             continue
