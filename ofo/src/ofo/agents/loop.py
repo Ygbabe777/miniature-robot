@@ -74,7 +74,7 @@ class ResearchLoop:
         added = 0
         d = Path(ideas_dir)
         for p in sorted(d.rglob("*")) if d.exists() else []:
-            if not p.is_file() or p.suffix.lower() not in IDEA_SUFFIXES:
+            if not p.is_file() or p.suffix.lower() not in IDEA_SUFFIXES or p.name.startswith("_"):
                 continue
             h = hashlib.sha256(p.read_bytes()).hexdigest()
             if h in self.processed_ideas:

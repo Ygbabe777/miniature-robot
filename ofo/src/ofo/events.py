@@ -25,3 +25,16 @@ class EventLog:
         if not self.path.exists():
             return []
         return [json.loads(x) for x in self.path.read_text(encoding="utf-8").splitlines() if x.strip()]
+
+    def tail(self, n: int = 2000) -> list[dict]:
+        """The last n events without parsing a log that may have grown for months."""
+        if not self.path.exists():
+            return []
+        lines = self.path.read_text(encoding="utf-8").splitlines()[-n:]
+        out = []
+        for x in lines:
+            try:
+                out.append(json.loads(x))
+            except ValueError:
+                continue
+        return out

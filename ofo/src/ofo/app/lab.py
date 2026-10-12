@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import dataclasses
 import hashlib
 import json
@@ -25,6 +26,7 @@ from ..agents.loop import _fingerprint
 from ..specs import StrategySpec, from_dict
 from ..storage import list_studies, load_study, slugify
 from .. import deploy as dep
+from .. import obsidian
 from ..dossier import build_dossier
 from ..accounts import demo_accounts, load_accounts
 from ..data import resample
@@ -79,6 +81,10 @@ class Lab:
             self.ap.update(json.loads(self.ap_file.read_text()))
         self.ap_first_run = first
         self.dossier_dir = self.work / "dossiers"
+        self.obs_file = self.data / "obsidian.json"
+        self.obs = {"vault": os.environ.get("OFO_OBSIDIAN_VAULT") or "", "last": None, "error": None}
+        if self.obs_file.exists() and not self.obs["vault"]:
+            self.obs["vault"] = json.loads(self.obs_file.read_text()).get("vault", "")
         self.deployments = dep.Store(self.data / "deployments.json")
         self.busy["forward"] = 0
         self._last_forward = 0.0
@@ -222,6 +228,9 @@ class Lab:
         with self.working("research"):
             lp = self.loop()
             lp.ingest_ideas(self.ideas)
+            vi = self._vault_ideas()
+            if vi is not None:
+                lp.ingest_ideas(vi)                       # your Obsidian notes in OFO/Ideas
             while lp.queue:
                 spec, _ = lp.queue.pop(0)
                 self._add_pending(spec, "paper")
@@ -304,8 +313,9 @@ class Lab:
         if self._loop_obj is None:
             f = self.work / "loop_state.json"
             done = set(json.loads(f.read_text()).get("processed_ideas", [])) if f.exists() else set()
-        return any(hashlib.sha256(p.read_bytes()).hexdigest() not in done for p in self.ideas.rglob("*")
-                   if p.is_file() and p.suffix.lower() in IDEA_SUFFIXES)
+        dirs = [self.ideas] + ([self._vault_ideas()] if self._vault_ideas() else [])
+        return any(hashlib.sha256(p.read_bytes()).hexdigest() not in done for d in dirs for p in d.rglob("*")
+                   if p.is_file() and p.suffix.lower() in IDEA_SUFFIXES and not p.name.startswith("_"))
 
     # -- Autopilot: search, test, judge and report without asking ---------------------------
     def _save_ap(self) -> None:
@@ -412,6 +422,56 @@ class Lab:
             except ValueError:
                 continue
         return out
+
+    # -- Obsidian ---------------------------------------------------------------------------
+    def _vault_ideas(self) -> Path | None:
+        v = self.obs["vault"]
+        d = Path(v).expanduser() / "OFO" / "Ideas" if v else None
+        return d if d is not None and d.is_dir() else None
+
+    def set_obsidian(self, vault: str | None, sync: bool = True) -> dict:
+        if vault is not None:
+            vault = vault.strip().strip('"')
+            if vault:
+                obsidian.ensure_vault(vault)             # raises if the folder does not exist
+            self.obs["vault"] = vault
+            self.obs_file.write_text(json.dumps({"vault": vault}))
+        if sync and self.obs["vault"]:
+            self.obsidian_sync()
+        return self.obsidian_state()
+
+    def obsidian_state(self) -> dict:
+        return {"vault": self.obs["vault"], "last": self.obs["last"], "error": self.obs["error"]}
+
+    def obsidian_sync(self) -> dict | None:
+        if not self.obs["vault"]:
+            return None
+        try:
+            studies = []
+            for r in list_studies(self.work):
+                d = load_study(self.work, r["slug"])
+                if d:
+                    studies.append({**d, "saved_at": d.get("saved_at")})
+            papers = {}
+            for pid, p in self.scout().state["papers"].items():
+                q = dict(p)
+                if p.get("file"):
+                    m = (self.ideas / p["file"]).with_suffix(".meta.json")
+                    if m.exists():
+                        try:
+                            q["abstract"] = json.loads(m.read_text()).get("abstract", "")
+                        except ValueError:
+                            pass
+                papers[pid] = q
+            lang = "it" if self.language == "Italian" else "en"
+            res = obsidian.sync(self.obs["vault"], studies, self.dossiers(), self.deployments.d["items"], papers,
+                                self.events.tail(3000), lang)
+            self.obs["last"] = {"at": time.strftime("%Y-%m-%d %H:%M"), "wrote": res}
+            self.obs["error"] = None
+            return res
+        except Exception as e:
+            self.obs["error"] = str(e)[:200]
+            return None
 
     # -- autonomous deployment (paper) ------------------------------------------------------
     def deploy_ready(self) -> int:
@@ -523,6 +583,9 @@ class Lab:
                         if n % 12 == 0:
                             self.deploy_ready()
                             self.forward_tick()
+                            self.obsidian_sync()
+                            if self.obs["vault"] and self.busy["research"] == 0 and self._unread_ideas():
+                                threading.Thread(target=self._ingest_now, daemon=True).start()
                 except Exception as e:
                     self.events.emit("lab", "error", f"scheduler: {e}")
         threading.Thread(target=loop, daemon=True).start()
@@ -548,7 +611,7 @@ class Lab:
                 "strategies": list_studies(self.work), "template_requests": reqs,
                 "templates": {k: t.doc for k, t in TEMPLATES.items() if not t.control}, "symbol": self.contract.symbol,
                 "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state(),
-                "autopilot": self.autopilot_state(),
+                "autopilot": self.autopilot_state(), "obsidian": self.obsidian_state(),
                 "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed"))}
 
     def events_after(self, after: int) -> dict:

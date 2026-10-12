@@ -93,6 +93,11 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.scout_run(data.get("lang")))
                 if u.path == "/api/scout/auto":
                     return self._json(lab.set_scout_auto(bool(data.get("enabled")), data.get("minutes")))
+                if u.path == "/api/obsidian":
+                    try:
+                        return self._json(lab.set_obsidian(data.get("vault")))
+                    except ValueError as e:
+                        return self._json({"error": str(e)}, 400)
                 if u.path == "/api/autopilot":
                     return self._json(lab.set_autopilot(data.get("enabled"), data.get("max_trials_per_day")))
                 self._json({"error": "not found"}, 404)

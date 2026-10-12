@@ -115,7 +115,19 @@
     if (window.LabScene) LabScene.setTrader(s.strategies.filter(x => x.status === 'APPROVED').map(x => x.name), { wait: t('tr_wait'), desk: t('tr_desk'), ready: t('tr_ready'), head: t('tr_head'), none: t('tr_none') });
     trader.symbol = s.symbol; trader.setStrategies(s.strategies);
   }
-  async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); if (s.autopilot) renderAutopilot(s.autopilot); } catch (e) {} }
+  async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); if (s.autopilot) renderAutopilot(s.autopilot); if (s.obsidian) renderObsidian(s.obsidian); } catch (e) {} }
+
+  // ---------- Obsidian ----------
+  let obsKey = '';
+  function renderObsidian(o) {
+    const key = JSON.stringify([o, LANG]); if (key === obsKey || document.activeElement === $('#obs-path')) return; obsKey = key;
+    const w = o.last && o.last.wrote ? Object.values(o.last.wrote).reduce((a, b) => a + b, 0) : 0;
+    $('#obsidian').innerHTML = `<input id="obs-path" placeholder="${t('obs_ph')}" value="${esc(o.vault || '')}" style="width:100%;box-sizing:border-box">
+      <button class="btn small" id="obs-go">${o.vault ? t('obs_sync') : t('obs_connect')}</button>
+      <div class="smeta">${o.error ? '<span class="apoff">' + esc(o.error) + '</span>' : o.last ? t('obs_last', { t: esc(o.last.at), n: w }) : t('obs_none')}</div>
+      <div class="smeta">${t('obs_note')}</div>`;
+    $('#obs-go').onclick = async () => { const r = await api('/api/obsidian', { method: 'POST', json: { vault: $('#obs-path').value } }); if (r.error) alert(r.error); obsKey = ''; poll(); };
+  }
 
   // ---------- autopilot + ready strategies ----------
   function renderAutopilot(a) {

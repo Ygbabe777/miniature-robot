@@ -80,3 +80,11 @@ il risultato con quello atteso. Si vede in Strategie > "Deployment automatici".
 - **Segnali**: ogni nuovo trade finisce in `data/signals/<strategia>.jsonl` (aggancio per un bot Discord o per il broker).
 - **Nessun ordine reale parte dal computer.** Operare su un conto vero richiede un collegamento al broker (credenziali,
   limiti di rischio) che puoi autorizzare solo tu: non lo attivo di nascosto.
+
+## Obsidian
+Collega il tuo vault dal pannello "Obsidian" (o con la variabile `OFO_OBSIDIAN_VAULT`). Il Lab scrive note Markdown in
+`<vault>/OFO/`: `Strategie/`, `Pronte/`, `Deployment/`, `Paper/`, `Diario/` e il cruscotto `OFO.md` (con una tabella
+Dataview se hai il plugin). Le note sono collegate tra loro (paper → strategia → pronta → deployment), quindi la vista
+Grafo mostra come è nata ogni strategia. Quello che scrivi **sotto la riga `<!-- ofo:end -->`** resta quando la nota viene
+aggiornata. Le tue note in `OFO/Ideas/` le legge il Researcher come i PDF (testo non fidato: passa sempre dai controlli).
+Il Lab non tocca mai file che non ha creato lui e non scrive fuori da `OFO/`.
