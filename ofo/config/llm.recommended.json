@@ -1,5 +1,5 @@
 {
-  "_README": "Recommended from the first benchmark (indicative). Copy to config/llm.json. Limit: 30 CALLS per hour; the shares add up to 27 (3 spare).",
+  "_README": "Your real limit is 30 CALLS PER MINUTE. calls_per_minute is the global cap (28 leaves a safety margin); role_calls_per_minute caps each agent so none starves the others. Put real model ids. Keys stay in environment variables.",
   "roles": {
     "researcher": [
       "deepseek-v4-pro-0813",
@@ -16,15 +16,20 @@
     "strategist": [
       "deepseek-v4-pro-0813",
       "glm-5.3-flash"
+    ],
+    "scout": [
+      "deepseek-v4-pro-0813",
+      "glm-5.3-flash"
     ]
   },
-  "calls_per_hour": 30,
-  "role_calls_per_hour": {
-    "researcher": 8,
-    "planner": 5,
-    "auditor": 6,
-    "strategist": 8
-  },
-  "wait_for_call_slot_seconds": 3700,
-  "cooldown_seconds": 30
+  "wait_for_call_slot_seconds": 90,
+  "cooldown_seconds": 30,
+  "calls_per_minute": 28,
+  "role_calls_per_minute": {
+    "researcher": 10,
+    "planner": 8,
+    "auditor": 8,
+    "strategist": 10,
+    "scout": 6
+  }
 }

@@ -48,7 +48,7 @@ def make_planner(llm, parent: StrategySpec, trials_left: int, depth: int, events
                              f"(parent {parent.n_candidates}, budget {trials_left})")
         out["spec"] = spec
         return out
-    return Agent("planner", llm, load_prompt("planner", LANG=language), validate, events, max_attempts=2)
+    return Agent("planner", llm, load_prompt("planner", LANG=language), validate, events, max_attempts=3)
 
 
 def make_auditor(llm, events=None, language: str = "Italian") -> Agent:
@@ -62,7 +62,7 @@ def make_auditor(llm, events=None, language: str = "Italian") -> Agent:
         # only these keys survive: the auditor can never carry a verdict or an approval
         return {"summary": summary[:2000], "risk_flags": [str(f)[:200] for f in flags][:8],
                 "next_step": str(d.get("next_step", ""))[:500]}
-    return Agent("auditor", llm, load_prompt("auditor", LANG=language), validate, events, max_attempts=2)
+    return Agent("auditor", llm, load_prompt("auditor", LANG=language), validate, events, max_attempts=3)
 
 
 def make_strategist(llm, events=None, language: str = "Italian") -> Agent:
@@ -87,4 +87,27 @@ def make_strategist(llm, events=None, language: str = "Italian") -> Agent:
                                        "description": str(req["description"])[:3000]}
         return out
     system = load_prompt("strategist", TEMPLATE_CATALOGUE=_catalogue(), TIMEFRAMES=str(list(TIMEFRAMES)), LANG=language)
-    return Agent("strategist", llm, system, validate, events, max_attempts=2, temperature=0.3)
+    return Agent("strategist", llm, system, validate, events, max_attempts=3, temperature=0.3)
+
+
+def make_curator(llm, candidate_ids: set, max_picks: int = 4, events=None, language: str = "Italian") -> Agent:
+    """Picks papers from a search result. Output is validated against the ids it was shown, so a
+    prompt-injection hidden in an abstract can never make it select something else."""
+    from ..papers import _catalogue
+
+    def validate(d: dict) -> dict:
+        picks = d.get("picks", [])
+        if not isinstance(picks, list):
+            raise ValueError("picks must be a list")
+        out, seen = [], set()
+        for p in picks:
+            pid = str(p.get("id", "")) if isinstance(p, dict) else ""
+            if pid not in candidate_ids:
+                raise ValueError(f"id {pid!r} is not one of the candidates")
+            if pid in seen:
+                continue
+            seen.add(pid)
+            out.append({"id": pid, "why": str(p.get("why", ""))[:400], "template_hint": str(p.get("template_hint", "none"))[:40]})
+        return {"picks": out[:max_picks], "skipped": str(d.get("skipped", ""))[:400]}
+    system = load_prompt("curator", TEMPLATE_CATALOGUE=_catalogue(), LANG=language, MAX_PICKS=str(max_picks))
+    return Agent("scout", llm, system, validate, events, max_attempts=3, temperature=0.1)

@@ -381,7 +381,7 @@
   // ---------- events ----------
   let gearSpeed = 0.4, partSpeed = 0.3, optRunning = false, valUntil = 0, heatT = 0;
   const now = () => performance.now() / 1000;
-  const MAP = { researcher: 'research', strategist: 'strategist', you: 'strategist', optimizer: 'optimizer', planner: 'optimizer', validator: 'validator', judge: 'judge', auditor: 'judge', lab: 'judge' };
+  const MAP = { researcher: 'research', scout: 'research', strategist: 'strategist', you: 'strategist', optimizer: 'optimizer', planner: 'optimizer', validator: 'validator', judge: 'judge', auditor: 'judge', lab: 'judge' };
   function speak(station, text, secs) {
     const r = robots[station]; if (!r || !text) return;
     r.bub.textContent = text.length > 110 ? text.slice(0, 107) + '...' : text;
@@ -394,7 +394,7 @@
     const hex = '#' + col.toString(16).padStart(6, '0');
     verdict.redraw(centered([status === 'INSUFFICIENT_EVIDENCE' ? 'NOT ENOUGH DATA' : status, (name || '').slice(0, 22)], hex, status === 'INSUFFICIENT_EVIDENCE' ? 40 : 56), '#07080c');
   }
-  const AGENTS_OF = { research: ['researcher'], strategist: ['strategist'], optimizer: ['optimizer', 'planner'], validator: ['validator'], judge: ['judge', 'auditor'], trader: [] };
+  const AGENTS_OF = { research: ['researcher', 'scout'], strategist: ['strategist'], optimizer: ['optimizer', 'planner'], validator: ['validator'], judge: ['judge', 'auditor'], trader: [] };
   const agentState = {};
   const matWork = mat(0xffffff, glow(0xffffff, 1.3)), matDone = mat(THEME.n.up, glow(THEME.n.up, 1.2));
   let stateLabels = { idle: 'idle', working: 'working', done: 'done' };

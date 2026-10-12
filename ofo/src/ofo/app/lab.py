@@ -25,7 +25,8 @@ from ..storage import list_studies, load_study, slugify
 from ..accounts import demo_accounts, load_accounts
 from ..data import resample
 from ..trades import extract_trades, summarize
-from ..strategies import TEMPLATES
+from ..scout import Scout
+from ..strategies import INDICATOR_HELP, TEMPLATES
 
 
 LANGS = {"it": "Italian", "en": "English"}
@@ -46,7 +47,7 @@ def spec_summary(sid: str, spec: StrategySpec, origin: str, registry_trials: int
 
 class Lab:
     def __init__(self, bars_path: str, data_dir: str = "data", ideas_dir: str = "ideas", contract=MNQ,
-                 rules=None, contracts: int = 2, llm=None, pool=None):
+                 rules=None, contracts: int = 2, llm=None, pool=None, fetch=None):
         self.bars_path, self.ideas = bars_path, Path(ideas_dir)
         self.data = Path(data_dir)
         self.work = self.data / "loop"
@@ -62,8 +63,10 @@ class Lab:
         self._sessions = None
         self.language = "Italian"
         self._trades_cache: dict = {}
+        self._ind_cache: dict = {}
         self.requests_file = self.data / "template_requests.json"
         self.ideas.mkdir(parents=True, exist_ok=True)
+        self._fetch, self._scout, self._scout_running = fetch, None, False
 
     # -- engine -------------------------------------------------------------------------
     def bars(self) -> pd.DataFrame:
@@ -78,7 +81,7 @@ class Lab:
 
     def loop(self) -> ResearchLoop:
         if self._loop_obj is None:
-            self._loop_obj = ResearchLoop(self.bars(), self.contract, self.rules, self.registry, self.llm,
+            self._loop_obj = ResearchLoop(self.bars, self.contract, self.rules, self.registry, self.llm,
                                           self.events, self.work, contracts=self.contracts, language=self.language)
         return self._loop_obj
 
@@ -186,18 +189,81 @@ class Lab:
                 for agent in ("optimizer", "validator", "judge"):      # nobody stays "working" after a crash
                     self.events.emit(agent, "idle", "stopped")
 
+    def _ingest_now(self) -> None:
+        lp = self.loop()
+        lp.ingest_ideas(self.ideas)
+        while lp.queue:
+            spec, _ = lp.queue.pop(0)
+            self._add_pending(spec, "paper")
+
     def ingest(self) -> dict:
         def work():
             try:
-                lp = self.loop()
-                lp.ingest_ideas(self.ideas)
-                while lp.queue:
-                    spec, _ = lp.queue.pop(0)
-                    self._add_pending(spec, "paper")
+                self._ingest_now()
             except Exception as e:
                 self.events.emit("lab", "error", f"ingest: {e}")
         threading.Thread(target=work, daemon=True).start()
         return {"started": True}
+
+    # -- Scout: autonomous literature search (arXiv) ---------------------------------------
+    def scout(self) -> Scout:
+        if self._scout is None:
+            llm = self.llm.get("scout", self.llm.get("researcher")) if isinstance(self.llm, dict) else \
+                (None if isinstance(self.llm, NoLLM) else self.llm)
+            self._scout = Scout(self.data / "scout", self.ideas, llm, self.events, fetch=self._fetch, language=self.language)
+        self._scout.language = self.language
+        return self._scout
+
+    def scout_run(self, lang: str | None = None, sync: bool = False) -> dict:
+        self.set_lang(lang)
+        with self.lock:
+            if self._scout_running:
+                return {"started": False, "reason": "already running"}
+            self._scout_running = True
+
+        def work():
+            try:
+                res = self.scout().run_once()
+                if res["downloaded"]:
+                    self._ingest_now()                  # new PDFs -> Researcher -> proposals waiting for your go-ahead
+            except Exception as e:
+                self.events.emit("lab", "error", f"scout: {e}")
+                self.events.emit("scout", "idle", "stopped")
+            finally:
+                self._scout_running = False
+        if sync:
+            work()
+        else:
+            threading.Thread(target=work, daemon=True).start()
+        return {"started": True}
+
+    def scout_state(self) -> dict:
+        return self.scout().public_state(self._scout_running)
+
+    def set_scout_auto(self, enabled: bool, minutes: int | None = None) -> dict:
+        sc = self.scout()
+        sc.state["auto"] = {"enabled": bool(enabled), "minutes": max(5, int(minutes or sc.state["auto"]["minutes"]))}
+        sc._save()
+        return self.scout_state()
+
+    def scout_tick(self, now: float | None = None) -> bool:
+        """Called every ~30 s by the background thread: starts a search when the schedule says so."""
+        sc, now = self.scout(), now or time.time()
+        a, last = sc.state["auto"], sc.state["last_run"]
+        if a["enabled"] and not self._scout_running and (last is None or now - last["at"] >= a["minutes"] * 60):
+            self.scout_run()
+            return True
+        return False
+
+    def start_background(self) -> None:
+        def loop():
+            while True:
+                time.sleep(30)
+                try:
+                    self.scout_tick()
+                except Exception as e:
+                    self.events.emit("lab", "error", f"scheduler: {e}")
+        threading.Thread(target=loop, daemon=True).start()
 
     # -- views ----------------------------------------------------------------------------
     def state(self) -> dict:
@@ -214,10 +280,12 @@ class Lab:
         return {"trials": self.registry.n_trials, "locked_looks": self.registry.data["locked_looks"],
                 "calls_last_hour": self.pool.calls_last_hour() if self.pool else None,
                 "calls_per_hour": self.pool.calls_per_hour if self.pool else None,
+                "calls_last_minute": self.pool.calls_last_minute() if self.pool else None,
+                "calls_per_minute": self.pool.calls_per_minute if self.pool else None,
                 "ideas": ideas, "pending": pending, "jobs": list(self.jobs.values())[-10:],
                 "strategies": list_studies(self.work), "template_requests": reqs,
                 "templates": {k: t.doc for k, t in TEMPLATES.items() if not t.control}, "symbol": self.contract.symbol,
-                "ai": not isinstance(self.llm, NoLLM)}
+                "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state()}
 
     def events_after(self, after: int) -> dict:
         ev = self.events.read()
@@ -259,6 +327,40 @@ class Lab:
         return {"trades": vis, "n_hidden": len(allt) - len(vis), "locked_visible": looked, "tf": tf,
                 "params": {k: v for k, v in ser["best_params"].items() if k != "tf"}, "cut": ser["cut"],
                 "summary": summarize(vis), "name": rep["name"]}
+
+    def indicators(self, slug: str, start: int | None = None, end: int | None = None) -> dict | None:
+        """The indicator lines the strategy's best candidate really uses, on its own timeframe."""
+        d = load_study(self.work, slug)
+        if d is None or not d["series"] or not d["series"].get("best_params"):
+            return None
+        rep = d["report"]
+        t = TEMPLATES[rep["template"]]
+        if t.indicators is None:
+            return {"series": [], "tf": None, "template": rep["template"]}
+        params = dict(d["series"]["best_params"]); tf = params.pop("tf")
+        key = (slug, d.get("saved_at"))
+        if key not in self._ind_cache:
+            b = self.bars() if tf == "1min" else resample(self.bars(), tf)
+            self._ind_cache[key] = (b.index, t.indicators(b, **params))
+        index, lines = self._ind_cache[key]
+        secs = ((index - pd.Timestamp("1970-01-01")) // pd.Timedelta(seconds=1)).to_numpy()
+        lo = start if start is not None else secs[0]
+        hi = end if end is not None else secs[-1]
+        sel = (secs >= lo) & (secs <= hi)
+        out = []
+        for name, ser in lines.items():
+            vals = ser.to_numpy()[sel]; ts = secs[sel]
+            pts, prev_ok = [], False
+            for tt, v in zip(ts.tolist(), vals.tolist()):
+                ok = v == v                                          # not NaN
+                if ok:
+                    pts.append([tt, round(v, 4)])
+                elif prev_ok:
+                    pts.append([tt, None])                           # one gap marker: lines must not join across days
+                prev_ok = ok
+            out.append({"name": name, "points": pts})
+        return {"series": out, "tf": tf, "template": rep["template"], "params": params,
+                "help": INDICATOR_HELP.get(rep["template"], {})}
 
     def save_idea(self, name: str, data: bytes) -> dict:
         safe = Path(name).name

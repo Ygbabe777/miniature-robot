@@ -50,8 +50,15 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     days = q.get("days", ["10"])[0]
                     return self._json(lab.candles(q.get("tf", ["15min"])[0], None if days == "all" else int(days),
                                                   q.get("before", [None])[0]))
+                if u.path == "/api/scout":
+                    return self._json(lab.scout_state())
                 if u.path == "/api/accounts":
                     return self._json(lab.accounts())
+                if u.path.startswith("/api/indicators/"):
+                    q = parse_qs(u.query)
+                    g = lambda k: int(q[k][0]) if k in q else None
+                    d = lab.indicators(unquote(u.path[len("/api/indicators/"):]), g("from"), g("to"))
+                    return self._json(d) if d else self._json({"error": "not found"}, 404)
                 if u.path.startswith("/api/trades/"):
                     d = lab.trades(unquote(u.path[len("/api/trades/"):]))
                     return self._json(d) if d else self._json({"error": "not found"}, 404)
@@ -78,6 +85,10 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.start(str(data.get("id", "")), data.get("lang")))
                 if u.path == "/api/ingest":
                     return self._json(lab.ingest())
+                if u.path == "/api/scout/run":
+                    return self._json(lab.scout_run(data.get("lang")))
+                if u.path == "/api/scout/auto":
+                    return self._json(lab.set_scout_auto(bool(data.get("enabled")), data.get("minutes")))
                 self._json({"error": "not found"}, 404)
             except Exception as e:
                 self._json({"error": str(e)[:300]}, 500)

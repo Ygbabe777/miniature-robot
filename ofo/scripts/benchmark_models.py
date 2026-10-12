@@ -16,7 +16,7 @@ from ofo.specs import from_dict
 args = sys.argv[1:]
 max_models = int(args[args.index("--max-models") + 1]) if "--max-models" in args else 12
 trials = int(args[args.index("--trials") + 1]) if "--trials" in args else 1
-max_calls = int(args[args.index("--max-calls") + 1]) if "--max-calls" in args else 12
+max_calls = int(args[args.index("--max-calls") + 1]) if "--max-calls" in args else 60
 explicit = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or not args[i - 1].startswith("--"))]
 
 TEXT = ("Opening range breakout study. After the 9:30 New York open the first 15 to 45 minutes "
@@ -31,7 +31,7 @@ models = explicit or client.list_models()[:max_models]
 need = len(models) * trials * 2
 print(f"{len(models)} models x {trials} trials x 2 tasks = {need} calls (limit for this run: {max_calls})")
 if need > max_calls:
-    sys.exit("Too many calls for your hourly allowance. Fewer models/trials, or raise --max-calls on purpose.")
+    sys.exit("Too many calls for one run. Fewer models/trials, or raise --max-calls on purpose.")
 print()
 results = []
 for m in models:

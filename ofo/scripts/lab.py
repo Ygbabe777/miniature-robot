@@ -27,6 +27,7 @@ except LLMError as e:
 lab = Lab(args[0], rules=PRESETS[args[1] if len(args) > 1 else "50k"],
           contract={"MNQ": MNQ, "NQ": NQ}[args[2] if len(args) > 2 else "MNQ"],
           contracts=int(args[3]) if len(args) > 3 else 2, llm=llm, pool=pool)
+lab.start_background()                    # the Scout's schedule (only acts if you switch auto mode on)
 srv = make_server(lab, port=port)
 url = f"http://127.0.0.1:{port}"
 print(f"Lab pronto su {url}  (Ctrl+C per chiudere)")

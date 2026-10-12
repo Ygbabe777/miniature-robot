@@ -172,3 +172,20 @@ def test_call_history_survives_a_restart_and_cache_hits_are_free(tmp_path):
     assert p2.chat("r", msg) == "hi from b"                          # cache: no call spent
     with pytest.raises(CallLimitReached):
         p2.chat("r", [{"role": "user", "content": "different"}])     # ledger remembered the call
+
+
+def test_per_minute_limit_waits_only_about_a_minute_and_roles_have_their_own_share(tmp_path):
+    from ofo.llm.pool import CallLimitReached
+    s, p, clock = _pool(tmp_path, {"r": ["b"], "q": ["b"]}, calls_per_minute=3, call_wait_max=90,
+                        role_calls_per_minute={"q": 1})
+    t0 = clock["t"]
+    for i in range(3):
+        p.chat("r", [{"role": "user", "content": str(i)}]); clock["t"] += 5
+    p.chat("r", [{"role": "user", "content": "4th"}])                 # waits for the oldest call to leave the 60 s window
+    assert 60 <= clock["t"] - t0 < 80
+    assert p.calls_last_minute() <= 3 and p.calls_last_hour() == 4
+    s2, p2, c2 = _pool(tmp_path / "x", {"q": ["b"]}, calls_per_minute=30, role_calls_per_minute={"q": 1})
+    p2.chat("q", [{"role": "user", "content": "1"}])
+    with pytest.raises(CallLimitReached) as e:
+        p2.chat("q", [{"role": "user", "content": "2"}])
+    assert " s" in str(e.value)                                       # a short wait is reported in seconds

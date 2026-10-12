@@ -21,7 +21,7 @@ class Scripted:
         self.seen.append(messages)
         sys_ = messages[0]["content"]
         role = ("researcher" if "RESEARCHER" in sys_ else "planner" if "PLANNER" in sys_ else
-                "strategist" if "STRATEGIST" in sys_ else "auditor")
+                "strategist" if "STRATEGIST" in sys_ else "curator" if "CURATOR" in sys_ else "auditor")
         return self.replies[role].pop(0)
 
 
@@ -163,7 +163,7 @@ def test_strategist_rejects_both_or_garbage_and_never_invents_templates():
     bad_tpl = json.dumps({"reply": "x", "spec": {"template": "magic_ai", "ranges": {}, "rationale": "r"}})
     for r in (both, bad_tpl):
         with pytest.raises(AgentError):
-            make_strategist(Scripted(strategist=[r, r])).run({"message": "x"})
+            make_strategist(Scripted(strategist=[r, r, r])).run({"message": "x"})
     ok = make_strategist(Scripted(strategist=[json.dumps({"reply": "Ciao!"})])).run({"message": "ciao"})
     assert ok["spec"] is None and ok["template_request"] is None and ok["reply"] == "Ciao!"
 

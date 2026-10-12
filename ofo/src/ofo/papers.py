@@ -68,7 +68,7 @@ def system_prompt(language: str = "Italian") -> str:
 CHUNK_CHARS = 20000     # tokens are plentiful, calls are not: fewer, bigger requests
 
 
-def propose_specs(llm, text: str, source: str = "", max_chunks: int = 3, language: str = "Italian") -> tuple[list[StrategySpec], list[dict]]:
+def propose_specs(llm, text: str, source: str = "", max_chunks: int = 6, language: str = "Italian") -> tuple[list[StrategySpec], list[dict]]:
     """Returns (valid specs, rejected proposals with reasons). `llm` needs .chat(messages)."""
     specs, rejected, seen = [], [], set()
     for n, chunk in enumerate(select_chunks(chunk_text(text, max_chars=CHUNK_CHARS), max_chunks)):

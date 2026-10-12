@@ -101,7 +101,7 @@
   // ---------- state ----------
   function renderState(s) {
     $('#c-trials').textContent = s.trials; $('#c-looks').textContent = s.locked_looks;
-    $('#c-calls').textContent = s.calls_last_hour == null ? '–' : s.calls_last_hour + '/' + (s.calls_per_hour ?? '–');
+    $('#c-calls').textContent = s.calls_last_minute == null ? '–' : s.calls_last_minute + '/' + (s.calls_per_minute ?? '–');
     $('#c-ai').textContent = s.ai ? t('ai_on') : t('ai_off'); $('#c-ai-chip').className = 'chip ' + (s.ai ? 'ok' : 'bad');
     $('#ideas').innerHTML = s.ideas.length ? s.ideas.map(i => `<div><span>${esc(i.name)}</span><span>${i.read ? '<i>' + t('read_ok') + '</i>' : i.kb + ' KB'}</span></div>`).join('') : `<div class="empty">${t('no_files')}</div>`;
     $('#n-strat').textContent = s.pending.length || ''; $('#n-strat').style.display = s.pending.length ? 'inline' : 'none';
@@ -115,14 +115,14 @@
     if (window.LabScene) LabScene.setTrader(s.strategies.filter(x => x.status === 'APPROVED').map(x => x.name), { wait: t('tr_wait'), desk: t('tr_desk'), ready: t('tr_ready'), head: t('tr_head'), none: t('tr_none') });
     trader.symbol = s.symbol; trader.setStrategies(s.strategies);
   }
-  async function poll() { try { renderState(await api('/api/state')); } catch (e) {} }
+  async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); } catch (e) {} }
 
   // ---------- Trader tab: candlestick chart of the user's own historical data ----------
   trader = (function () {
     const TFS = [['1min', '1m'], ['5min', '5m'], ['15min', '15m'], ['30min', '30m'], ['60min', '1h'], ['1D', '1D']];
     const RNG = [['1D', 1, '1min'], ['5D', 5, '5min'], ['1M', 21, '30min'], ['3M', 63, '60min'], ['6M', 126, '1D'], ['1Y', 252, '1D'], ['ALL', 'all', '1D']];
     let tf = '15min', rng = '5D', chart = null, cs = null, vs = null, last = null, symbol = 'NQ', before = null;
-    let trades = null, loaded = [], slug = '', listKey = '';
+    let trades = null, loaded = [], slug = '', listKey = '', indSeries = [];
     const order = TFS.map(x => x[0]);
     const seg = (el, items, cur, fn) => { el.innerHTML = items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${label}</button>`).join(''); el.querySelectorAll('button').forEach(b => b.onclick = () => fn(b.dataset.k)); };
     function draw() {
@@ -183,6 +183,24 @@
       h += `<div>${t('t_note', { s: symbol })}</div>`;
       $('#tnote').innerHTML = h;
     }
+    // the indicator lines the selected strategy really uses (EMAs, channels, bands, opening range, VWAP)
+    async function drawIndicators() {
+      indSeries.forEach(x => { try { chart.removeSeries(x); } catch (e) {} }); indSeries = [];
+      const lg = $('#tlegend'); lg.innerHTML = '';
+      if (!slug || !loaded.length) return;
+      if (typeof loaded[0][0] === 'string') { lg.textContent = t('ind_daily'); return; }
+      const d = await api(`/api/indicators/${encodeURIComponent(slug)}?from=${loaded[0][0]}&to=${loaded[loaded.length - 1][0] + 86400}`);
+      if (!d.series || !d.series.length) return;
+      const cols = [THEME.accent, '#9a9aa2', THEME.warn, '#c9c9d0', '#6d6d75'];
+      let html = '';
+      d.series.forEach((s, i) => {
+        const dashed = /sigma|zone/i.test(s.name), col = cols[i % cols.length];
+        const ls = chart.addLineSeries({ color: col, lineWidth: dashed ? 1 : 2, lineStyle: dashed ? 2 : 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        ls.setData(s.points.map(([tt, v]) => v === null ? { time: tt } : { time: tt, value: v }));
+        indSeries.push(ls); html += `<span style="color:${col}">━</span> ${esc(s.name)} &nbsp; `;
+      });
+      lg.innerHTML = `<div><b>${t('ind_title')}:</b> ${html}<span style="color:var(--dim)">(${t('ind_tf', { tf: d.tf })})</span></div>` + (d.help && d.help[LANG] ? `<div style="color:var(--dim)">${esc(d.help[LANG])}</div>` : '');
+    }
     async function load() {
       ensure(); fit();
       const days = RNG.find(r => r[0] === rng)[1];
@@ -196,12 +214,12 @@
       symbol = d.symbol; loaded = d.candles;
       cs.setData(d.candles.map(c => ({ time: c[0], open: c[1], high: c[2], low: c[3], close: c[4] })));
       vs.setData(d.candles.map(c => ({ time: c[0], value: c[5], color: c[4] >= c[1] ? THEME.up + '40' : THEME.down + '40' })));
-      chart.timeScale().fitContent(); applyMarkers();
+      chart.timeScale().fitContent(); applyMarkers(); drawIndicators();
       last = `${symbol} ${tf} · ` + t('t_sessions', { n: d.n_sessions, a: d.from, b: d.to }); $('#tinfo').textContent = last; note();
     }
     async function pick(s) {
       slug = s; trades = null;
-      if (!s) { applyMarkers(); note(); return; }
+      if (!s) { applyMarkers(); drawIndicators(); note(); return; }
       const d = await api('/api/trades/' + encodeURIComponent(s));
       if (d.error) { note(); return; }
       trades = d;
@@ -210,7 +228,7 @@
         const dt = new Date(lastTrade + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + 1);
         before = dt.toISOString().slice(0, 10); rng = '1M'; tf = order.includes(d.tf) ? d.tf : '15min';
         draw(); await load();
-      } else { applyMarkers(); note(); }
+      } else { applyMarkers(); drawIndicators(); note(); }
     }
     $('#tstrat').onchange = (e) => pick(e.target.value);
     function setStrategies(list) {
@@ -275,8 +293,24 @@
   $('#close').onclick = () => { $('#modal').hidden = true; LabCharts.destroyAll(); };
   document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#close').click(); });
 
+  // ---------- Scout: autonomous literature search ----------
+  let scoutKey = '';
+  function renderScout(sc) {
+    const key = JSON.stringify([sc.running, sc.auto, sc.last_run, sc.papers.map(p => p.id + p.status), Math.floor((sc.next_run || 0) / 60)]);
+    if (key === scoutKey) return; scoutKey = key;
+    const mins = sc.next_run ? Math.max(0, Math.round((sc.next_run - Date.now() / 1000) / 60)) : null;
+    const st = { downloaded: 'sp_downloaded', skipped: 'sp_skipped', failed: 'sp_failed', 'no open PDF': 'sp_nopdf' };
+    $('#scout').innerHTML = `<div class="srow"><button class="btn small" id="scout-go" ${sc.running ? 'disabled' : ''}>${sc.running ? t('scout_running') : t('scout_now')}</button>
+      <label>${t('scout_auto')} <select id="scout-auto">${[0, 30, 60, 180, 360].map(m => `<option value="${m}" ${(m === 0 ? !sc.auto.enabled : sc.auto.enabled && sc.auto.minutes === m) ? 'selected' : ''}>${m === 0 ? t('scout_off') : t('scout_every', { m })}</option>`).join('')}</select></label></div>
+      <div class="smeta">${t('scout_topics', { a: sc.queries_done, b: sc.queries_total })}${sc.last_run ? ' · ' + t('scout_last', { f: sc.last_run.found, d: sc.last_run.downloaded }) : ''}${mins !== null && sc.auto.enabled ? ' · ' + t('scout_next', { m: mins }) : ''}</div>
+      <div class="spapers">${sc.papers.length ? sc.papers.slice(0, 6).map(p => `<div title="${esc(p.why || '')}"><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc((p.title || '').slice(0, 60))}</a><i class="${p.status === 'downloaded' ? 'ok' : ''}">${t(st[p.status] || 'sp_skipped')}</i></div>`).join('') : `<div class="empty">${t('scout_none')}</div>`}</div>
+      <div class="smeta">${t('scout_note')}</div>`;
+    $('#scout-go').onclick = async () => { await api('/api/scout/run', { method: 'POST', json: { lang: LANG } }); scoutKey = ''; poll(); };
+    $('#scout-auto').onchange = async (e) => { const m = +e.target.value; await api('/api/scout/auto', { method: 'POST', json: { enabled: m > 0, minutes: m || 60 } }); scoutKey = ''; poll(); };
+  }
+
   // ---------- agents at work ----------
-  const ROWS = [['research', 'Researcher'], ['strategist', 'Strategist'], ['optimizer', 'Optimizer + Planner'], ['validator', 'Validator'], ['judge', 'Judge + Auditor']];
+  const ROWS = [['research', 'Researcher + Scout'], ['strategist', 'Strategist'], ['optimizer', 'Optimizer + Planner'], ['validator', 'Validator'], ['judge', 'Judge + Auditor']];
   if (window.LabScene) LabScene.setStateLabels({ idle: t('st_idle'), working: t('st_working'), done: t('st_done') });
   function renderAgents() {
     if (!window.LabScene) return;

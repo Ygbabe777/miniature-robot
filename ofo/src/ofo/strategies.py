@@ -148,6 +148,69 @@ def vwap_dev(bars: pd.DataFrame, window: int, z: float) -> pd.Series:
     return _hold(sig)
 
 
+# ---------- the indicators each template actually uses (drawn on the Trader chart) ----------
+def _levels(bars: pd.DataFrame, or_minutes: int):
+    idx = bars.index
+    tod = _minutes(idx)
+    day = idx.normalize()
+    in_or = (tod >= 570) & (tod < 570 + or_minutes)
+    hi = bars["high"].where(in_or).groupby(day).transform("max")
+    lo = bars["low"].where(in_or).groupby(day).transform("min")
+    post = (tod >= 570 + or_minutes) & (tod < 16 * 60 + 45)
+    return hi.where(post), lo.where(post)
+
+
+def ind_ema_cross(bars, fast, slow):
+    c = bars["close"]
+    return {f"EMA {fast}": c.ewm(span=fast, adjust=False).mean(), f"EMA {slow}": c.ewm(span=slow, adjust=False).mean()}
+
+
+def ind_breakout(bars, lookback):
+    return {f"Upper channel {lookback}": bars["high"].rolling(lookback).max().shift(1),
+            f"Lower channel {lookback}": bars["low"].rolling(lookback).min().shift(1)}
+
+
+def ind_mean_reversion(bars, window, z):
+    c = bars["close"]; m = c.rolling(window).mean(); sd = c.rolling(window).std()
+    return {f"Mean {window}": m, f"+{z} sigma": m + z * sd, f"-{z} sigma": m - z * sd}
+
+
+def ind_orb(bars, or_minutes):
+    hi, lo = _levels(bars, or_minutes)
+    return {f"Opening range high ({or_minutes}m)": hi, f"Opening range low ({or_minutes}m)": lo}
+
+
+def ind_orb_retest(bars, or_minutes, retest_bars, tol):
+    hi, lo = _levels(bars, or_minutes)
+    rng = hi - lo
+    return {f"Opening range high ({or_minutes}m)": hi, f"Opening range low ({or_minutes}m)": lo,
+            "Retest zone (upper)": hi + tol * rng, "Retest zone (lower)": lo - tol * rng}
+
+
+def ind_vwap_dev(bars, window, z):
+    key = bars["session"] if "session" in bars.columns else bars.index.normalize()
+    vol = bars["volume"].astype(float)
+    vwap = (bars["close"] * vol).groupby(key).cumsum() / vol.groupby(key).cumsum()
+    sd = (bars["close"] - vwap).rolling(window).std()
+    return {"Session VWAP": vwap, f"VWAP +{z} sigma": vwap + z * sd, f"VWAP -{z} sigma": vwap - z * sd}
+
+
+INDICATOR_HELP = {
+    "ema_cross": {"it": "Long quando l'EMA veloce è sopra quella lenta, short quando è sotto.",
+                  "en": "Long when the fast EMA is above the slow one, short when below."},
+    "breakout": {"it": "Long se il prezzo chiude sopra il canale alto, short se chiude sotto quello basso (canale di Donchian).",
+                 "en": "Long when price closes above the upper channel, short below the lower one (Donchian channel)."},
+    "mean_reversion": {"it": "Compra quando il prezzo scende sotto la banda bassa, vende sopra quella alta; esce vicino alla media.",
+                       "en": "Buys when price falls below the lower band, sells above the upper one; exits near the mean."},
+    "orb": {"it": "Il range dei primi minuti dopo le 9:30 (New York). Long sopra il massimo, short sotto il minimo.",
+            "en": "The range of the first minutes after 9:30 New York time. Long above the high, short below the low."},
+    "orb_retest": {"it": "Come l'ORB, ma entra solo dopo che il prezzo torna sul livello rotto (zona di retest) e richiude oltre.",
+                   "en": "Like the ORB, but enters only after price comes back to the broken level (retest zone) and closes beyond it again."},
+    "vwap_dev": {"it": "VWAP della sessione con bande: compra molto sotto il VWAP, vende molto sopra.",
+                 "en": "Session VWAP with bands: buys far below the VWAP, sells far above."},
+}
+
+
 @dataclass(frozen=True)
 class Template:
     fn: Callable
@@ -155,22 +218,23 @@ class Template:
     valid: Callable = lambda p: True
     control: bool = False   # zero-edge controls are never offered to the LLM
     doc: str = ""
+    indicators: Callable | None = None   # params -> {name: Series}: what the strategy looks at
 
 
 TEMPLATES = {
     "ema_cross": Template(ema_cross, {"fast": (int, 2, 60), "slow": (int, 5, 400)},
-                          lambda p: p["fast"] < p["slow"], doc="trend: fast/slow EMA cross"),
+                          lambda p: p["fast"] < p["slow"], doc="trend: fast/slow EMA cross", indicators=ind_ema_cross),
     "breakout": Template(breakout, {"lookback": (int, 5, 300)},
-                         doc="trend: Donchian channel breakout"),
+                         doc="trend: Donchian channel breakout", indicators=ind_breakout),
     "mean_reversion": Template(mean_reversion, {"window": (int, 10, 300), "z": (float, 0.5, 4.0)},
-                               doc="reversion: z-score of close vs rolling mean"),
+                               doc="reversion: z-score of close vs rolling mean", indicators=ind_mean_reversion),
     "orb": Template(orb, {"or_minutes": (int, 5, 120)},
-                    doc="opening-range breakout at the 09:30 ET cash open"),
+                    doc="opening-range breakout at the 09:30 ET cash open", indicators=ind_orb),
     "orb_retest": Template(orb_retest, {"or_minutes": (int, 5, 120), "retest_bars": (int, 1, 30),
                                         "tol": (float, 0.0, 1.0)},
-                           doc="opening-range breakout that enters only after a retest of the broken level"),
+                           doc="opening-range breakout that enters only after a retest of the broken level", indicators=ind_orb_retest),
     "vwap_dev": Template(vwap_dev, {"window": (int, 10, 300), "z": (float, 0.5, 4.0)},
-                         doc="reversion: deviation from session VWAP"),
+                         doc="reversion: deviation from session VWAP", indicators=ind_vwap_dev),
     "random_control": Template(random_control, {"seed": (int, 0, 100_000)}, control=True,
                                doc="zero-edge control"),
 }

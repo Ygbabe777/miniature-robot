@@ -33,13 +33,20 @@ def _fingerprint(spec: StrategySpec) -> str:
 
 
 def _llm(llm, role: str):
-    return llm[role] if isinstance(llm, dict) else llm
+    if not isinstance(llm, dict):
+        return llm
+    return llm[role] if role in llm else llm["researcher"]      # roles missing from the config share the researcher's models
 
 
 class ResearchLoop:
+    @property
+    def bars(self):
+        """A DataFrame, or a function returning one: reading papers must not load 700k rows of market data."""
+        return self._bars() if callable(self._bars) else self._bars
+
     def __init__(self, bars, contract, rules, registry, llm, events, workdir, contracts: int = 2,
                  max_cycle_trials: int = 3000, max_depth: int = 2, language: str = "Italian"):
-        self.bars, self.contract, self.rules, self.registry = bars, contract, rules, registry
+        self._bars, self.contract, self.rules, self.registry = bars, contract, rules, registry
         self.llm, self.events, self.contracts = llm, events, contracts   # one LLM, or {role: LLM}
         self.max_cycle_trials, self.max_depth, self.language = max_cycle_trials, max_depth, language
         self.work = Path(workdir)
@@ -72,11 +79,18 @@ class ResearchLoop:
             h = hashlib.sha256(p.read_bytes()).hexdigest()
             if h in self.processed_ideas:
                 continue
+            source = p.name
+            meta = p.with_suffix(".meta.json")
+            if meta.exists():
+                try:
+                    m = json.loads(meta.read_text()); source = f"{m.get('title', p.name)} ({m.get('url', '')})"
+                except ValueError:
+                    pass
             self.events.emit("researcher", "reading", f"reading {p.name}")
             self.events.emit("researcher", "working", f"reading {p.name}")
             try:
                 text = extract_pdf_text(str(p)) if p.suffix.lower() == ".pdf" else p.read_text(errors="replace")
-                specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=p.name, language=self.language)
+                specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=source, language=self.language)
             except Exception as e:                       # unreadable file or LLM down: retry later
                 self.events.emit("researcher", "error", f"{p.name}: {e}")
                 self.events.emit("researcher", "idle", "stopped")

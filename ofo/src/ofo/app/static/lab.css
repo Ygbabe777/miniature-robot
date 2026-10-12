@@ -124,3 +124,12 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 .ac .bar{height:5px;background:#000;margin-top:4px;min-width:90px} .ac .bar i{display:block;height:100%;background:var(--accent)}
 .logo img{width:30px;height:30px;border-radius:6px;display:none}
 .acct.far span{display:none}
+
+/* scout panel, indicator legend */
+#scout{font-size:11.5px} .srow{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px}
+.srow label{color:var(--dim);display:flex;gap:5px;align-items:center} .srow select{background:var(--panel2);color:var(--txt);border:3px solid var(--line);padding:3px;font:inherit}
+.smeta{color:var(--dim);font-size:10.5px;margin:4px 0;line-height:1.4}
+.spapers div{display:flex;justify-content:space-between;gap:6px;padding:2px 0;border-bottom:1px solid #0006}
+.spapers a{color:var(--txt);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .spapers a:hover{text-decoration:underline}
+.spapers i{font-style:normal;color:var(--dim);white-space:nowrap} .spapers i.ok{color:var(--up)}
+.tlegend{font-size:11px;line-height:1.5;margin:2px 0 6px;min-height:0}

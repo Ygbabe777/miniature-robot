@@ -30,13 +30,15 @@ class ModelPool:
                  cache_dir: str | Path | None = None, daily_token_budget: dict[str, int] | None = None,
                  cooldown_base: float = 30.0, now=time.time, sleep=time.sleep, max_wait: float = 120.0,
                  calls_per_hour: int | None = None, role_calls_per_hour: dict[str, int] | None = None,
-                 call_wait_max: float = 0.0):
+                 call_wait_max: float = 0.0, calls_per_minute: int | None = None,
+                 role_calls_per_minute: dict[str, int] | None = None):
         self.client, self.roles = client, roles
         self.ledger_path = Path(ledger_path)
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.budget = daily_token_budget or {}
         self.cooldown_base, self.now, self.sleep, self.max_wait = cooldown_base, now, sleep, max_wait
         self.calls_per_hour, self.role_calls = calls_per_hour, role_calls_per_hour or {}
+        self.calls_per_minute, self.role_calls_min = calls_per_minute, role_calls_per_minute or {}
         self.call_wait_max = call_wait_max      # 0 = fail fast (interactive); 3700 = wait (background loop)
         self.cooldown: dict[str, float] = {}
         self.fails: dict[str, int] = {}
@@ -54,24 +56,42 @@ class ModelPool:
 
     # --- hourly call allowance (every attempt counts, successful or not) -------------------
     def calls_last_hour(self, role: str | None = None) -> int:
-        cut = self.now() - 3600
+        return self._count(3600, role)
+
+    def calls_last_minute(self, role: str | None = None) -> int:
+        return self._count(60, role)
+
+    def _count(self, seconds: int, role: str | None) -> int:
+        cut = self.now() - seconds
         return sum(1 for t, r in self.calls if t > cut and (role is None or r == role))
+
+    def _limits(self, role: str) -> list[tuple[int, int, str | None]]:
+        """(window seconds, max calls, role filter). Every attempt counts, successful or not."""
+        out = []
+        if self.calls_per_minute is not None:
+            out.append((60, self.calls_per_minute, None))
+        if self.role_calls_min.get(role) is not None:
+            out.append((60, self.role_calls_min[role], role))
+        if self.calls_per_hour is not None:
+            out.append((3600, self.calls_per_hour, None))
+        if self.role_calls.get(role) is not None:
+            out.append((3600, self.role_calls[role], role))
+        return out
 
     def _wait_for_call_slot(self, role: str) -> None:
         while True:
             self.calls = [c for c in self.calls if c[0] > self.now() - 3600]
             waits = []
-            if self.calls_per_hour is not None and len(self.calls) >= self.calls_per_hour:
-                waits.append(self.calls[-self.calls_per_hour][0] + 3600 - self.now())
-            cap = self.role_calls.get(role)
-            mine = [c for c in self.calls if c[1] == role]
-            if cap is not None and len(mine) >= cap:
-                waits.append(mine[-cap][0] + 3600 - self.now())
+            for seconds, cap, who in self._limits(role):
+                rel = [c for c in self.calls if c[0] > self.now() - seconds and (who is None or c[1] == who)]
+                if len(rel) >= cap:
+                    waits.append(rel[-cap][0] + seconds - self.now())
             if not waits:
                 return
             wait = max(waits)
             if wait > self.call_wait_max:
-                raise CallLimitReached(f"hourly call allowance used up; next call possible in {wait / 60:.0f} min")
+                eta = f"{wait:.0f} s" if wait < 120 else f"{wait / 60:.0f} min"
+                raise CallLimitReached(f"call allowance used up; next call possible in {eta}")
             self.sleep(wait + 1)
 
     def _record(self, role: str, model: str, r: dict | None, failed: bool = False) -> None:
@@ -160,5 +180,6 @@ def build_pool(config_path: str | Path, ledger_path="data/llm_usage.json", cache
     pool = ModelPool(LLMClient(), cfg["roles"], ledger_path, cache_dir, cfg.get("daily_token_budget"),
                      cooldown_base=cfg.get("cooldown_seconds", 30.0),
                      calls_per_hour=cfg.get("calls_per_hour"), role_calls_per_hour=cfg.get("role_calls_per_hour"),
+                     calls_per_minute=cfg.get("calls_per_minute"), role_calls_per_minute=cfg.get("role_calls_per_minute"),
                      call_wait_max=cfg.get("wait_for_call_slot_seconds", 0.0))
     return pool, {role: pool.for_role(role) for role in cfg["roles"]}
