@@ -57,6 +57,7 @@ class ResearchLoop:
         self.done_specs: set = set(st.get("done_specs", []))
         self.queue: list[tuple[StrategySpec, int]] = []
         self.trials_spent = 0
+        self.memory = lambda: ""            # set by the Lab: what the lab already learned (knowledge.memory_text)
 
     def _save(self) -> None:
         self.state_file.write_text(json.dumps({"processed_ideas": sorted(self.processed_ideas),
@@ -90,7 +91,9 @@ class ResearchLoop:
             self.events.emit("researcher", "working", f"reading {p.name}")
             try:
                 text = extract_pdf_text(str(p)) if p.suffix.lower() == ".pdf" else p.read_text(errors="replace")
-                specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=source, language=self.language)
+                info: dict = {}
+                specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=source, language=self.language,
+                                                memory=self.memory(), info=info)
             except Exception as e:                       # unreadable file or LLM down: retry later
                 self.events.emit("researcher", "error", f"{p.name}: {e}")
                 self.events.emit("researcher", "idle", "stopped")
@@ -99,7 +102,8 @@ class ResearchLoop:
             self.processed_ideas.add(h)
             (self.work / "specs_auto").mkdir(exist_ok=True)
             (self.work / "specs_auto" / f"{_slug(p.stem)}.json").write_text(json.dumps(
-                {"strategies": [dataclasses.asdict(s) for s in specs], "rejected": rejected}, indent=1))
+                {"strategies": [dataclasses.asdict(s) for s in specs], "rejected": rejected,
+                 "concepts": info.get("concepts", []), "source": source}, indent=1))
             for s in specs:
                 if self.enqueue(s):
                     added += 1
@@ -127,7 +131,8 @@ class ResearchLoop:
             left = self.max_cycle_trials - self.trials_spent
             try:
                 decision = make_planner(_llm(self.llm, "planner"), spec, left, depth, ev, self.language).run(
-                    dev_summary(rep, {"trials_total": self.registry.n_trials, "trials_left": left}, depth))
+                    dev_summary(rep, {"trials_total": self.registry.n_trials, "trials_left": left,
+                                      "lab_memory": self.memory()}, depth))
             except (AgentError, LLMError) as e:       # an AI outage must never lose a finished study
                 decision["reason"] = f"planner failed: {e}"
             ev.emit("planner", decision["decision"], decision["reason"][:300])

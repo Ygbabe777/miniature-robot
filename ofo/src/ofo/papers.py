@@ -68,15 +68,22 @@ def system_prompt(language: str = "Italian") -> str:
 CHUNK_CHARS = 20000     # tokens are plentiful, calls are not: fewer, bigger requests
 
 
-def propose_specs(llm, text: str, source: str = "", max_chunks: int = 6, language: str = "Italian") -> tuple[list[StrategySpec], list[dict]]:
-    """Returns (valid specs, rejected proposals with reasons). `llm` needs .chat(messages)."""
+def propose_specs(llm, text: str, source: str = "", max_chunks: int = 6, language: str = "Italian",
+                  memory: str = "", info: dict | None = None) -> tuple[list[StrategySpec], list[dict]]:
+    """Returns (valid specs, rejected proposals with reasons). `llm` needs .chat(messages).
+    memory: what the lab already learned (knowledge.memory_text). info: filled with the concepts the model named."""
     specs, rejected, seen = [], [], set()
+    if info is not None:
+        info.setdefault("concepts", [])
     for n, chunk in enumerate(select_chunks(chunk_text(text, max_chars=CHUNK_CHARS), max_chunks)):
         msgs = [{"role": "system", "content": system_prompt(language)},
-                {"role": "user", "content": f"Source: {source}\n\nTEXT (part {n + 1}):\n{chunk}"}]
+                {"role": "user", "content": (memory + "\n\n" if memory else "") + f"Source: {source}\n\nTEXT (part {n + 1}):\n{chunk}"}]
         try:
             data = parse_json(llm.chat(msgs, temperature=0.2))
             proposals = data.get("strategies", [])
+            if info is not None:
+                from .knowledge import clean_concepts
+                info["concepts"] += [c for c in clean_concepts(data.get("concepts")) if c not in info["concepts"]]
         except Exception as e:                      # bad JSON from a weak model is expected
             rejected.append({"chunk": n, "reason": f"unparseable reply: {e}"})
             continue

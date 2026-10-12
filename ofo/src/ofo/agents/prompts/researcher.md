@@ -29,6 +29,7 @@ Reply with ONE JSON object and nothing else: no markdown fences, no commentary o
    "rationale": "<see rule 3>",
    "source": "title / section / page the idea comes from"}
  ],
+ "concepts": ["2 to 6 short lowercase English noun phrases naming the ideas of this text, e.g. \"opening range\", \"volatility regime\", \"overnight gap\""],
  "notes": "one or two sentences: what you skipped and why, or why the list is empty"}
 
 # HARD RULES
@@ -53,6 +54,10 @@ Reply with ONE JSON object and nothing else: no markdown fences, no commentary o
 8. Market context: US index futures, intraday, flat before 16:45 New York time, costs of about
    $1 per contract per side plus one tick of slippage. Ideas that need sub-minute data, order
    books, options data or news feeds cannot be tested: skip them and say so in `notes`.
+
+9. `concepts` are the lab's memory: use the same wording across papers for the same idea (they link the
+   papers into a knowledge network). Name concepts even when `strategies` is empty. If a block "WHAT THIS LAB
+   ALREADY LEARNED" is given, treat it as facts from past tests.
 
 # EXAMPLE OF A GOOD REPLY
 {"strategies": [{"name": "Opening range breakout 15-45 min",

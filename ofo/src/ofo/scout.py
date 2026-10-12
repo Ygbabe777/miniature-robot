@@ -125,6 +125,7 @@ class Scout:
                     continue
                 if not is_financial(p["title"] + " " + p["abstract"]):
                     continue
+                p["query"] = q
                 ids.add(p["id"]); found.append(p)
         found.sort(key=lambda p: -relevance(p["title"] + " " + p["abstract"]))
         return found[:20]
@@ -156,7 +157,7 @@ class Scout:
         got = abstracts = 0
         for p in picks:
             rec = {"title": p["title"], "url": p["url"], "published": p["published"], "why": p["why"],
-                   "source": p["source"], "found": self.now(), "status": "skipped"}
+                   "source": p["source"], "found": self.now(), "status": "skipped", "query": p.get("query", "")}
             if p.get("pdf_url") and pdf_allowed(p["pdf_url"]):
                 try:
                     data = download_pdf(p["pdf_url"], self.fetch)

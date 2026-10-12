@@ -88,3 +88,11 @@ Dataview se hai il plugin). Le note sono collegate tra loro (paper → strategia
 Grafo mostra come è nata ogni strategia. Quello che scrivi **sotto la riga `<!-- ofo:end -->`** resta quando la nota viene
 aggiornata. Le tue note in `OFO/Ideas/` le legge il Researcher come i PDF (testo non fidato: passa sempre dai controlli).
 Il Lab non tocca mai file che non ha creato lui e non scrive fuori da `OFO/`.
+
+### Rete di conoscenza (gli agenti imparano)
+Per ogni paper il Researcher nomina 2-6 **concetti** (es. "opening range", "volatility regime"); si aggiungono l'argomento
+con cui lo Scout l'ha trovato e la famiglia della strategia. Ogni concetto diventa una nota in `OFO/Concetti/` che collega
+tutti i paper e le strategie su quell'idea, con cosa è stato imparato ("5 testate, nessuna approvata; falliscono quasi sempre
+il controllo dsr"). Lo stesso riassunto torna ai **prompt del Researcher e del Planner**: non ripropongono idee già fallite
+senza un meccanismo nuovo e preferiscono i concetti letti ma non ancora testati. Funziona anche senza Obsidian
+(`data/knowledge.json`); Obsidian lo mostra come Grafo.

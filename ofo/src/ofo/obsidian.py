@@ -7,6 +7,7 @@ dashboard nicer). Everything OFO writes lives in <vault>/OFO/ and nowhere else:
   Strategie/<name>.md    one note per tested strategy: verdict, surface, risk/reward, links to paper and dossier
   Pronte/<name>.md       dossier of every Judge-approved strategy (size, risk, pass probability)
   Deployment/<name>.md   paper-trading ledger summary
+  Concetti/<concept>.md  the knowledge network: every concept links the papers and strategies about it, with what was learned
   Paper/<title>.md       papers the Scout found (abstract, why chosen, strategies that came from it)
   Diario/<date>.md       what happened each day
   Ideas/                 YOU drop notes here; the Researcher reads them like PDFs (treated as untrusted text)
@@ -21,7 +22,7 @@ import re
 from pathlib import Path
 
 END = "<!-- ofo:end -->"
-SUBDIRS = ("Strategie", "Pronte", "Deployment", "Paper", "Diario", "Ideas")
+SUBDIRS = ("Strategie", "Pronte", "Deployment", "Paper", "Concetti", "Diario", "Ideas")
 KEY_EVENTS = {("judge", "verdict"), ("lab", "ready"), ("trader", "deployed"), ("trader", "retired"),
               ("trader", "confirmed"), ("trader", "signal"), ("scout", "download"), ("lab", "error"),
               ("planner", "queued"), ("lab", "budget"), ("trader", "skipped")}
@@ -32,13 +33,15 @@ T = {
            "notes": "Le mie note", "papers": "Strategie nate da questo paper", "none": "nessuna ancora",
            "ready": "Pronte", "deployed": "In linea (paper)", "recent": "Ultimi test", "events": "Eventi del giorno",
            "idea_hint": "Metti qui le tue note: il Researcher le legge come i PDF.", "abstract": "Abstract",
-           "why": "Perché è stato scelto", "ledger": "Registro paper trading", "size": "Dimensione", "empty": "–"},
+           "why": "Perché è stato scelto", "concepts": "Concetti", "related": "Concetti collegati", "learned": "Cosa abbiamo imparato",
+           "tested": "Strategie testate", "ledger": "Registro paper trading", "size": "Dimensione", "empty": "–"},
     "en": {"rationale": "Hypothesis", "source": "Source", "verdict": "Verdict", "surface": "Parameter robustness",
            "exits": "Risk / reward", "planner": "Planner", "auditor": "Auditor", "dossier": "Ready strategy",
            "notes": "My notes", "papers": "Strategies from this paper", "none": "none yet",
            "ready": "Ready", "deployed": "Deployed (paper)", "recent": "Latest tests", "events": "Events of the day",
            "idea_hint": "Drop your notes here: the Researcher reads them like PDFs.", "abstract": "Abstract",
-           "why": "Why it was picked", "ledger": "Paper-trading ledger", "size": "Size", "empty": "–"},
+           "why": "Why it was picked", "concepts": "Concepts", "related": "Related concepts", "learned": "What we learned",
+           "tested": "Strategies tested", "ledger": "Paper-trading ledger", "size": "Size", "empty": "–"},
 }
 
 
@@ -174,19 +177,37 @@ def paper_note(pid: str, p: dict, strategies: list[str], L: dict) -> tuple[dict,
     return front, "\n".join(b)
 
 
+def concept_link(c: str) -> str:
+    return f"[[Concetto - {safe(c)}|{c}]]"
+
+
+def concept_note(name: str, d: dict, L: dict) -> tuple[dict, str]:
+    front = {"tags": ["ofo/concept"], "tested": d["tested"], "approved": d["approved"], "papers": len(d["papers"])}
+    b = [f"# {name}", "", f"## {L['learned']}"] + ([f"- {x}" for x in d["lessons"]] or [f"- {L['none']}"])
+    b += ["", "## Paper"] + ([f"- [[Paper - {safe(t)}|{t}]]" for t in d["papers"]] or [f"- {L['none']}"])
+    b += ["", f"## {L['tested']}"] + ([f"- [[{safe(x)}]]" for x in d["strategies"]] or [f"- {L['none']}"])
+    if d["related"]:
+        b += ["", f"## {L['related']}"] + [f"- {concept_link(x)}" for x in d["related"]]
+    return front, "\n".join(b)
+
+
 def sync(vault: str | Path, studies: list[dict], dossiers: list[dict], deployments: list[dict], papers: dict,
-         events: list[dict], lang: str = "it", now: dt.datetime | None = None) -> dict:
+         events: list[dict], lang: str = "it", now: dt.datetime | None = None, graph: dict | None = None) -> dict:
     """studies: [{report, planner, auditor}]. Returns counts of notes written."""
     L = T["it" if str(lang).lower().startswith(("it", "ital")) else "en"]
     root = ensure_vault(vault)
     now = now or dt.datetime.now()
-    wrote = {"strategies": 0, "ready": 0, "deployments": 0, "papers": 0, "diary": 0, "dashboard": 0}
+    wrote = {"concepts": 0, "strategies": 0, "ready": 0, "deployments": 0, "papers": 0, "diary": 0, "dashboard": 0}
     dnames = {d["name"] for d in dossiers}
     titles = {p.get("title"): pid for pid, p in papers.items() if p.get("title") and p.get("status") in ("downloaded", "abstract")}
     by_paper: dict[str, list[str]] = {}
     for st in studies:
         rep = st["report"]
         front, body = strategy_note(rep, st.get("planner"), st.get("auditor"), titles, dnames, L)
+        cs = (graph or {}).get("strategy_concepts", {}).get(rep["name"], [])
+        if cs:
+            front["concepts"] = cs
+            body += f"\n\n## {L['concepts']}\n" + " · ".join(concept_link(c) for c in cs)
         wrote["strategies"] += write_note(root / "Strategie" / f"{safe(rep['name'])}.md", front, body, L["notes"])
         if front.get("paper"):
             by_paper.setdefault(front["paper"], []).append(rep["name"])
@@ -202,7 +223,14 @@ def sync(vault: str | Path, studies: list[dict], dossiers: list[dict], deploymen
         if p.get("status") not in ("downloaded", "abstract"):
             continue
         front, body = paper_note(pid, p, by_paper.get(p.get("title"), []), L)
+        cs = (graph or {}).get("paper_concepts", {}).get(p.get("title"), [])
+        if cs:
+            front["concepts"] = cs
+            body += f"\n\n## {L['concepts']}\n" + " · ".join(concept_link(c) for c in cs)
         wrote["papers"] += write_note(root / "Paper" / f"Paper - {safe(p.get('title') or pid)}.md", front, body, L["notes"])
+    for c, d in ((graph or {}).get("concepts") or {}).items():
+        front, body = concept_note(c, d, L)
+        wrote["concepts"] += write_note(root / "Concetti" / f"Concetto - {safe(c)}.md", front, body, L["notes"])
     today = now.strftime("%Y-%m-%d")
     todays = [e for e in events if e.get("t", "")[:10] == today and (e["agent"], e["type"]) in KEY_EVENTS]
     if todays:
@@ -214,6 +242,9 @@ def sync(vault: str | Path, studies: list[dict], dossiers: list[dict], deploymen
             f"## {L['ready']} ({len(dossiers)})"] + ([f"- [[{safe(d['name'])} (pronta)]]" for d in dossiers] or [f"- {L['none']}"])
     dash += ["", f"## {L['deployed']}"] + ([f"- [[{safe(x['name'])}]] — {x['status']}" for x in deployments if x.get("status") != "not_deployed"] or [f"- {L['none']}"])
     dash += ["", f"## {L['recent']}"] + [f"- [[{safe(s['report']['name'])}]] — {s['report']['locked']['status']}" for s in recent]
+    if graph and graph.get("concepts"):
+        top = sorted(graph["concepts"].items(), key=lambda kv: -(len(kv[1]["papers"]) + kv[1]["tested"]))[:15]
+        dash += ["", f"## {L['concepts']}"] + [f"- {concept_link(c)} — {d['tested']} test, {d['approved']} ok, {len(d['papers'])} paper" for c, d in top]
     dash += ["", "```dataview", 'TABLE verdict, median_sharpe, p_pass, ready FROM "OFO/Strategie" SORT file.mtime DESC', "```"]
     wrote["dashboard"] += write_note(root / "OFO.md", {"tags": ["ofo/dashboard"], "updated": now.strftime("%Y-%m-%d")},
                                      "\n".join(dash), L["notes"])

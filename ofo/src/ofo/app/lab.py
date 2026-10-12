@@ -26,7 +26,7 @@ from ..agents.loop import _fingerprint
 from ..specs import StrategySpec, from_dict
 from ..storage import list_studies, load_study, slugify
 from .. import deploy as dep
-from .. import obsidian
+from .. import knowledge, obsidian
 from ..dossier import build_dossier
 from ..accounts import demo_accounts, load_accounts
 from ..data import resample
@@ -104,6 +104,7 @@ class Lab:
         if self._loop_obj is None:
             self._loop_obj = ResearchLoop(self.bars, self.contract, self.rules, self.registry, self.llm,
                                           self.events, self.work, contracts=self.contracts, language=self.language)
+            self._loop_obj.memory = self.memory_text
         return self._loop_obj
 
     def set_lang(self, code: str | None) -> None:
@@ -423,6 +424,30 @@ class Lab:
                 continue
         return out
 
+    # -- knowledge network (the agents' memory) --------------------------------------------
+    def _studies_full(self) -> list[dict]:
+        out = []
+        for r in list_studies(self.work):
+            d = load_study(self.work, r["slug"])
+            if d:
+                out.append(d)
+        return out
+
+    def knowledge_graph(self) -> dict:
+        g = knowledge.build(self._studies_full(), self.scout().state["papers"], self.work / "specs_auto")
+        try:
+            (self.data / "knowledge.json").write_text(json.dumps(g, indent=1, ensure_ascii=False, default=str))
+        except OSError:
+            pass
+        return g
+
+    def memory_text(self) -> str:
+        """Facts from past tests, put in the Researcher's and Planner's prompts so they build on what was learned."""
+        try:
+            return knowledge.memory_text(self.knowledge_graph())
+        except Exception:
+            return ""
+
     # -- Obsidian ---------------------------------------------------------------------------
     def _vault_ideas(self) -> Path | None:
         v = self.obs["vault"]
@@ -465,7 +490,7 @@ class Lab:
                 papers[pid] = q
             lang = "it" if self.language == "Italian" else "en"
             res = obsidian.sync(self.obs["vault"], studies, self.dossiers(), self.deployments.d["items"], papers,
-                                self.events.tail(3000), lang)
+                                self.events.tail(3000), lang, graph=self.knowledge_graph())
             self.obs["last"] = {"at": time.strftime("%Y-%m-%d %H:%M"), "wrote": res}
             self.obs["error"] = None
             return res
