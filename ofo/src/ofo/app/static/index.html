@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OFO Lab</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="lab.css">
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="bubbles"></div>
+
+<header id="top">
+  <div class="logo"><span class="cube"></span>OFO <b>LAB</b></div>
+  <div class="chips">
+    <div class="chip" title="Ogni combinazione testata alza la soglia per le prossime approvazioni"><span>Tentativi</span><b id="c-trials">0</b></div>
+    <div class="chip" title="Quante volte il Judge ha guardato il blocco di dati nascosto"><span>Blocco guardato</span><b id="c-looks">0</b></div>
+    <div class="chip" title="Chiamate AI nell'ultima ora"><span>Chiamate AI/h</span><b id="c-calls">–</b></div>
+    <div class="chip" id="c-ai-chip"><span>AI</span><b id="c-ai">–</b></div>
+  </div>
+</header>
+
+<aside id="left" class="panel">
+  <h2>Diario del Lab</h2>
+  <div id="feed"></div>
+  <h2>Studi e PDF</h2>
+  <div id="drop" class="drop">Trascina qui i PDF dei research paper<br><small>oppure mettili nella cartella <code>ideas/</code></small>
+    <input type="file" id="file" accept=".pdf,.txt,.md" multiple hidden></div>
+  <div id="ideas"></div>
+  <button id="ingest" class="btn small">Fai leggere i nuovi file al Researcher</button>
+</aside>
+
+<aside id="right" class="panel">
+  <nav class="tabs">
+    <button data-tab="chat" class="on">Chat</button>
+    <button data-tab="strategies">Strategie <i id="n-strat"></i></button>
+  </nav>
+  <section id="tab-chat" class="tabbody">
+    <div id="msgs"></div>
+    <div id="sugg"></div>
+    <form id="chatform"><input id="chatin" autocomplete="off" placeholder="Es.: creami una strategia ORB con i retest"><button class="btn">Invia</button></form>
+  </section>
+  <section id="tab-strategies" class="tabbody" hidden>
+    <div id="pending"></div>
+    <div id="jobs"></div>
+    <div id="studies"></div>
+    <div id="reqs"></div>
+  </section>
+</aside>
+
+<div id="modal" hidden>
+  <div class="sheet">
+    <button id="close" class="btn small">✕ Chiudi</button>
+    <div id="detail"></div>
+  </div>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script src="vendor/OrbitControls.js"></script>
+<script src="vendor/chart.umd.min.js"></script>
+<script src="scene.js"></script>
+<script src="charts.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>

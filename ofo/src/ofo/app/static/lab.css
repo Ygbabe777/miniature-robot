@@ -1,0 +1,99 @@
+:root{
+  --bg:#0e1118; --panel:#171c29; --panel2:#1f2536; --line:#06080c; --txt:#e6e9f2; --dim:#8b93a8;
+  --green:#5ee27a; --blue:#4aa3ff; --orange:#ffb03a; --purple:#b58cff; --pink:#ff7ac8; --red:#ff5c5c; --yellow:#ffd84a;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13px;overflow:hidden}
+#scene{position:fixed;inset:0;width:100%;height:100%;display:block}
+#bubbles{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+.tag{position:absolute;transform:translate(-50%,-100%);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  background:#000a;color:#fff;padding:1px 5px;border:2px solid #000;white-space:nowrap}
+.bubble{position:absolute;transform:translate(-50%,-100%);max-width:240px;background:#fff;color:#111;padding:6px 8px;
+  border:3px solid #000;box-shadow:3px 3px 0 #000;font-size:12px;line-height:1.3;opacity:0;transition:opacity .25s}
+.bubble.on{opacity:1}
+.panel{position:fixed;background:var(--panel);border:3px solid var(--line);box-shadow:5px 5px 0 #000a;padding:10px;overflow:auto}
+h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+#top{position:fixed;left:0;right:0;top:0;height:50px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;
+  background:linear-gradient(#0e1118ee,#0e111800);pointer-events:none}
+#top>*{pointer-events:auto}
+.logo{font-size:20px;letter-spacing:.12em;display:flex;align-items:center;gap:10px}
+.logo b{color:var(--green)}
+.cube{width:18px;height:18px;background:var(--green);box-shadow:inset -4px -4px 0 #2a9b46,inset 4px 4px 0 #9bf5ae;border:2px solid #000;display:inline-block}
+.chips{display:flex;gap:8px}
+.chip{background:var(--panel);border:3px solid var(--line);box-shadow:3px 3px 0 #000a;padding:3px 9px;display:flex;gap:8px;align-items:baseline}
+.chip span{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.chip b{font-size:14px}
+.chip.bad b{color:var(--red)} .chip.ok b{color:var(--green)}
+#left{left:12px;top:62px;bottom:12px;width:310px;display:flex;flex-direction:column}
+#feed{flex:1;overflow:auto;min-height:120px;margin-bottom:10px}
+.ev{padding:4px 6px;margin-bottom:4px;border-left:4px solid var(--dim);background:#0003;font-size:11.5px;line-height:1.35}
+.ev small{color:var(--dim);display:block;font-size:9.5px;text-transform:uppercase;letter-spacing:.08em}
+.ev.researcher{border-color:var(--blue)} .ev.strategist,.ev.you{border-color:var(--pink)} .ev.optimizer,.ev.planner{border-color:var(--orange)}
+.ev.validator{border-color:var(--purple)} .ev.judge,.ev.auditor{border-color:#fff} .ev.lab{border-color:var(--red)}
+.drop{border:3px dashed #3a4260;padding:12px;text-align:center;color:var(--dim);cursor:pointer;margin-bottom:8px}
+.drop.over{border-color:var(--green);color:var(--green)}
+.drop code{color:var(--txt)}
+#ideas{max-height:120px;overflow:auto;margin-bottom:8px;font-size:11.5px}
+#ideas div{display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #0004}
+#ideas i{font-style:normal;color:var(--green)}
+#right{right:12px;top:62px;bottom:12px;width:430px;display:flex;flex-direction:column;padding:0}
+.tabs{display:flex;border-bottom:3px solid var(--line)}
+.tabs button{flex:1;background:var(--panel2);color:var(--dim);border:0;padding:10px;font:inherit;text-transform:uppercase;letter-spacing:.1em;cursor:pointer}
+.tabs button.on{background:var(--panel);color:var(--txt);box-shadow:inset 0 -4px 0 var(--green)}
+.tabs i{font-style:normal;background:var(--green);color:#000;padding:0 5px;margin-left:4px}
+.tabbody{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;min-height:0}
+#tab-chat{padding-bottom:0}
+#msgs{flex:1;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-bottom:8px}
+.m{max-width:92%;padding:7px 9px;border:3px solid var(--line);line-height:1.4;white-space:pre-wrap}
+.m.u{align-self:flex-end;background:#27406b} .m.a{align-self:flex-start;background:var(--panel2)}
+.m.err{border-color:var(--red)}
+.card{border:3px solid var(--line);background:var(--panel2);padding:9px;margin:6px 0;box-shadow:3px 3px 0 #000a}
+.card h3{margin:0 0 4px;font-size:13px}
+.card .meta{color:var(--dim);font-size:11px;margin-bottom:6px}
+.card details{margin:4px 0;color:var(--dim);font-size:11.5px}
+.card .warn{color:var(--yellow);font-size:11px;margin-top:6px}
+#sugg{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0}
+#sugg button{background:#0003;border:2px solid #3a4260;color:var(--dim);font:inherit;font-size:11px;padding:3px 7px;cursor:pointer}
+#sugg button:hover{color:var(--txt);border-color:var(--green)}
+#chatform{display:flex;gap:8px;padding:10px 0;border-top:3px solid var(--line)}
+#chatin{flex:1;background:#0a0d14;color:var(--txt);border:3px solid var(--line);padding:9px;font:inherit}
+.btn{background:var(--green);color:#04210d;border:3px solid #000;box-shadow:3px 3px 0 #000;padding:7px 12px;font:inherit;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.05em}
+.btn:active{transform:translate(2px,2px);box-shadow:1px 1px 0 #000}
+.btn.small{padding:4px 8px;font-size:11px}
+.btn.ghost{background:var(--panel2);color:var(--txt)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.badge{display:inline-block;padding:1px 7px;font-size:10px;font-weight:700;border:2px solid #000;text-transform:uppercase;letter-spacing:.06em}
+.b-APPROVED{background:var(--green);color:#04210d} .b-REJECTED{background:var(--red);color:#2b0505} .b-INSUFFICIENT_EVIDENCE{background:var(--yellow);color:#2b2305}
+.row{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:7px;border:3px solid var(--line);background:var(--panel2);margin-bottom:6px;cursor:pointer}
+.row:hover{border-color:var(--green)}
+.row small{color:var(--dim);display:block}
+.spin{display:inline-block;width:10px;height:10px;border:3px solid var(--orange);border-right-color:transparent;border-radius:50%;animation:sp .8s linear infinite;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+#modal{position:fixed;inset:0;background:#000b;z-index:10;display:flex;align-items:center;justify-content:center;padding:18px}
+#modal[hidden]{display:none}
+.sheet{background:var(--panel);border:4px solid #000;box-shadow:8px 8px 0 #000;width:min(1180px,100%);max-height:100%;overflow:auto;padding:18px;position:relative}
+#close{position:absolute;right:14px;top:14px;z-index:2}
+.dtitle{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:4px}
+.dtitle h1{margin:0;font-size:20px}
+.sub{color:var(--dim);margin-bottom:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:10px 0}
+.kpi{background:var(--panel2);border:3px solid var(--line);padding:8px}
+.kpi span{display:block;color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.kpi b{font-size:18px} .pos{color:var(--green)} .neg{color:var(--red)}
+.seg{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap}
+.seg button{background:var(--panel2);color:var(--dim);border:3px solid var(--line);padding:5px 10px;font:inherit;cursor:pointer}
+.seg button.on{color:var(--txt);border-color:var(--green)}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px}
+.chartbox{background:var(--panel2);border:3px solid var(--line);padding:8px}
+.chartbox h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--dim)}
+.chartbox canvas{width:100%!important;height:230px!important}
+.warnbox{background:#3a2d05;border:3px solid var(--yellow);color:var(--yellow);padding:8px;margin:8px 0;font-size:12px}
+.judge{background:var(--panel2);border:3px solid var(--line);padding:10px;margin:10px 0}
+.judge li{margin:3px 0;list-style:none} .ok::before{content:"✔ ";color:var(--green)} .no::before{content:"✘ ";color:var(--red)}
+.empty{color:var(--dim);padding:10px;text-align:center}
+@media (max-width:1000px){
+  #left{display:none} #right{left:8px;right:8px;width:auto;top:auto;height:55vh}
+  .chips .chip:nth-child(n+3){display:none}
+}

@@ -21,7 +21,9 @@ rigorosa e simulazione delle regole prop (account 25k / 50k).
    gli agenti (Researcher, Planner, Auditor; prompt in `src/ofo/agents/prompts/*.md`) e scrive ogni
    passo in `data/events.jsonl` (la UI 3D lo leggerà). Il verdetto lo dà sempre il codice.
    Prima prova il tuo LLM con `scripts/check_llm.py`.
-4. `scripts/account_ev.py reports/oos_pnl_X.csv` : valore atteso e dimensione ottimale per ogni piano prop.
+4. `scripts/lab.py DATI.csv.gz` : **il Lab** (laboratorio 3D voxel, chat con lo Strategist, grafici di
+   P&L / Monte Carlo / Sharpe / Sortino / profit factor, upload dei PDF). Apre http://127.0.0.1:8765.
+5. `scripts/account_ev.py reports/oos_pnl_X.csv` : valore atteso e dimensione ottimale per ogni piano prop.
    Le regole in `rules/firms.json` sono NON VERIFICATE e le tariffe sono vuote: vanno compilate.
 
 ## Regole non negoziabili

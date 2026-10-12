@@ -17,6 +17,7 @@ from ..optimizer import run_study
 from ..papers import extract_pdf_text, propose_specs
 from ..specs import StrategySpec, from_dict
 from ..storage import save_study
+from ..llm.client import LLMError
 from .base import AgentError
 from .roles import dev_summary, make_auditor, make_planner
 
@@ -109,7 +110,7 @@ class ResearchLoop:
             try:
                 decision = make_planner(_llm(self.llm, "planner"), spec, left, depth, ev).run(
                     dev_summary(rep, {"trials_total": self.registry.n_trials, "trials_left": left}, depth))
-            except AgentError as e:
+            except (AgentError, LLMError) as e:       # an AI outage must never lose a finished study
                 decision["reason"] = f"planner failed: {e}"
             ev.emit("planner", decision["decision"], decision["reason"][:300])
         locked = rep["locked"]
@@ -121,7 +122,7 @@ class ResearchLoop:
             try:
                 audit = make_auditor(_llm(self.llm, "auditor"), ev).run(payload)
                 ev.emit("auditor", "commentary", audit["summary"][:300], {"risk_flags": audit["risk_flags"]})
-            except AgentError as e:
+            except (AgentError, LLMError) as e:
                 ev.emit("auditor", "error", str(e)[:300])
         dec = {**decision, "spec": dataclasses.asdict(decision["spec"]) if decision["spec"] else None}
         save_study(self.work, rep, dec, audit)
