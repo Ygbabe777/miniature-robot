@@ -65,10 +65,13 @@ def system_prompt() -> str:
     return load_prompt("researcher", TEMPLATE_CATALOGUE=_catalogue(), TIMEFRAMES=str(list(TIMEFRAMES)))
 
 
-def propose_specs(llm, text: str, source: str = "", max_chunks: int = 6) -> tuple[list[StrategySpec], list[dict]]:
+CHUNK_CHARS = 20000     # tokens are plentiful, calls are not: fewer, bigger requests
+
+
+def propose_specs(llm, text: str, source: str = "", max_chunks: int = 3) -> tuple[list[StrategySpec], list[dict]]:
     """Returns (valid specs, rejected proposals with reasons). `llm` needs .chat(messages)."""
     specs, rejected, seen = [], [], set()
-    for n, chunk in enumerate(select_chunks(chunk_text(text), max_chunks)):
+    for n, chunk in enumerate(select_chunks(chunk_text(text, max_chars=CHUNK_CHARS), max_chunks)):
         msgs = [{"role": "system", "content": system_prompt()},
                 {"role": "user", "content": f"Source: {source}\n\nTEXT (part {n + 1}):\n{chunk}"}]
         try:

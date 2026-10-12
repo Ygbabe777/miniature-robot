@@ -129,3 +129,46 @@ def test_all_models_failing_raises_instead_of_looping_forever(tmp_path):
     s, p, _ = _pool(tmp_path, {"r": ["limited"]}, max_wait=5)
     with pytest.raises(Exception):
         p.chat("r", [{"role": "user", "content": "x"}])
+
+
+def test_hourly_call_limit_waits_for_the_oldest_call_to_expire(tmp_path):
+    s, p, clock = _pool(tmp_path, {"r": ["b"]}, calls_per_hour=3, call_wait_max=3700)
+    t0 = clock["t"]
+    for i in range(3):
+        p.chat("r", [{"role": "user", "content": str(i)}])
+        clock["t"] += 10
+    p.chat("r", [{"role": "user", "content": "4th"}])               # must wait ~3600 - 30 s
+    assert clock["t"] >= t0 + 3600
+    assert p.calls_last_hour() <= 3
+
+
+def test_call_limit_fails_fast_in_interactive_mode(tmp_path):
+    from ofo.llm.pool import CallLimitReached
+    s, p, _ = _pool(tmp_path, {"r": ["b"]}, calls_per_hour=2)
+    p.chat("r", [{"role": "user", "content": "1"}]); p.chat("r", [{"role": "user", "content": "2"}])
+    with pytest.raises(CallLimitReached) as e:
+        p.chat("r", [{"role": "user", "content": "3"}])
+    assert "min" in str(e.value) and len(s.calls) == 2              # no request was sent
+
+
+def test_role_share_protects_other_roles_and_failures_count(tmp_path):
+    from ofo.llm.pool import CallLimitReached
+    s, p, _ = _pool(tmp_path, {"researcher": ["b"], "planner": ["b"]}, calls_per_hour=30,
+                    role_calls_per_hour={"researcher": 2, "planner": 5})
+    p.chat("researcher", [{"role": "user", "content": "1"}]); p.chat("researcher", [{"role": "user", "content": "2"}])
+    with pytest.raises(CallLimitReached):
+        p.chat("researcher", [{"role": "user", "content": "3"}])
+    p.chat("planner", [{"role": "user", "content": "p"}])           # planner still has its own share
+    assert p.calls_last_hour("planner") == 1
+
+
+def test_call_history_survives_a_restart_and_cache_hits_are_free(tmp_path):
+    from ofo.llm.pool import CallLimitReached
+    s, p, clock = _pool(tmp_path, {"r": ["b"]}, calls_per_hour=1, cache_dir=tmp_path / "c")
+    msg = [{"role": "user", "content": "x"}]
+    p.chat("r", msg)
+    p2 = ModelPool(LLMClient(s.url, "k"), {"r": ["b"]}, tmp_path / "led.json", calls_per_hour=1,
+                   cache_dir=tmp_path / "c", now=lambda: clock["t"], sleep=lambda d: None)
+    assert p2.chat("r", msg) == "hi from b"                          # cache: no call spent
+    with pytest.raises(CallLimitReached):
+        p2.chat("r", [{"role": "user", "content": "different"}])     # ledger remembered the call

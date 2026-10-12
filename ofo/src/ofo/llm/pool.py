@@ -21,26 +21,58 @@ class BudgetExceeded(LLMError):
     pass
 
 
+class CallLimitReached(LLMError):
+    """The hourly call allowance is used up and waiting would take longer than allowed."""
+
+
 class ModelPool:
     def __init__(self, client: LLMClient, roles: dict[str, list[str]], ledger_path: str | Path,
                  cache_dir: str | Path | None = None, daily_token_budget: dict[str, int] | None = None,
-                 cooldown_base: float = 30.0, now=time.time, sleep=time.sleep, max_wait: float = 120.0):
+                 cooldown_base: float = 30.0, now=time.time, sleep=time.sleep, max_wait: float = 120.0,
+                 calls_per_hour: int | None = None, role_calls_per_hour: dict[str, int] | None = None,
+                 call_wait_max: float = 0.0):
         self.client, self.roles = client, roles
         self.ledger_path = Path(ledger_path)
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.budget = daily_token_budget or {}
         self.cooldown_base, self.now, self.sleep, self.max_wait = cooldown_base, now, sleep, max_wait
+        self.calls_per_hour, self.role_calls = calls_per_hour, role_calls_per_hour or {}
+        self.call_wait_max = call_wait_max      # 0 = fail fast (interactive); 3700 = wait (background loop)
         self.cooldown: dict[str, float] = {}
         self.fails: dict[str, int] = {}
         self.rr: dict[str, int] = {}
         today = dt.date.today().isoformat()
         led = json.loads(self.ledger_path.read_text()) if self.ledger_path.exists() else {}
+        self.calls: list[list] = [c for c in led.get("calls", []) if c[0] > self.now() - 3600]
         self.ledger = led if led.get("date") == today else {"date": today, "models": {}, "roles": {}}
 
     # --- accounting -------------------------------------------------------------------
     def _save(self) -> None:
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        self.ledger["calls"] = self.calls
         self.ledger_path.write_text(json.dumps(self.ledger, indent=1))
+
+    # --- hourly call allowance (every attempt counts, successful or not) -------------------
+    def calls_last_hour(self, role: str | None = None) -> int:
+        cut = self.now() - 3600
+        return sum(1 for t, r in self.calls if t > cut and (role is None or r == role))
+
+    def _wait_for_call_slot(self, role: str) -> None:
+        while True:
+            self.calls = [c for c in self.calls if c[0] > self.now() - 3600]
+            waits = []
+            if self.calls_per_hour is not None and len(self.calls) >= self.calls_per_hour:
+                waits.append(self.calls[-self.calls_per_hour][0] + 3600 - self.now())
+            cap = self.role_calls.get(role)
+            mine = [c for c in self.calls if c[1] == role]
+            if cap is not None and len(mine) >= cap:
+                waits.append(mine[-cap][0] + 3600 - self.now())
+            if not waits:
+                return
+            wait = max(waits)
+            if wait > self.call_wait_max:
+                raise CallLimitReached(f"hourly call allowance used up; next call possible in {wait / 60:.0f} min")
+            self.sleep(wait + 1)
 
     def _record(self, role: str, model: str, r: dict | None, failed: bool = False) -> None:
         m = self.ledger["models"].setdefault(model, {"calls": 0, "prompt": 0, "completion": 0, "failures": 0, "seconds": 0.0})
@@ -78,6 +110,8 @@ class ModelPool:
             ready = [m for m in order if self.cooldown.get(m, 0) <= self.now()]
             for model in ready:
                 self.rr[role] = (models.index(model) + 1) % len(models)
+                self._wait_for_call_slot(role)
+                self.calls.append([self.now(), role])
                 try:
                     r = self.client.chat_once(messages, model=model, temperature=temperature, **extra)
                 except RateLimited as e:
@@ -124,5 +158,7 @@ def build_pool(config_path: str | Path, ledger_path="data/llm_usage.json", cache
     "daily_token_budget": {"researcher": 300000}, "cooldown_seconds": 30}. Keys stay in env vars."""
     cfg = json.loads(Path(config_path).read_text())
     pool = ModelPool(LLMClient(), cfg["roles"], ledger_path, cache_dir, cfg.get("daily_token_budget"),
-                     cooldown_base=cfg.get("cooldown_seconds", 30.0))
+                     cooldown_base=cfg.get("cooldown_seconds", 30.0),
+                     calls_per_hour=cfg.get("calls_per_hour"), role_calls_per_hour=cfg.get("role_calls_per_hour"),
+                     call_wait_max=cfg.get("wait_for_call_slot_seconds", 0.0))
     return pool, {role: pool.for_role(role) for role in cfg["roles"]}

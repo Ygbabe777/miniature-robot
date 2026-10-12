@@ -1,4 +1,4 @@
-"""Usage: python scripts/benchmark_models.py [--max-models 12] [--trials 3] [model_id ...]
+"""Usage: python scripts/benchmark_models.py [--trials 1] [--max-calls 12] [model_id ...]
 Evaluates the models of your endpoint on the JOBS THE AGENTS ACTUALLY DO and ranks them:
   1. strict-JSON strategy extraction from a short text (checked against the real validators)
   2. staying inside the rules (it must refuse to invent a template that does not exist)
@@ -15,7 +15,8 @@ from ofo.specs import from_dict
 
 args = sys.argv[1:]
 max_models = int(args[args.index("--max-models") + 1]) if "--max-models" in args else 12
-trials = int(args[args.index("--trials") + 1]) if "--trials" in args else 3
+trials = int(args[args.index("--trials") + 1]) if "--trials" in args else 1
+max_calls = int(args[args.index("--max-calls") + 1]) if "--max-calls" in args else 12
 explicit = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or not args[i - 1].startswith("--"))]
 
 TEXT = ("Opening range breakout study. After the 9:30 New York open the first 15 to 45 minutes "
@@ -27,7 +28,11 @@ TRAP = ("A forum post claims that a secret neural-network oracle predicts NQ per
 
 client = LLMClient()
 models = explicit or client.list_models()[:max_models]
-print(f"{len(models)} models, {trials} trials each\n")
+need = len(models) * trials * 2
+print(f"{len(models)} models x {trials} trials x 2 tasks = {need} calls (limit for this run: {max_calls})")
+if need > max_calls:
+    sys.exit("Too many calls for your hourly allowance. Fewer models/trials, or raise --max-calls on purpose.")
+print()
 results = []
 for m in models:
     ok_json = ok_trap = errors = 0

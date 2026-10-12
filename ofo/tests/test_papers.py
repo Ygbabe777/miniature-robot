@@ -25,7 +25,7 @@ def test_valid_and_invalid_proposals_are_separated():
 
 def test_garbage_reply_is_rejected_not_fatal():
     specs, rejected = propose_specs(FakeLLM(["I cannot do that", "{not json"]),
-                                    "strategy entry " * 500)    # 2 relevant chunks
+                                    "strategy entry " * 1700)   # 2 relevant chunks of 20k chars
     assert specs == [] and len(rejected) == 2
 
 

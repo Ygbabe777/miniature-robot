@@ -1,10 +1,30 @@
 {
-  "_README": "Copy to config/llm.json and put real model ids from `python scripts/benchmark_models.py`. Keys stay in environment variables, never here.",
+  "_README": "Copy to config/llm.json. Your real limit is CALLS per hour (not tokens): calls_per_hour is global, role_calls_per_hour reserves a share per agent (the rest is spare). Put real model ids from the benchmark. Keys stay in environment variables.",
   "roles": {
-    "researcher": ["MODEL_ID_FAST_1", "MODEL_ID_FAST_2"],
-    "planner":    ["MODEL_ID_STRONG_1", "MODEL_ID_STRONG_2"],
-    "auditor":    ["MODEL_ID_STRONG_1", "MODEL_ID_FAST_1"]
+    "researcher": [
+      "MODEL_ID_FAST_1",
+      "MODEL_ID_FAST_2"
+    ],
+    "planner": [
+      "MODEL_ID_STRONG_1",
+      "MODEL_ID_STRONG_2"
+    ],
+    "auditor": [
+      "MODEL_ID_STRONG_1",
+      "MODEL_ID_FAST_1"
+    ]
   },
-  "daily_token_budget": {"researcher": 400000, "planner": 150000, "auditor": 150000},
-  "cooldown_seconds": 30
+  "daily_token_budget": {
+    "researcher": 400000,
+    "planner": 150000,
+    "auditor": 150000
+  },
+  "cooldown_seconds": 30,
+  "calls_per_hour": 30,
+  "role_calls_per_hour": {
+    "researcher": 12,
+    "planner": 6,
+    "auditor": 8
+  },
+  "wait_for_call_slot_seconds": 3700
 }

@@ -47,7 +47,7 @@ def make_planner(llm, parent: StrategySpec, trials_left: int, depth: int, events
                              f"(parent {parent.n_candidates}, budget {trials_left})")
         out["spec"] = spec
         return out
-    return Agent("planner", llm, load_prompt("planner"), validate, events)
+    return Agent("planner", llm, load_prompt("planner"), validate, events, max_attempts=2)
 
 
 def make_auditor(llm, events=None) -> Agent:
@@ -61,4 +61,4 @@ def make_auditor(llm, events=None) -> Agent:
         # only these keys survive: the auditor can never carry a verdict or an approval
         return {"summary": summary[:2000], "risk_flags": [str(f)[:200] for f in flags][:8],
                 "next_step": str(d.get("next_step", ""))[:500]}
-    return Agent("auditor", llm, load_prompt("auditor"), validate, events)
+    return Agent("auditor", llm, load_prompt("auditor"), validate, events, max_attempts=2)
