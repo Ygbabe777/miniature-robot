@@ -34,5 +34,14 @@ for raw in json.loads(Path(specs_path).read_text())["strategies"]:
           f"best {s['best_sharpe']:+.3f} | plateau {s['plateau_ratio']:.2f} | robust: {s['robust']}")
     print(f"  failed checks: {[k for k, ok in s['checks'].items() if not ok]}")
     print(f"  walk-forward OOS: {rep['wf_oos_days']} days, pnl ${rep['wf_oos_pnl']:,.0f}")
-    print(f"  verdict: {rep['locked']['status']}  {rep['locked'].get('reason', '')}", flush=True)
+    d = rep.get("surface_detrended")
+    if d:
+        print(f"  without market drift: median Sharpe {d['median_sharpe']:+.3f} | {d['frac_positive']:.0%} positive | "
+              f"plateau {d['plateau_ratio']:.2f} | robust: {d['robust']}")
+    L = rep["locked"]
+    print(f"  verdict: {L['status']}  {L.get('reason', '')}", flush=True)
+    if "checks" in L:
+        lo, hi = L["p_pass_ci95"]
+        print(f"  locked block: pnl ${L['pnl']:,.0f} | checks {L['checks']} | P(pass) {L['p_pass']:.0%} "
+              f"[{lo:.0%}..{hi:.0%}] | P(bust) {L['p_bust']:.0%}")
 print(f"\nregistry: {reg.n_trials} trials/looks so far")

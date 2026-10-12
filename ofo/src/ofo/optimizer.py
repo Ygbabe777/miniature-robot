@@ -64,18 +64,34 @@ def surface_metrics(rows: list[dict], param_names: list[str], th: SurfaceThresho
     return m
 
 
-def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules: PropRules,
-              registry: TrialRegistry, contracts: int = 2, slippage_ticks: float = 1.0,
-              oos_fraction: float = 0.25, train_days: int = 120, test_days: int = 20,
-              surface_th: SurfaceThresholds | None = None) -> dict:
-    """Sweep every combination of `spec`, judge the surface, walk-forward, and only if
-    both survive take ONE look at the locked block."""
+def detrend(bars: pd.DataFrame) -> pd.DataFrame:
+    """Remove the average per-bar drift from every price. A strategy whose profit was just
+    being long in a rising market (beta) loses it here; a real edge survives."""
+    n = len(bars)
+    shift = (bars["close"].iloc[-1] - bars["close"].iloc[0]) / max(n - 1, 1) * np.arange(n)
+    out = bars.copy()
+    for c in ("open", "high", "low", "close"):
+        out[c] = bars[c] - shift
+    return out
+
+
+def _sweep(bars, spec, contract, contracts, slippage_ticks):
     t = TEMPLATES[spec.template]
     cands = [{"family": spec.name, "fn": t.fn, "params": p, "tf": tf}
              for p in spec.combos() for tf in spec.timeframes]
     bars_by_tf = {tf: resample(bars, tf) for tf in spec.timeframes}
     series = {i: daily_series(bars_by_tf, c, contract, contracts, slippage_ticks)
               for i, c in enumerate(cands)}
+    return cands, series
+
+
+def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules: PropRules,
+              registry: TrialRegistry, contracts: int = 2, slippage_ticks: float = 1.0,
+              oos_fraction: float = 0.25, train_days: int = 120, test_days: int = 20,
+              surface_th: SurfaceThresholds | None = None) -> dict:
+    """Sweep every combination of `spec`, judge the surface, walk-forward, and only if
+    both survive take ONE look at the locked block."""
+    cands, series = _sweep(bars, spec, contract, contracts, slippage_ticks)
     sessions = sorted(set().union(*[set(s.index) for s in series.values()]))
     cut = sessions[int(len(sessions) * (1 - oos_fraction))]
     dev_days = [d for d in sessions if d < cut]
@@ -93,7 +109,17 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
               "wf_oos_days": len(wf), "wf_oos_pnl": wf_pnl,
               "wf_oos_sharpe_daily": sharpe(wf) if len(wf) > 2 else 0.0,
               "n_locked_days": len(sessions) - len(dev_days), "wf_oos_series": wf}
+    # Beta check: only for surfaces that already look robust (it re-runs the dev sweep).
+    surf_d = None
     if surf["robust"] and wf_pnl > 0:
+        key = pd.to_datetime(bars["session"]) if "session" in bars.columns else bars.index.normalize()
+        dev_bars = bars[np.asarray(key < cut)]
+        cands_d, series_d = _sweep(detrend(dev_bars), spec, contract, contracts, slippage_ticks)
+        rows_d = [{**c["params"], "tf": c["tf"],
+                   "sharpe": sharpe(series_d[i].reindex(dev_days).fillna(0.0))} for i, c in enumerate(cands_d)]
+        surf_d = surface_metrics(rows_d, list(spec.ranges), surface_th)
+    report["surface_detrended"] = surf_d
+    if surf["robust"] and wf_pnl > 0 and surf_d["robust"]:
         best_i = max(range(len(cands)), key=lambda i: rows[i]["sharpe"])
         locked_days = [d for d in sessions if d >= cut]
         locked = series[best_i].reindex(locked_days).fillna(0.0)
@@ -108,5 +134,7 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
         why = [k for k, ok in surf["checks"].items() if not ok]
         if wf_pnl <= 0:
             why.append("walk_forward_pnl")
+        if surf_d is not None and not surf_d["robust"]:
+            why.append("drift_only: edge disappears once the market trend is removed")
         report["locked"] = {"status": REJECTED, "reason": f"failed {why}; locked block not touched"}
     return report

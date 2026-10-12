@@ -57,3 +57,25 @@ def test_study_on_random_walk_is_rejected_without_touching_locked(tmp_path):
     rep = run_study(bars, spec, MNQ, PRESETS["50k"], reg, train_days=60, test_days=10)
     assert rep["locked"]["status"] != "APPROVED"
     assert reg.n_trials >= rep["n_candidates"]
+
+
+def test_study_flags_profit_that_is_only_market_drift(tmp_path):
+    """A long-biased strategy on a strongly rising market looks robust; once the drift is
+    removed the surface must collapse and the locked block must not be touched."""
+    import numpy as np
+    from ofo.optimizer import detrend
+    bars = synth(n_sessions=300, seed=8)
+    bars = bars.copy()
+    drift = 0.05 * np.arange(len(bars))
+    for c in ("open", "high", "low", "close"):
+        bars[c] = bars[c] + drift
+    spec = from_dict({"template": "breakout", "ranges": {"lookback": [10, 20, 40, 80]},
+                      "timeframes": ["15min", "30min"], "rationale": "test"})
+    reg = TrialRegistry(tmp_path / "r.json")
+    rep = run_study(bars, spec, MNQ, PRESETS["50k"], reg, train_days=60, test_days=10)
+    assert rep["surface"]["robust"], rep["surface"]                  # raw: looks like an edge
+    assert rep["surface_detrended"] is not None and not rep["surface_detrended"]["robust"]
+    assert "drift_only" in rep["locked"]["reason"]
+    assert reg.data["locked_looks"] == 0                              # locked block untouched
+    d = detrend(bars)
+    assert abs((d["close"].iloc[-1] - d["close"].iloc[0])) < 1e-6      # trend really removed
