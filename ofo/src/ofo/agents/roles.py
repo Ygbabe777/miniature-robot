@@ -25,7 +25,8 @@ def dev_summary(report: dict, budget: dict, depth: int) -> dict:
     }
 
 
-def make_planner(llm, parent: StrategySpec, trials_left: int, depth: int, events=None) -> Agent:
+def make_planner(llm, parent: StrategySpec, trials_left: int, depth: int, events=None,
+                 language: str = "Italian") -> Agent:
     def validate(d: dict) -> dict:
         dec = d.get("decision")
         if dec not in DECISIONS:
@@ -47,10 +48,10 @@ def make_planner(llm, parent: StrategySpec, trials_left: int, depth: int, events
                              f"(parent {parent.n_candidates}, budget {trials_left})")
         out["spec"] = spec
         return out
-    return Agent("planner", llm, load_prompt("planner"), validate, events, max_attempts=2)
+    return Agent("planner", llm, load_prompt("planner", LANG=language), validate, events, max_attempts=2)
 
 
-def make_auditor(llm, events=None) -> Agent:
+def make_auditor(llm, events=None, language: str = "Italian") -> Agent:
     def validate(d: dict) -> dict:
         summary = str(d.get("summary", "")).strip()
         if not summary:
@@ -61,10 +62,10 @@ def make_auditor(llm, events=None) -> Agent:
         # only these keys survive: the auditor can never carry a verdict or an approval
         return {"summary": summary[:2000], "risk_flags": [str(f)[:200] for f in flags][:8],
                 "next_step": str(d.get("next_step", ""))[:500]}
-    return Agent("auditor", llm, load_prompt("auditor"), validate, events, max_attempts=2)
+    return Agent("auditor", llm, load_prompt("auditor", LANG=language), validate, events, max_attempts=2)
 
 
-def make_strategist(llm, events=None) -> Agent:
+def make_strategist(llm, events=None, language: str = "Italian") -> Agent:
     """Chat agent: a sentence from the owner -> a validated spec, a template request, or an answer."""
     from ..papers import _catalogue
     from ..strategies import TIMEFRAMES
@@ -85,5 +86,5 @@ def make_strategist(llm, events=None) -> Agent:
             out["template_request"] = {"name": str(req.get("name", "custom"))[:60],
                                        "description": str(req["description"])[:3000]}
         return out
-    system = load_prompt("strategist", TEMPLATE_CATALOGUE=_catalogue(), TIMEFRAMES=str(list(TIMEFRAMES)))
+    system = load_prompt("strategist", TEMPLATE_CATALOGUE=_catalogue(), TIMEFRAMES=str(list(TIMEFRAMES)), LANG=language)
     return Agent("strategist", llm, system, validate, events, max_attempts=2, temperature=0.3)

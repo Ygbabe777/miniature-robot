@@ -60,19 +60,19 @@ def _catalogue() -> str:
     return "\n".join(lines)
 
 
-def system_prompt() -> str:
+def system_prompt(language: str = "Italian") -> str:
     """Researcher prompt from agents/prompts/researcher.md (edit that file to change behaviour)."""
-    return load_prompt("researcher", TEMPLATE_CATALOGUE=_catalogue(), TIMEFRAMES=str(list(TIMEFRAMES)))
+    return load_prompt("researcher", TEMPLATE_CATALOGUE=_catalogue(), TIMEFRAMES=str(list(TIMEFRAMES)), LANG=language)
 
 
 CHUNK_CHARS = 20000     # tokens are plentiful, calls are not: fewer, bigger requests
 
 
-def propose_specs(llm, text: str, source: str = "", max_chunks: int = 3) -> tuple[list[StrategySpec], list[dict]]:
+def propose_specs(llm, text: str, source: str = "", max_chunks: int = 3, language: str = "Italian") -> tuple[list[StrategySpec], list[dict]]:
     """Returns (valid specs, rejected proposals with reasons). `llm` needs .chat(messages)."""
     specs, rejected, seen = [], [], set()
     for n, chunk in enumerate(select_chunks(chunk_text(text, max_chars=CHUNK_CHARS), max_chunks)):
-        msgs = [{"role": "system", "content": system_prompt()},
+        msgs = [{"role": "system", "content": system_prompt(language)},
                 {"role": "user", "content": f"Source: {source}\n\nTEXT (part {n + 1}):\n{chunk}"}]
         try:
             data = parse_json(llm.chat(msgs, temperature=0.2))

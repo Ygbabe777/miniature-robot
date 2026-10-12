@@ -34,7 +34,7 @@ EXTEND = {"decision": "extend", "reason": "il plateau tocca il bordo", "spec": {
 
 def test_prompts_load_and_have_no_leftover_placeholders():
     for name in ("planner", "auditor"):
-        assert "ROLE" in load_prompt(name)
+        assert "ROLE" in load_prompt(name, LANG="Italian")
     from ofo.papers import system_prompt
     p = system_prompt()
     assert "orb" in p and "random_control" not in p and "{{" not in p
@@ -166,3 +166,17 @@ def test_strategist_rejects_both_or_garbage_and_never_invents_templates():
             make_strategist(Scripted(strategist=[r, r])).run({"message": "x"})
     ok = make_strategist(Scripted(strategist=[json.dumps({"reply": "Ciao!"})])).run({"message": "ciao"})
     assert ok["spec"] is None and ok["template_request"] is None and ok["reply"] == "Ciao!"
+
+
+def test_language_reaches_every_agent_prompt():
+    from ofo.agents.roles import make_strategist
+    from ofo.papers import system_prompt
+    for maker in (lambda: make_planner(Scripted(), PARENT, 100, 0, language="English"),
+                  lambda: make_auditor(Scripted(), language="English"),
+                  lambda: make_strategist(Scripted(), language="English")):
+        sys_ = maker().system
+        assert "English" in sys_ and "{{" not in sys_
+        assert "reply` in Italian" not in sys_ and "write it in Italian" not in sys_   # no hard-coded language
+    assert "in Italian" not in make_planner(Scripted(), PARENT, 100, 0, language="English").system
+    assert "English" in system_prompt("English") and "{{" not in system_prompt("English")
+    assert "Italian" in make_auditor(Scripted()).system                 # default stays Italian

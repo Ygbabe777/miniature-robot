@@ -14,32 +14,35 @@
 <header id="top">
   <div class="logo"><span class="cube"></span>OFO <b>LAB</b></div>
   <div class="chips">
-    <div class="chip" title="Ogni combinazione testata alza la soglia per le prossime approvazioni"><span>Tentativi</span><b id="c-trials">0</b></div>
-    <div class="chip" title="Quante volte il Judge ha guardato il blocco di dati nascosto"><span>Blocco guardato</span><b id="c-looks">0</b></div>
-    <div class="chip" title="Chiamate AI nell'ultima ora"><span>Chiamate AI/h</span><b id="c-calls">–</b></div>
+    <div class="chip" data-i18n-title="tip_trials"><span data-i18n="chip_trials"></span><b id="c-trials">0</b></div>
+    <div class="chip" data-i18n-title="tip_looks"><span data-i18n="chip_looks"></span><b id="c-looks">0</b></div>
+    <div class="chip" data-i18n-title="tip_calls"><span data-i18n="chip_calls"></span><b id="c-calls">–</b></div>
     <div class="chip" id="c-ai-chip"><span>AI</span><b id="c-ai">–</b></div>
+    <div class="lang"><button id="lang-it">IT</button><button id="lang-en">EN</button></div>
   </div>
 </header>
 
 <aside id="left" class="panel">
-  <h2>Diario del Lab</h2>
+  <h2 data-i18n="feed_title"></h2>
   <div id="feed"></div>
-  <h2>Studi e PDF</h2>
-  <div id="drop" class="drop">Trascina qui i PDF dei research paper<br><small>oppure mettili nella cartella <code>ideas/</code></small>
+  <h2 data-i18n="papers_title"></h2>
+  <div id="drop" class="drop"><span data-i18n="drop"></span><br><small><span data-i18n="drop_sub"></span> <code>ideas/</code></small>
     <input type="file" id="file" accept=".pdf,.txt,.md" multiple hidden></div>
   <div id="ideas"></div>
-  <button id="ingest" class="btn small">Fai leggere i nuovi file al Researcher</button>
+  <button id="ingest" class="btn small" data-i18n="ingest"></button>
 </aside>
 
 <aside id="right" class="panel">
   <nav class="tabs">
-    <button data-tab="chat" class="on">Chat</button>
-    <button data-tab="strategies">Strategie <i id="n-strat"></i></button>
+    <button data-tab="chat" class="on" data-i18n="tab_chat"></button>
+    <button data-tab="strategies"><span data-i18n="tab_strat"></span> <i id="n-strat"></i></button>
+    <button data-tab="trader" data-i18n="tab_trader"></button>
+    <button id="wide" class="narrow" data-i18n-title="tip_wide">⇔</button>
   </nav>
   <section id="tab-chat" class="tabbody">
     <div id="msgs"></div>
     <div id="sugg"></div>
-    <form id="chatform"><input id="chatin" autocomplete="off" placeholder="Es.: creami una strategia ORB con i retest"><button class="btn">Invia</button></form>
+    <form id="chatform"><input id="chatin" autocomplete="off" data-i18n-ph="chat_ph"><button class="btn" data-i18n="send"></button></form>
   </section>
   <section id="tab-strategies" class="tabbody" hidden>
     <div id="pending"></div>
@@ -47,20 +50,29 @@
     <div id="studies"></div>
     <div id="reqs"></div>
   </section>
+  <section id="tab-trader" class="tabbody" hidden>
+    <div class="trow"><div class="seg" id="tf"></div><div class="seg" id="rng"></div></div>
+    <div id="tinfo" class="tinfo"></div>
+    <div id="tchart"></div>
+    <div class="tnote" id="tnote"></div>
+  </section>
 </aside>
 
 <div id="modal" hidden>
   <div class="sheet">
-    <button id="close" class="btn small">✕ Chiudi</button>
+    <button id="close" class="btn small" data-i18n="close"></button>
     <div id="detail"></div>
   </div>
 </div>
+<div id="credit">Charts: TradingView Lightweight Charts™ · 3D: three.js</div>
 
 <script src="vendor/three.min.js"></script>
 <script src="vendor/OrbitControls.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
+<script src="vendor/lightweight-charts.js"></script>
 <script src="scene.js"></script>
 <script src="charts.js"></script>
+<script src="i18n.js"></script>
 <script src="ui.js"></script>
 </body>
 </html>

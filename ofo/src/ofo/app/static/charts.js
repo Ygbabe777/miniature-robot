@@ -15,7 +15,7 @@ window.LabCharts = (function () {
 
   function equity(canvas, packs, show) {
     const sets = [];
-    const names = { wf_oos: ['Walk-forward (fuori campione)', C.blue], locked: ['Blocco nascosto (visto dal Judge)', null], dev_best: ['In-campione, ottimizzato (NON affidabile)', '#6b7390'] };
+    const names = { wf_oos: [t('ch_wf'), C.blue], locked: [t('ch_lk'), null], dev_best: [t('ch_de'), '#6b7390'] };
     const labels = [...new Set(show.flatMap(k => packs[k] ? packs[k].dates : []))].sort();
     show.forEach(k => {
       if (!packs[k]) return;
@@ -39,7 +39,7 @@ window.LabCharts = (function () {
       line('5%–95%', P['5'], '#5ee27a55', { fill: '-1', backgroundColor: '#5ee27a18', borderWidth: 0.5 }),
       line('75%', P['75'], '#5ee27a99', { borderWidth: 0.5 }),
       line('25%–75%', P['25'], '#5ee27a99', { fill: '-1', backgroundColor: '#5ee27a33', borderWidth: 0.5 }),
-      line('Mediana', P['50'], '#ffffff', { borderWidth: 2.4 })
+      line(t('ch_med'), P['50'], '#ffffff', { borderWidth: 2.4 })
     ];
     (mc.sample_paths || []).slice(0, 8).forEach(sp => sets.push(line('', sp, '#8b93a833', { borderWidth: 0.7 })));
     const opt = base(); opt.plugins.legend.labels.filter = (it) => it.text !== '' && it.text !== '95%' && it.text !== '75%';
@@ -47,10 +47,10 @@ window.LabCharts = (function () {
   }
   function histogram(canvas, p) {
     const e = p.histogram.edges, mid = p.histogram.counts.map((_, i) => (e[i] + e[i + 1]) / 2);
-    return make(canvas, { type: 'bar', data: { labels: mid.map(m => Math.round(m)), datasets: [{ label: 'Giorni', data: p.histogram.counts, backgroundColor: mid.map(m => m >= 0 ? '#5ee27acc' : '#ff5c5ccc') }] }, options: base({ plugins: { legend: { display: false } } }) });
+    return make(canvas, { type: 'bar', data: { labels: mid.map(m => Math.round(m)), datasets: [{ label: t('ch_days'), data: p.histogram.counts, backgroundColor: mid.map(m => m >= 0 ? '#5ee27acc' : '#ff5c5ccc') }] }, options: base({ plugins: { legend: { display: false } } }) });
   }
   function rolling(canvas, p) {
-    return make(canvas, { type: 'line', data: { labels: p.dates, datasets: [{ label: 'Sharpe mobile (40 giorni, annualizzato)', data: p.rolling_sharpe, borderColor: C.purple, pointRadius: 0, borderWidth: 1.8, spanGaps: false }] }, options: base() });
+    return make(canvas, { type: 'line', data: { labels: p.dates, datasets: [{ label: t('ch_rs'), data: p.rolling_sharpe, borderColor: C.purple, pointRadius: 0, borderWidth: 1.8, spanGaps: false }] }, options: base() });
   }
   function destroyAll() { live.forEach(c => c.destroy()); live = []; }
   return { equity, drawdown, monteCarlo, histogram, rolling, destroyAll, money };

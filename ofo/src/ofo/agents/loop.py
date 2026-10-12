@@ -38,10 +38,10 @@ def _llm(llm, role: str):
 
 class ResearchLoop:
     def __init__(self, bars, contract, rules, registry, llm, events, workdir, contracts: int = 2,
-                 max_cycle_trials: int = 3000, max_depth: int = 2):
+                 max_cycle_trials: int = 3000, max_depth: int = 2, language: str = "Italian"):
         self.bars, self.contract, self.rules, self.registry = bars, contract, rules, registry
         self.llm, self.events, self.contracts = llm, events, contracts   # one LLM, or {role: LLM}
-        self.max_cycle_trials, self.max_depth = max_cycle_trials, max_depth
+        self.max_cycle_trials, self.max_depth, self.language = max_cycle_trials, max_depth, language
         self.work = Path(workdir)
         self.work.mkdir(parents=True, exist_ok=True)
         self.state_file = self.work / "loop_state.json"
@@ -75,7 +75,7 @@ class ResearchLoop:
             self.events.emit("researcher", "reading", f"reading {p.name}")
             try:
                 text = extract_pdf_text(str(p)) if p.suffix.lower() == ".pdf" else p.read_text(errors="replace")
-                specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=p.name)
+                specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=p.name, language=self.language)
             except Exception as e:                       # unreadable file or LLM down: retry later
                 self.events.emit("researcher", "error", f"{p.name}: {e}")
                 continue
@@ -108,7 +108,7 @@ class ResearchLoop:
         if gate:
             left = self.max_cycle_trials - self.trials_spent
             try:
-                decision = make_planner(_llm(self.llm, "planner"), spec, left, depth, ev).run(
+                decision = make_planner(_llm(self.llm, "planner"), spec, left, depth, ev, self.language).run(
                     dev_summary(rep, {"trials_total": self.registry.n_trials, "trials_left": left}, depth))
             except (AgentError, LLMError) as e:       # an AI outage must never lose a finished study
                 decision["reason"] = f"planner failed: {e}"
@@ -120,7 +120,7 @@ class ResearchLoop:
             payload = {k: v for k, v in rep.items() if k not in ("wf_oos_series", "series")}
             payload["trials_total"] = self.registry.n_trials
             try:
-                audit = make_auditor(_llm(self.llm, "auditor"), ev).run(payload)
+                audit = make_auditor(_llm(self.llm, "auditor"), ev, self.language).run(payload)
                 ev.emit("auditor", "commentary", audit["summary"][:300], {"risk_flags": audit["risk_flags"]})
             except (AgentError, LLMError) as e:
                 ev.emit("auditor", "error", str(e)[:300])

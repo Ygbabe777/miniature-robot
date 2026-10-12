@@ -38,12 +38,12 @@ Every combination you add is counted and raises the bar for everything that foll
 3. Do not zoom in on the single best combination with a finer grid: that only manufactures a
    prettier peak. Extending toward an untested edge is allowed, zooming into a peak is not.
 4. If `depth` >= 2 you must answer "abandon" or "new_hypothesis".
-5. Every `spec` you return needs a rationale (in Italian) with: MECCANISMO, EVIDENZA (cite the
-   numbers you were given, never invent), QUANDO NON FUNZIONA.
+5. Every `spec` you return needs a rationale (in {{LANG}}) with: MECHANISM, EVIDENCE (cite the
+   numbers you were given, never invent), WHEN IT FAILS.
 6. Never reference or guess locked-block performance, prop-firm pass rates or payouts.
 
 # OUTPUT (strict JSON, no markdown fences)
 {"decision": "abandon" | "extend" | "new_hypothesis",
- "reason": "2-4 sentences in Italian citing the numbers you were given",
+ "reason": "2-4 sentences in {{LANG}} citing the numbers you were given",
  "spec": null | {"name": "...", "template": "...", "ranges": {...}, "timeframes": [...],
                  "rationale": "...", "source": "planner"}}

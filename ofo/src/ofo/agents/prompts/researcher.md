@@ -36,10 +36,10 @@ Reply with ONE JSON object and nothing else: no markdown fences, no commentary o
    respect the stated bounds, otherwise the proposal is discarded automatically.
 2. Propose only what the text SUPPORTS. If the text contains no rule that maps onto a template,
    return {"strategies": [], "notes": "..."}. An empty list is a good answer, a forced one is not.
-3. `rationale` (write it in Italian) must contain, in this order:
-   (a) MECCANISMO: who is on the other side of the trade and why the edge should persist;
-   (b) EVIDENZA: what in the text supports it (quote or paraphrase, name the section);
-   (c) QUANDO NON FUNZIONA: one concrete, falsifiable condition under which the idea is wrong.
+3. `rationale` (write it in {{LANG}}, with the three part labels in {{LANG}} too) must contain, in this order:
+   (a) MECCANISMO / MECHANISM: who is on the other side of the trade and why the edge should persist;
+   (b) EVIDENZA / EVIDENCE: what in the text supports it (quote or paraphrase, name the section);
+   (c) QUANDO NON FUNZIONA / WHEN IT FAILS: one concrete, falsifiable condition under which the idea is wrong.
 4. RANGES: sweep a reasonable band AROUND the values the text mentions, 6 to 12 values per
    parameter, wide enough to reveal whether a plateau exists. NEVER propose a single value and
    NEVER pick ranges because they "look good": the engine rewards strategies that work across

@@ -45,6 +45,11 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                 if u.path == "/api/events":
                     after = int(parse_qs(u.query).get("after", ["0"])[0])
                     return self._json(lab.events_after(after))
+                if u.path == "/api/candles":
+                    q = parse_qs(u.query)
+                    days = q.get("days", ["10"])[0]
+                    return self._json(lab.candles(q.get("tf", ["15min"])[0], None if days == "all" else int(days),
+                                                  q.get("before", [None])[0]))
                 if u.path.startswith("/api/strategy/"):
                     d = lab.detail(unquote(u.path[len("/api/strategy/"):]))
                     return self._json(d) if d else self._json({"error": "not found"}, 404)
@@ -63,9 +68,9 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
             try:
                 data = json.loads(self._body() or b"{}")
                 if u.path == "/api/chat":
-                    return self._json(lab.chat(data.get("message", ""), data.get("history")))
+                    return self._json(lab.chat(data.get("message", ""), data.get("history"), data.get("lang")))
                 if u.path == "/api/run":
-                    return self._json(lab.start(str(data.get("id", ""))))
+                    return self._json(lab.start(str(data.get("id", "")), data.get("lang")))
                 if u.path == "/api/ingest":
                     return self._json(lab.ingest())
                 self._json({"error": "not found"}, 404)
