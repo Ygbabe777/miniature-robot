@@ -87,6 +87,52 @@ def orb(bars: pd.DataFrame, or_minutes: int) -> pd.Series:
     return _hold(sig)
 
 
+def orb_retest(bars: pd.DataFrame, or_minutes: int, retest_bars: int, tol: float) -> pd.Series:
+    """Opening-range breakout that waits for a RETEST before entering.
+
+    1. Build the range from bars starting in [09:30, 09:30 + or_minutes).
+    2. The first close beyond the range marks the breakout side.
+    3. Within `retest_bars` bars the price must come back to the broken level (within
+       `tol` x range) and CLOSE beyond it again: that bar is the entry, held until flat.
+    4. No retest in time -> the setup expires and a new breakout can start another one.
+    Fewer, more selective trades than the plain breakout. Causal: each bar sees only the past."""
+    idx = bars.index
+    n = len(bars)
+    tod = _minutes(idx)
+    in_or = (tod >= 570) & (tod < 570 + or_minutes)
+    day = idx.normalize()
+    hi = bars["high"].where(in_or).groupby(day).transform("max").to_numpy()
+    lo = bars["low"].where(in_or).groupby(day).transform("min").to_numpy()
+    post = (tod >= 570 + or_minutes) & (tod < 16 * 60 + 45)
+    c, h, l = bars["close"].to_numpy(), bars["high"].to_numpy(), bars["low"].to_numpy()
+    codes = pd.factorize(day)[0]
+    pos = np.zeros(n)
+    last_day, phase, side, brk, cur = -1, 0, 0, -1, 0.0
+    for i in range(n):
+        if codes[i] != last_day:
+            last_day, phase, side, brk, cur = codes[i], 0, 0, -1, 0.0
+        if not post[i] or np.isnan(hi[i]) or np.isnan(lo[i]):
+            continue
+        rng = hi[i] - lo[i]
+        if phase in (1, 2) and i - brk > retest_bars:
+            phase, side = 0, 0                                   # setup expired
+        if phase in (1, 2):
+            level = hi[i] if side == 1 else lo[i]
+            touched = (l[i] <= level + tol * rng) if side == 1 else (h[i] >= level - tol * rng)
+            beyond = (c[i] > level) if side == 1 else (c[i] < level)
+            if (phase == 2 or touched) and beyond:
+                cur, phase = float(side), 3                      # retest confirmed: enter
+            elif touched:
+                phase = 2                                        # touched, wait for a close beyond
+        elif phase == 0:
+            if c[i] > hi[i]:
+                phase, side, brk = 1, 1, i
+            elif c[i] < lo[i]:
+                phase, side, brk = 1, -1, i
+        pos[i] = cur
+    return pd.Series(pos, index=idx)
+
+
 def vwap_dev(bars: pd.DataFrame, window: int, z: float) -> pd.Series:
     """Fade stretches away from the session VWAP, measured in rolling standard deviations
     of the deviation. Session VWAP resets with the trading session."""
@@ -120,6 +166,9 @@ TEMPLATES = {
                                doc="reversion: z-score of close vs rolling mean"),
     "orb": Template(orb, {"or_minutes": (int, 5, 120)},
                     doc="opening-range breakout at the 09:30 ET cash open"),
+    "orb_retest": Template(orb_retest, {"or_minutes": (int, 5, 120), "retest_bars": (int, 1, 30),
+                                        "tol": (float, 0.0, 1.0)},
+                           doc="opening-range breakout that enters only after a retest of the broken level"),
     "vwap_dev": Template(vwap_dev, {"window": (int, 10, 300), "z": (float, 0.5, 4.0)},
                          doc="reversion: deviation from session VWAP"),
     "random_control": Template(random_control, {"seed": (int, 0, 100_000)}, control=True,

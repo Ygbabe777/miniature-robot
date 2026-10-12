@@ -6,7 +6,7 @@ from ofo.optimizer import run_study, surface_metrics
 from ofo.prop import PRESETS
 from ofo.registry import TrialRegistry
 from ofo.specs import SpecError, from_dict
-from ofo.strategies import TEMPLATES, orb, vwap_dev
+from ofo.strategies import TEMPLATES, orb, orb_retest, vwap_dev
 from test_research import synth
 
 
@@ -42,7 +42,8 @@ def test_spec_validation():
 
 def test_new_templates_are_causal():
     bars = synth(n_sessions=30, seed=2)
-    for fn, kw in ((orb, {"or_minutes": 30}), (vwap_dev, {"window": 30, "z": 1.5})):
+    for fn, kw in ((orb, {"or_minutes": 30}), (vwap_dev, {"window": 30, "z": 1.5}),
+                   (orb_retest, {"or_minutes": 30, "retest_bars": 6, "tol": 0.2})):
         full = fn(bars, **kw)
         cut = len(bars) // 2 + 137
         import pandas as pd
@@ -79,3 +80,21 @@ def test_study_flags_profit_that_is_only_market_drift(tmp_path):
     assert reg.data["locked_looks"] == 0                              # locked block untouched
     d = detrend(bars)
     assert abs((d["close"].iloc[-1] - d["close"].iloc[0])) < 1e-6      # trend really removed
+
+
+def test_orb_retest_enters_only_after_the_retest():
+    """Hand-made day on 5-min bars: range 100..110 (09:30-10:00), breakout close 112, pullback
+    touches 110.5 (within tol) and closes 111 -> entry on that bar, not on the breakout bar."""
+    import pandas as pd
+    idx = pd.date_range("2025-03-03 09:30", periods=12, freq="5min")
+    close = [105, 106, 104, 108, 107, 106, 112, 113, 111, 112, 113, 114]
+    high = [106, 107, 105, 110, 108, 107, 113, 114, 113, 113, 114, 115]
+    low = [100, 104, 103, 107, 106, 105, 110, 111, 110.5, 111, 112, 113]
+    bars = pd.DataFrame({"open": close, "high": high, "low": low, "close": close, "volume": 1.0}, index=idx)
+    pos = orb_retest(bars, or_minutes=30, retest_bars=4, tol=0.1)
+    # range = bars 09:30..09:55 -> high 110 low 100; post starts 10:00. Breakout close 112 at 10:00 (i=6)
+    assert pos.iloc[6] == 0                               # breakout bar: no entry yet
+    assert pos.iloc[8] == 1 and (pos.iloc[8:] == 1).all()  # retest at i=8 (low 110.5, close 111 > 110)
+    # no retest within the window -> never enters
+    no_retest = orb_retest(bars, or_minutes=30, retest_bars=1, tol=0.0)
+    assert (no_retest == 0).all()

@@ -16,6 +16,7 @@ from pathlib import Path
 from ..optimizer import run_study
 from ..papers import extract_pdf_text, propose_specs
 from ..specs import StrategySpec, from_dict
+from ..storage import save_study
 from .base import AgentError
 from .roles import dev_summary, make_auditor, make_planner
 
@@ -64,8 +65,8 @@ class ResearchLoop:
         """Run the Researcher on every new file in ideas_dir. Returns specs enqueued."""
         added = 0
         d = Path(ideas_dir)
-        for p in sorted(d.glob("*")) if d.exists() else []:
-            if p.suffix.lower() not in IDEA_SUFFIXES:
+        for p in sorted(d.rglob("*")) if d.exists() else []:
+            if not p.is_file() or p.suffix.lower() not in IDEA_SUFFIXES:
                 continue
             h = hashlib.sha256(p.read_bytes()).hexdigest()
             if h in self.processed_ideas:
@@ -115,18 +116,15 @@ class ResearchLoop:
         ev.emit("judge", "verdict", f"{spec.name}: {locked['status']}", {k: v for k, v in locked.items() if k != "checks"})
         audit = None
         if "checks" in locked or s["robust"]:
-            payload = {k: v for k, v in rep.items() if k != "wf_oos_series"}
+            payload = {k: v for k, v in rep.items() if k not in ("wf_oos_series", "series")}
             payload["trials_total"] = self.registry.n_trials
             try:
                 audit = make_auditor(_llm(self.llm, "auditor"), ev).run(payload)
                 ev.emit("auditor", "commentary", audit["summary"][:300], {"risk_flags": audit["risk_flags"]})
             except AgentError as e:
                 ev.emit("auditor", "error", str(e)[:300])
-        out = {k: v for k, v in rep.items() if k != "wf_oos_series"}
         dec = {**decision, "spec": dataclasses.asdict(decision["spec"]) if decision["spec"] else None}
-        (self.work / "reports").mkdir(exist_ok=True)
-        (self.work / "reports" / f"{_slug(spec.name)}.json").write_text(
-            json.dumps({"report": out, "planner": dec, "auditor": audit}, indent=1, default=str))
+        save_study(self.work, rep, dec, audit)
         nxt = decision["spec"]
         if nxt is not None and depth < self.max_depth and self.enqueue(nxt, depth + 1):
             ev.emit("planner", "queued", f"next: {nxt.name} ({nxt.n_candidates} candidates)")

@@ -12,6 +12,10 @@
     "auditor": [
       "MODEL_ID_STRONG_1",
       "MODEL_ID_FAST_1"
+    ],
+    "strategist": [
+      "MODEL_ID_STRONG_1",
+      "MODEL_ID_FAST_1"
     ]
   },
   "daily_token_budget": {
@@ -22,9 +26,10 @@
   "cooldown_seconds": 30,
   "calls_per_hour": 30,
   "role_calls_per_hour": {
-    "researcher": 12,
-    "planner": 6,
-    "auditor": 8
+    "researcher": 8,
+    "planner": 5,
+    "auditor": 6,
+    "strategist": 8
   },
   "wait_for_call_slot_seconds": 3700
 }

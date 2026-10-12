@@ -1,5 +1,5 @@
 {
-  "_README": "Recommended from the first benchmark (1 trial per model: indicative). Copy to config/llm.json. Your limit is CALLS per hour, so the shares below add up to 26 of 30 (4 spare).",
+  "_README": "Recommended from the first benchmark (indicative). Copy to config/llm.json. Limit: 30 CALLS per hour; the shares add up to 27 (3 spare).",
   "roles": {
     "researcher": [
       "deepseek-v4-pro-0813",
@@ -12,13 +12,18 @@
     "auditor": [
       "deepseek-v4-pro-0813",
       "glm-5.3-flash"
+    ],
+    "strategist": [
+      "deepseek-v4-pro-0813",
+      "glm-5.3-flash"
     ]
   },
   "calls_per_hour": 30,
   "role_calls_per_hour": {
-    "researcher": 12,
-    "planner": 6,
-    "auditor": 8
+    "researcher": 8,
+    "planner": 5,
+    "auditor": 6,
+    "strategist": 8
   },
   "wait_for_call_slot_seconds": 3700,
   "cooldown_seconds": 30

@@ -20,7 +20,8 @@ class Scripted:
     def chat(self, messages, **kw):
         self.seen.append(messages)
         sys_ = messages[0]["content"]
-        role = "researcher" if "RESEARCHER" in sys_ else "planner" if "PLANNER" in sys_ else "auditor"
+        role = ("researcher" if "RESEARCHER" in sys_ else "planner" if "PLANNER" in sys_ else
+                "strategist" if "STRATEGIST" in sys_ else "auditor")
         return self.replies[role].pop(0)
 
 
@@ -135,3 +136,33 @@ def test_loop_planner_sees_dev_only_and_queue_respects_depth(tmp_path, monkeypat
     auditor_msgs = [m for m in llm.seen if "AUDITOR" in m[0]["content"]]
     assert any("123456" in json.dumps(m) for m in auditor_msgs)    # the auditor DOES see the locked verdict
     assert len(res) == 2                                           # parent + one extension (max_depth=1)
+
+
+def test_strategist_builds_the_orb_retest_spec_the_user_asked_for():
+    from ofo.agents.roles import make_strategist
+    reply = json.dumps({"reply": "Fatto: 144 combinazioni.", "template_request": None, "spec": {
+        "name": "ORB con retest", "template": "orb_retest",
+        "ranges": {"or_minutes": {"min": 15, "max": 45, "step": 5}, "retest_bars": {"values": [3, 6, 10, 15]},
+                   "tol": {"values": [0.0, 0.15, 0.3]}},
+        "timeframes": ["5min", "15min"], "rationale": "MECCANISMO ... EVIDENZA idea dell'utente ... QUANDO NON FUNZIONA ..."}})
+    out = make_strategist(Scripted(strategist=[reply])).run({"message": "creami una strategia ORB con i retest"})
+    assert out["spec"].template == "orb_retest" and out["spec"].n_candidates == 7 * 4 * 3 * 2
+
+
+def test_strategist_missing_logic_becomes_a_template_request_not_a_wrong_spec():
+    from ofo.agents.roles import make_strategist
+    reply = json.dumps({"reply": "Manca un modello con trailing stop.", "spec": None, "template_request": {
+        "name": "orb_trailing_stop", "description": "ORB + stop che segue il prezzo a N ATR"}})
+    out = make_strategist(Scripted(strategist=[reply])).run({"message": "ORB con trailing stop"})
+    assert out["spec"] is None and out["template_request"]["name"] == "orb_trailing_stop"
+
+
+def test_strategist_rejects_both_or_garbage_and_never_invents_templates():
+    from ofo.agents.roles import make_strategist
+    both = json.dumps({"reply": "x", "spec": {"template": "orb"}, "template_request": {"name": "a", "description": "b"}})
+    bad_tpl = json.dumps({"reply": "x", "spec": {"template": "magic_ai", "ranges": {}, "rationale": "r"}})
+    for r in (both, bad_tpl):
+        with pytest.raises(AgentError):
+            make_strategist(Scripted(strategist=[r, r])).run({"message": "x"})
+    ok = make_strategist(Scripted(strategist=[json.dumps({"reply": "Ciao!"})])).run({"message": "ciao"})
+    assert ok["spec"] is None and ok["template_request"] is None and ok["reply"] == "Ciao!"

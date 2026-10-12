@@ -104,11 +104,17 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     wf, _ = walk_forward(dev, train_days, test_days)
     wf_pnl = float(wf.sum()) if len(wf) else 0.0
 
+    best_i = max(range(len(cands)), key=lambda i: rows[i]["sharpe"])
+    pair = lambda ser: [[str(d)[:10], float(v)] for d, v in ser.items()]
     report = {"name": spec.name, "template": spec.template, "rationale": spec.rationale,
               "source": spec.source, "n_candidates": len(cands), "surface": surf,
               "wf_oos_days": len(wf), "wf_oos_pnl": wf_pnl,
               "wf_oos_sharpe_daily": sharpe(wf) if len(wf) > 2 else 0.0,
-              "n_locked_days": len(sessions) - len(dev_days), "wf_oos_series": wf}
+              "n_locked_days": len(sessions) - len(dev_days), "wf_oos_series": wf,
+              # chart data. dev_best is IN-SAMPLE (best of N combinations): the UI labels it so.
+              "series": {"cut": str(cut)[:10], "wf_oos": pair(wf),
+                         "dev_best": pair(dev[best_i].reindex(dev_days).fillna(0.0)), "locked": None,
+                         "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}}}
     # Beta check: only for surfaces that already look robust (it re-runs the dev sweep).
     surf_d = None
     if surf["robust"] and wf_pnl > 0:
@@ -120,12 +126,13 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
         surf_d = surface_metrics(rows_d, list(spec.ranges), surface_th)
     report["surface_detrended"] = surf_d
     if surf["robust"] and wf_pnl > 0 and surf_d["robust"]:
-        best_i = max(range(len(cands)), key=lambda i: rows[i]["sharpe"])
         locked_days = [d for d in sessions if d >= cut]
         locked = series[best_i].reindex(locked_days).fillna(0.0)
         var_sr = float(np.var([r["sharpe"] for r in rows], ddof=1))
         v = judge(locked.values, rules, registry.n_trials + 1, var_sr)
         registry.add_locked_look(f"{spec.name}:{cands[best_i]['params']}@{cands[best_i]['tf']}", v.status)
+        # the human may only see the locked block once the Judge has already used its look
+        report["series"]["locked"] = pair(locked)
         report["locked"] = {"status": v.status, "checks": v.checks, "pnl": float(locked.sum()),
                             "p_pass": v.mc.get("p_pass"), "p_pass_ci95": v.mc.get("p_pass_ci95"),
                             "p_bust": v.mc.get("p_bust"), "params": cands[best_i]["params"],

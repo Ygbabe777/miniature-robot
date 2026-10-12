@@ -62,3 +62,28 @@ def make_auditor(llm, events=None) -> Agent:
         return {"summary": summary[:2000], "risk_flags": [str(f)[:200] for f in flags][:8],
                 "next_step": str(d.get("next_step", ""))[:500]}
     return Agent("auditor", llm, load_prompt("auditor"), validate, events, max_attempts=2)
+
+
+def make_strategist(llm, events=None) -> Agent:
+    """Chat agent: a sentence from the owner -> a validated spec, a template request, or an answer."""
+    from ..papers import _catalogue
+    from ..strategies import TIMEFRAMES
+
+    def validate(d: dict) -> dict:
+        reply = str(d.get("reply", "")).strip()
+        if not reply:
+            raise ValueError("reply is required (Italian text for the user)")
+        spec, req = d.get("spec"), d.get("template_request")
+        if spec and req:
+            raise ValueError("return either spec or template_request, never both")
+        out = {"reply": reply[:2000], "spec": None, "template_request": None}
+        if spec:
+            out["spec"] = from_dict({**spec, "source": spec.get("source") or "chat"})
+        elif req:
+            if not isinstance(req, dict) or not str(req.get("description", "")).strip():
+                raise ValueError("template_request needs name and description")
+            out["template_request"] = {"name": str(req.get("name", "custom"))[:60],
+                                       "description": str(req["description"])[:3000]}
+        return out
+    system = load_prompt("strategist", TEMPLATE_CATALOGUE=_catalogue(), TIMEFRAMES=str(list(TIMEFRAMES)))
+    return Agent("strategist", llm, system, validate, events, max_attempts=2, temperature=0.3)
