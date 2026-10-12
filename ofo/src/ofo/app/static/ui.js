@@ -168,8 +168,9 @@
       if (!d.dossiers.length) { el.innerHTML = `<h2>${t('ready_title')}</h2><div class="empty">${t('ready_none')}</div>`; return; }
       el.innerHTML = `<h2>${t('ready_title')} (${d.dossiers.length})</h2>` + d.dossiers.map(x => {
         const accts = Object.entries(x.accounts).map(([k, a]) => `<div class="dacct"><b>${t('ready_acct', { a: esc(k) })}</b><p>${esc(a.text)}</p>
-          <details><summary>${t('ready_table')} (${t('ready_cols')})</summary><table>${a.table.map(r => `<tr class="${a.recommended && a.recommended.micro_equiv === r.micro_equiv ? 'pick' : ''}"><td>${r.micro_equiv}</td><td>${pct(r.p_pass)}</td><td>${pct(r.p_pass_lo)}</td><td>${pct(r.p_bust)}</td></tr>`).join('')}</table></details></div>`).join('');
-        return `<div class="dossier"><h3>${esc(x.headline)}</h3><p>${esc(x.strategy_text)}</p>${accts}${x.auditor ? `<p><b>${t('ready_aud')}:</b> ${esc(x.auditor)}</p>` : ''}<p class="cav">${esc(x.caveat)}</p></div>`;
+          <details><summary>${t('ready_table')} (${t('ready_cols')})</summary><table>${a.table.map(r => `<tr class="${a.recommended && a.recommended.micro_equiv === r.micro_equiv ? 'pick' : ''}"><td>${r.micro_equiv}</td><td>${pct(r.p_pass)}</td><td>${pct(r.p_pass_lo)}</td><td>${pct(r.p_bust)}</td></tr>`).join('')}</table></details>
+          ${a.multi ? `<details><summary>${t('ready_multi')} (${t('ready_multi_cols')})</summary><table>${a.multi.table.map(r => `<tr><td>${r.accounts}</td><td>${pct(r.p_pass_any)} <small>(${pct(r.p_pass_any_lo)}–${pct(r.p_pass_any_hi)})</small></td><td>${pct(r.p_payout_any)}</td><td>$${Math.round(r.expected_cost)}</td></tr>`).join('')}</table></details>` : ''}</div>`).join('');
+        return `<div class="dossier"><h3>${esc(x.headline)}</h3><p>${esc(x.strategy_text)}</p>${x.comparison ? `<p><b>${esc(x.comparison)}</b></p>` : ''}${accts}${x.auditor ? `<p><b>${t('ready_aud')}:</b> ${esc(x.auditor)}</p>` : ''}<p class="cav">${esc(x.caveat)}</p></div>`;
       }).join('');
     } catch (e) {}
   }

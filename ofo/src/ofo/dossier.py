@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from . import economics as eco
+
 from .prop import PropRules, pass_probability_ci
 
 MICRO_SIZES = (1, 2, 3, 4, 5, 6, 8)
@@ -32,6 +34,10 @@ T = {
         "exit_on": "Uscite: stop a {s}x ATR e target a {rr} (rapporto rischio/rendimento 1:{rrn}); il grafico dei risultati per ogni coppia è nel dettaglio della strategia. Stop tipico {pts:.1f} punti.",
         "exit_off": "Uscite: nessuno stop/target ha migliorato in modo netto l'uscita propria della strategia, quindi si usa quella. La tabella rischio/rendimento è nel dettaglio.",
         "rpt": " Rischio per operazione con {n} micro: circa ${r:,.0f} ({pdd:.0%} del drawdown massimo).",
+        "eco": " Costi stimati, solo indicativi (valutazione ~${fee:,.0f}/mese, attivazione ~${act:,.0f}): costo medio per tentativo ${fees:,.0f}. Probabilità di arrivare a un payout: {pp:.0%} (passi {p:.0%}, poi incassi nel {pg:.0%} dei casi); payout netto medio ${net:,.0f}; valore atteso per tentativo {ev:+,.0f}$ (95%: {lo:+,.0f} / {hi:+,.0f}).",
+        "multi": " Più conti, uno dopo l'altro (date diverse): per passarne almeno uno con l'80% di probabilità servono {n80} tentativi, {n90} per il 90%{t3}. Costo atteso fino al primo passaggio, al massimo 10 tentativi: circa ${cost:,.0f}. Conti aperti insieme con gli stessi trade NON sono indipendenti: la probabilità non si moltiplica.",
+        "multi_t": "; con 3 conti {p3:.0%}, con 5 {p5:.0%}",
+        "cmp": "Conto 50k o 25k? Payout più probabile: {w} ({a:.0%} contro {b:.0%}). Valore atteso per tentativo: 50k {e50:+,.0f}$, 25k {e25:+,.0f}$ (stime con costi indicativi).",
         "caveat": "Avvertenze: stima su {n} giorni mai visti dall'ottimizzatore, dopo {trials} prove totali in questo laboratorio (il Giudice le ha già conteggiate). Le regole dell'account sono quelle di esempio, NON verificate: controllale sul regolamento del tuo prop firm prima di usarle. Una probabilità non è una promessa.",
         "none": "Nessuna dimensione sicura: anche con 1 micro la probabilità di bruciare l'account supera {b:.0%}. Non operarla su questo account.",
     },
@@ -48,6 +54,10 @@ T = {
         "exit_on": "Exits: stop at {s}x ATR and target at {rr} (reward:risk 1:{rrn}); results for every pair are in the strategy detail. Typical stop {pts:.1f} points.",
         "exit_off": "Exits: no stop/target clearly improved on the strategy's own exit, so that one is used. The risk/reward table is in the detail.",
         "rpt": " Risk per trade with {n} micro: about ${r:,.0f} ({pdd:.0%} of the max drawdown).",
+        "eco": " Estimated costs, indicative only (evaluation ~${fee:,.0f}/month, activation ~${act:,.0f}): average cost per attempt ${fees:,.0f}. Probability of reaching a payout: {pp:.0%} (you pass {p:.0%}, then get paid in {pg:.0%} of cases); average net payout ${net:,.0f}; expected value per attempt {ev:+,.0f}$ (95%: {lo:+,.0f} / {hi:+,.0f}).",
+        "multi": " Several accounts, one after another (different dates): to pass at least one with 80% probability you need {n80} attempts, {n90} for 90%{t3}. Expected cost until the first pass, at most 10 attempts: about ${cost:,.0f}. Accounts opened together copying the same trades are NOT independent: the probability does not multiply.",
+        "multi_t": "; with 3 accounts {p3:.0%}, with 5 {p5:.0%}",
+        "cmp": "50k or 25k? More likely payout: {w} ({a:.0%} vs {b:.0%}). Expected value per attempt: 50k {e50:+,.0f}$, 25k {e25:+,.0f}$ (estimates with indicative costs).",
         "caveat": "Caveats: estimate on {n} days the optimiser never saw, after {trials} total trials in this lab (the Judge already counted them). The account rules are example values, NOT verified: check them against your prop firm's rulebook before relying on them. A probability is not a promise.",
         "none": "No safe size: even 1 micro has a bust probability above {b:.0%}. Do not trade this on this account.",
     },
@@ -92,7 +102,7 @@ def risk_plan(pnl, rules: PropRules, base_contracts: int, n_micro: int) -> dict:
 
 
 def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_contracts: int, trials_total: int,
-                  language: str = "it", doc: str = "", audit: dict | None = None) -> dict | None:
+                  language: str = "it", doc: str = "", audit: dict | None = None, economics: dict | None = None) -> dict | None:
     """Only for APPROVED studies. Returns None for anything else (nothing is ever dressed up)."""
     locked = report.get("locked") or {}
     if locked.get("status") != "APPROVED":
@@ -126,7 +136,25 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
                 L["risk"].format(stop=r["daily_stop"], dd=r["max_drawdown_allowed"], worst=abs(r["worst_day"]),
                                  mdd=r["max_drawdown_oos"], hit=r["stop_hit_rate"]),
                 L["vs"].format(why=vs)])
+        if pick is not None:
+            assume = (economics or eco.ASSUMED).get(acct)
+            if assume:
+                e = eco.account_economics(pnl, rules, base_contracts, pick["micro_equiv"], assume)
+                m = eco.multi_account(pick["p_pass"], pick["p_pass_lo"], pick["p_pass_hi"], e["p_payout"], e["mean_fees"])
+                entry["economics"], entry["multi"] = e, m
+                t3 = L["multi_t"].format(p3=m["table"][2]["p_pass_any"], p5=m["table"][4]["p_pass_any"]) if m["table"] else ""
+                entry["text"] += L["eco"].format(fee=e["eval_fee_monthly"], act=e["activation_fee"], fees=e["mean_fees"],
+                                                 pp=e["p_payout"], p=e["p_pass"], pg=e["p_payout_given_pass"], net=e["mean_net_payout"],
+                                                 ev=e["ev"], lo=e["ev_ci95"][0], hi=e["ev_ci95"][1])
+                entry["text"] += L["multi"].format(n80=m["n_for_80"] or "–", n90=m["n_for_90"] or "–", t3=t3,
+                                                   cost=m["table"][-1]["expected_cost"])
         accounts[acct] = entry
+    comparison = None
+    if all((accounts.get(k) or {}).get("economics") for k in ("50k", "25k")):
+        a, b = accounts["50k"]["economics"], accounts["25k"]["economics"]
+        w = "50k" if a["p_payout"] >= b["p_payout"] else "25k"
+        comparison = L["cmp"].format(w=w, a=max(a["p_payout"], b["p_payout"]), b=min(a["p_payout"], b["p_payout"]),
+                                     e50=a["ev"], e25=b["ev"])
     ex = report.get("exits") or {}
     ext = ""
     if (report["series"].get("exit")):
@@ -157,6 +185,6 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
         strat += L["src"].format(src=str(report["source"])[:160])
     caveat = L["caveat"].format(n=len(pnl), trials=trials_total)
     return {"name": report["name"], "template": report["template"], "tf": tf, "params": params, "headline": head,
-            "strategy_text": strat, "exits": {"chosen": report["series"].get("exit"), "grid": ex.get("grid", [])}, "accounts": accounts, "caveat": caveat, "n_oos_days": len(pnl),
+            "strategy_text": strat, "comparison": comparison, "economics_assumed": True, "exits": {"chosen": report["series"].get("exit"), "grid": ex.get("grid", [])}, "accounts": accounts, "caveat": caveat, "n_oos_days": len(pnl),
             "oos_pnl": float(pnl.sum()), "oos_mean": float(pnl.mean()), "oos_std": float(pnl.std(ddof=1)), "base_contracts": base_contracts, "language": language,
             "auditor": (audit or {}).get("summary"), "risk_flags": (audit or {}).get("risk_flags", [])}

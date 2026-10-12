@@ -104,3 +104,11 @@ famiglie classiche) cerca **collegamenti tra concetti**: prima le coppie che hai
 concetti mai testati o che hanno già prodotto una strategia approvata, mai ancora combinati. Per ogni coppia propone strategie
 ibride (es. una come segnale, l'altra come filtro) che l'Autopilota testa, e scrive una nota in `OFO/Idee/` collegata ai due
 concetti. Ogni coppia si prova una sola volta (`data/connections.json`), al massimo una ogni 15 minuti.
+
+## Probabilità per conto, più conti, payout e costi (approssimati)
+Il fascicolo di ogni strategia pronta contiene, per il conto 50k e per il 25k:
+- la probabilità di passare **e di arrivare a un payout**, con costi medi per tentativo e valore atteso;
+- la **tabella dei tentativi**: probabilità di passarne almeno uno con 1, 2 … 10 conti (uno dopo l'altro, a date diverse) e
+  quanti ne servono per l'80% / 90% / 95%. Conti aperti insieme con gli stessi trade non sono indipendenti: lì non si moltiplica;
+- il confronto **50k contro 25k** (payout più probabile, valore atteso).
+Le commissioni e le regole di payout sono **ipotesi indicative**: sostituiscile con quelle vere in `rules/economics.json`.

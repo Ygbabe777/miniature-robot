@@ -210,3 +210,26 @@ def test_old_autopilot_caps_are_raised_on_upgrade(tmp_path, bars_csv):
     (tmp_path / "data" / "autopilot.json").write_text(json.dumps({"enabled": True, "max_trials_per_day": 4000, "max_trials_total": 60000}))
     lab = make(tmp_path, bars_csv)
     assert lab.ap["max_trials_per_day"] == 30000 and lab.ap["max_trials_total"] == 300000
+
+
+def test_multi_account_probabilities_and_attempts_needed():
+    from ofo import economics as eco
+    m = eco.multi_account(0.2, 0.1, 0.3, 0.1, fees_per_attempt=100.0, n_max=5)
+    assert abs(m["table"][0]["p_pass_any"] - 0.2) < 1e-9 and abs(m["table"][1]["p_pass_any"] - 0.36) < 1e-9
+    assert m["table"][4]["p_pass_any_lo"] < m["table"][4]["p_pass_any"] < m["table"][4]["p_pass_any_hi"]
+    assert eco.attempts_needed(0.2, 0.8) == 8 and eco.attempts_needed(0.5, 0.9) == 4 and eco.attempts_needed(0.0, 0.9) is None
+    assert m["table"][4]["expected_cost"] < 500.0                      # you stop buying accounts once one passes
+    assert abs(m["table"][0]["expected_cost"] - 100.0) < 1e-6
+
+
+def test_dossier_has_payout_probability_costs_multi_account_and_50k_vs_25k():
+    d = build_dossier(report(150, 250), RULES, 2, 1000)
+    a = d["accounts"]["50k"]
+    e = a["economics"]
+    assert 0 <= e["p_payout"] <= e["p_pass"] + 1e-9 <= 1.0001 and e["mean_fees"] > 0 and e["eval_fee_monthly"] == 100.0
+    assert len(a["multi"]["table"]) == 10 and "Probabilità di arrivare a un payout" in a["text"] and "NON sono indipendenti" in a["text"]
+    assert d["comparison"] and ("50k" in d["comparison"] and "25k" in d["comparison"])
+    custom = build_dossier(report(150, 250), RULES, 2, 1000, economics={"50k": {"eval_fee_monthly": 7.0, "activation_fee": 0.0,
+                           "payout": {"split": 0.9, "min_winning_days": 5, "min_day_profit": 150.0, "min_payout": 500.0}}})
+    assert custom["accounts"]["50k"]["economics"]["eval_fee_monthly"] == 7.0 and "economics" not in custom["accounts"]["25k"]
+    assert custom["comparison"] is None                                  # no comparison unless both accounts have assumptions

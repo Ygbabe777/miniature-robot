@@ -28,6 +28,7 @@ from ..storage import list_studies, load_study, slugify
 from .. import deploy as dep
 from .. import knowledge, obsidian
 from ..dossier import build_dossier
+from ..economics import load_assumptions
 from ..accounts import demo_accounts, load_accounts
 from ..data import resample
 from ..trades import extract_trades, summarize
@@ -537,7 +538,9 @@ class Lab:
         rep = {**d["report"], "series": d["series"]}
         lang = "it" if self.language == "Italian" else "en"
         dos = build_dossier(rep, {k: PRESETS[k] for k in ("50k", "25k")}, self.contracts, self.registry.n_trials,
-                            lang, TEMPLATES[rep["template"]].doc, d.get("auditor"))
+                            lang, TEMPLATES[rep["template"]].doc, d.get("auditor"),
+                            economics=load_assumptions(next((p for p in (Path(__file__).resolve().parents[3] / "rules" / "economics.json",
+                                                                          Path("rules/economics.json")) if p.exists()), None)))
         if dos is None:
             return None
         dos["slug"], dos["created"] = slug, time.strftime("%Y-%m-%d %H:%M")

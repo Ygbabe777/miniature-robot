@@ -152,7 +152,12 @@ def dossier_note(d: dict, L: dict) -> tuple[dict, str]:
     for acct, a in d["accounts"].items():
         b += [f"## {acct}", a["text"], "", f"| micro | pass | lower | bust |", "|---|---|---|---|"]
         b += [f"| {r['micro_equiv']} | {_pct(r['p_pass'])} | {_pct(r['p_pass_lo'])} | {_pct(r['p_bust'])} |" for r in a["table"]]
+        if a.get("multi"):
+            b += ["| accounts | P(≥1 pass) | P(≥1 payout) | cost |", "|---|---|---|---|"]
+            b += [f"| {r['accounts']} | {_pct(r['p_pass_any'])} | {_pct(r['p_payout_any'])} | ${r['expected_cost']:,.0f} |" for r in a["multi"]["table"]]
         b += [""]
+    if d.get("comparison"):
+        b += [d["comparison"], ""]
     b += [f"> {d['caveat']}", "", f"Strategia: [[{safe(d['name'])}]]"]
     return front, "\n".join(b)
 
