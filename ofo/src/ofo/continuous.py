@@ -10,10 +10,13 @@ from __future__ import annotations
 import pandas as pd
 
 
-def _roll_day(a: pd.DataFrame, b: pd.DataFrame) -> pd.Timestamp:
+def _roll_day(a: pd.DataFrame, b: pd.DataFrame, not_before: pd.Timestamp) -> pd.Timestamp:
+    """First day on/after `not_before` where b out-trades a. `a` only becomes the front
+    contract at `not_before`, so earlier crossings between two thin contracts are noise."""
     va = a["volume"].groupby(a.index.normalize()).sum()
     vb = b["volume"].groupby(b.index.normalize()).sum()
     both = pd.concat([va.rename("a"), vb.rename("b")], axis=1).dropna()
+    both = both[both.index >= not_before]
     crossed = both[both["b"] > both["a"]]
     if crossed.empty:
         return a.index.max().normalize() + pd.Timedelta(days=1)
@@ -28,7 +31,10 @@ def build_continuous(contracts: list[pd.DataFrame], names: list[str] | None = No
     rolls, deltas = [], []
     prev_roll = pd.Timestamp.min
     for k, (a, b) in enumerate(zip(contracts[:-1], contracts[1:])):
-        roll = max(_roll_day(a, b), prev_roll)
+        roll = _roll_day(a, b, prev_roll)
+        if roll <= prev_roll:
+            raise ValueError(f"{names[k]} would be front for zero days (roll {roll}); "
+                             "drop it from the chain")
         common = a.index.intersection(b.index)
         common = common[common < roll]
         if len(common) == 0:
