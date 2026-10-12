@@ -135,6 +135,7 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
         if wf_pnl <= 0:
             why.append("walk_forward_pnl")
         if surf_d is not None and not surf_d["robust"]:
-            why.append("drift_only: edge disappears once the market trend is removed")
+            bad = [k for k, ok in surf_d["checks"].items() if not ok]
+            why.append(f"fragile_without_market_drift: surface fails {bad} once the trend is removed")
         report["locked"] = {"status": REJECTED, "reason": f"failed {why}; locked block not touched"}
     return report

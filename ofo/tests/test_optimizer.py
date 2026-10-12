@@ -75,7 +75,7 @@ def test_study_flags_profit_that_is_only_market_drift(tmp_path):
     rep = run_study(bars, spec, MNQ, PRESETS["50k"], reg, train_days=60, test_days=10)
     assert rep["surface"]["robust"], rep["surface"]                  # raw: looks like an edge
     assert rep["surface_detrended"] is not None and not rep["surface_detrended"]["robust"]
-    assert "drift_only" in rep["locked"]["reason"]
+    assert "fragile_without_market_drift" in rep["locked"]["reason"]
     assert reg.data["locked_looks"] == 0                              # locked block untouched
     d = detrend(bars)
     assert abs((d["close"].iloc[-1] - d["close"].iloc[0])) < 1e-6      # trend really removed
