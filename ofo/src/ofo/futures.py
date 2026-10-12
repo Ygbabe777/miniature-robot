@@ -42,7 +42,7 @@ def expiry_key(ticker: str, first_seen: pd.Timestamp) -> int:
     return year * 12 + month
 
 
-def build_root(paths, root: str) -> pd.DataFrame:
+def build_root(paths, root: str, min_lead_days: int = 3) -> pd.DataFrame:
     """Return the continuous 1-minute series (OHLCV + `session`) for `root`."""
     frames = [read_day(p, root) for p in sorted(paths)]
     frames = [f for f in frames if len(f)]
@@ -50,10 +50,18 @@ def build_root(paths, root: str) -> pd.DataFrame:
         raise ValueError(f"no outright {root} contracts found")
     allrows = pd.concat(frames, ignore_index=True)
     first = allrows.groupby("ticker")["ts"].min()
-    order = sorted(first.index, key=lambda t: expiry_key(t, first[t]))
+    # Keep only contracts that were the most traded on at least `min_lead_days` sessions.
+    # Thin far-dated contracts print sporadically and cannot anchor a roll.
+    dvol = allrows.groupby(["session_end_date", "ticker"])["volume"].sum().unstack(fill_value=0)
+    leaders = dvol.idxmax(axis=1).value_counts()
+    keep = [t for t in first.index if leaders.get(t, 0) >= min_lead_days]
+    if not keep:
+        raise ValueError(f"no {root} contract led volume on {min_lead_days}+ sessions")
+    order = sorted(keep, key=lambda t: expiry_key(t, first[t]))
     contracts = []
     for t in order:
         c = allrows[allrows["ticker"] == t].drop_duplicates("ts").set_index("ts").sort_index()
         contracts.append(c[["open", "high", "low", "close", "volume", "session_end_date"]])
-    cont = build_continuous(contracts)
+    cont = build_continuous(contracts, names=order)
+    cont.attrs["chain"] = order
     return cont.rename(columns={"session_end_date": "session"})
