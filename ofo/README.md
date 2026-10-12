@@ -63,10 +63,10 @@ finiscono, il modello ne inventa di nuovi), il Researcher li legge, le proposte 
   se l'Autopilota è acceso). Lo stato "al lavoro" viene dal server (attività reale), non da timeout.
 
 ## Rischio / rendimento (stop e target)
-Dopo aver scelto la migliore combinazione, l'Optimizer prova 20 coppie stop (1-3× ATR) × target (1R-3R o nessuno) sul solo
+Dopo aver scelto la migliore combinazione, l'Optimizer prova 28 coppie stop (1-3× ATR) × target (0.5R-3R o nessuno; sotto 1R il target è più vicino dello stop: molte piccole vincite, rare perdite grandi) sul solo
 periodo di sviluppo e mostra la tabella nel dettaglio della strategia. La coppia migliore viene adottata solo se batte
 l'uscita propria della strategia di almeno 0.03 di Sharpe giornaliero; il Giudice la valuta poi sul blocco nascosto.
-Regole prudenti: se stop e target cadono nella stessa barra vale lo stop; i gap riempiono all'apertura. Le 20 celle contano
+Regole prudenti: se stop e target cadono nella stessa barra vale lo stop; i gap riempiono all'apertura. Le 28 celle contano
 come prove nel registro. Il fascicolo della strategia pronta riporta stop, target e rischio per operazione in dollari.
 
 ## Deployment automatico (paper trading)
@@ -96,3 +96,11 @@ tutti i paper e le strategie su quell'idea, con cosa è stato imparato ("5 testa
 il controllo dsr"). Lo stesso riassunto torna ai **prompt del Researcher e del Planner**: non ripropongono idee già fallite
 senza un meccanismo nuovo e preferiscono i concetti letti ma non ancora testati. Funziona anche senza Obsidian
 (`data/knowledge.json`); Obsidian lo mostra come Grafo.
+
+### Il Researcher legge la memoria Obsidian e collega le idee
+Con il vault collegato, il Researcher legge le note di `OFO/` (non il resto del vault: quel testo va a un servizio AI),
+**comprese le tue annotazioni** sotto `<!-- ofo:end -->` e le tue note in `OFO/Ideas/`. Quando la coda è vuota (dopo le
+famiglie classiche) cerca **collegamenti tra concetti**: prima le coppie che hai collegato tu con `[[Concetto - ...]]`, poi
+concetti mai testati o che hanno già prodotto una strategia approvata, mai ancora combinati. Per ogni coppia propone strategie
+ibride (es. una come segnale, l'altra come filtro) che l'Autopilota testa, e scrive una nota in `OFO/Idee/` collegata ai due
+concetti. Ogni coppia si prova una sola volta (`data/connections.json`), al massimo una ogni 15 minuti.

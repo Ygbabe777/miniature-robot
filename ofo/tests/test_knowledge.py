@@ -57,3 +57,63 @@ def test_graph_links_papers_strategies_and_concepts_and_builds_memory(tmp_path):
 
 def test_empty_lab_has_no_memory():
     assert kn.memory_text({"concepts": {}}) == ""
+
+
+# ---- the Researcher's access to the Obsidian memory, and idea connections ----
+from ofo import obsidian as ob2
+from test_autopilot import make
+from test_lab import bars_csv  # noqa: F401
+
+
+def _graph():
+    return {"concepts": {
+        "opening range": {"papers": ["P"], "strategies": ["ORB a"], "tested": 2, "approved": 0, "gates": {}, "related": ["gap"], "lessons": ["2 tested, none approved"], "owner_notes": []},
+        "gap": {"papers": ["P"], "strategies": [], "tested": 0, "approved": 0, "gates": {}, "related": ["opening range"], "lessons": [], "owner_notes": []},
+        "volatility regime": {"papers": ["Q"], "strategies": [], "tested": 0, "approved": 0, "gates": {}, "related": [], "lessons": [], "owner_notes": ["la volatilità conta"]},
+        "vwap": {"papers": [], "strategies": ["V"], "tested": 3, "approved": 1, "gates": {}, "related": [], "lessons": [], "owner_notes": []}}}
+
+
+def test_connection_candidates_prefer_owner_links_then_untested_or_successful_and_skip_done():
+    g = _graph()
+    best = kn.connection_candidates(g, owner_pairs=[("gap", "opening range")], n=10)
+    assert best[0][:2] == ("gap", "opening range")                              # the owner's own link outranks the rest
+    top = kn.connection_candidates(g, n=1)[0]
+    assert top[:2] == ("volatility regime", "vwap")                              # untested + owner note + approved neighbour
+    assert kn.connection_candidates(g, done={"volatility regime|vwap"}, n=1)[0][:2] != ("volatility regime", "vwap")
+    assert all(not (a, b) == ("gap", "opening range") or s < 5 for a, b, s in kn.connection_candidates(g, n=10))   # already combined: demoted
+
+
+def test_read_notes_gives_owner_text_and_links_and_never_leaves_OFO(tmp_path):
+    root = ob2.ensure_vault(tmp_path)
+    (tmp_path / "private.md").write_text("secret diary", encoding="utf-8")                       # outside OFO/: never read
+    ob2.write_note(root / "Concetti" / "Concetto - gap.md", {"tags": ["ofo/concept"]}, "# gap", "x")
+    p = root / "Concetti" / "Concetto - gap.md"
+    p.write_text(p.read_text(encoding="utf-8") + "Penso che funzioni con [[Concetto - vwap]].\n", encoding="utf-8")
+    (root / "Ideas" / "mia.md").write_text("Idea: [[Concetto - gap]] e [[Concetto - volatility regime]]", encoding="utf-8")
+    notes = ob2.read_notes(tmp_path)
+    assert "private" not in notes and notes["Concetto - gap"]["annotation"].startswith("Penso che funzioni")
+    assert ob2.owner_pairs(notes) == [("gap", "volatility regime"), ("gap", "vwap")]
+
+
+def test_memory_text_carries_the_owners_notes():
+    mem = kn.memory_text(_graph())
+    assert "OWNER" in mem and "la volatilità conta" in mem
+
+
+def test_connect_ideas_reads_the_vault_proposes_hybrids_and_writes_a_linked_idea_note(tmp_path, bars_csv):
+    lab = make(tmp_path, bars_csv, llm={"researcher": Fake({"strategies": [{**SPEC, "name": "Hybrid ORB gap"}], "concepts": ["opening range"]})})
+    vault = tmp_path / "vault"; vault.mkdir()
+    lab.set_obsidian(str(vault))
+    root = vault / "OFO"
+    ob2.write_note(root / "Concetti" / "Concetto - opening range.md", {"tags": ["ofo/concept"]}, "# opening range", "x")
+    ob2.write_note(root / "Concetti" / "Concetto - volatility regime.md", {"tags": ["ofo/concept"]}, "# vr", "x")
+    (root / "Ideas" / "mia.md").write_text("[[Concetto - opening range]] [[Concetto - volatility regime]]", encoding="utf-8")
+    sd = lab.work / "specs_auto"; sd.mkdir(parents=True)
+    (sd / "p.json").write_text(json.dumps({"strategies": [], "concepts": ["opening range", "volatility regime"]}))
+    lab.scout().state["papers"]["a:1"] = {"title": "T", "status": "downloaded", "file": "web/p.pdf", "query": "x topic"}
+    assert lab.connect_ideas(now=100_000.0) == 1
+    assert list(lab.pending.values())[0]["origin"] == "connection"
+    idea = (root / "Idee" / "opening range x volatility regime.md").read_text(encoding="utf-8")
+    assert "[[Concetto - opening range|opening range]]" in idea and "[[Hybrid ORB gap]]" in idea
+    assert lab.connect_ideas(now=100_100.0) == 0                                 # rate limited
+    assert "opening range|volatility regime" in (lab.data / "connections.json").read_text()

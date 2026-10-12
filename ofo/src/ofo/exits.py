@@ -14,7 +14,8 @@ import pandas as pd
 
 ATR_N = 14
 STOPS = (1.0, 1.5, 2.0, 3.0)                 # in ATR
-RRS = (1.0, 1.5, 2.0, 3.0, None)             # reward : risk, None = the strategy's own exit
+RRS = (0.5, 0.75, 1.0, 1.5, 2.0, 3.0, None)  # reward : risk. Below 1 = the target is CLOSER than the stop (high win rate,
+                                             # small wins, rare big losses); None = the strategy's own exit
 
 
 def atr(bars: pd.DataFrame, n: int = ATR_N) -> np.ndarray:

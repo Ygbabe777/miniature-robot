@@ -9,6 +9,7 @@ dashboard nicer). Everything OFO writes lives in <vault>/OFO/ and nowhere else:
   Deployment/<name>.md   paper-trading ledger summary
   Concetti/<concept>.md  the knowledge network: every concept links the papers and strategies about it, with what was learned
   Paper/<title>.md       papers the Scout found (abstract, why chosen, strategies that came from it)
+  Idee/<A x B>.md        new ideas the Researcher built by connecting two concepts (with links to both)
   Diario/<date>.md       what happened each day
   Ideas/                 YOU drop notes here; the Researcher reads them like PDFs (treated as untrusted text)
 
@@ -22,7 +23,7 @@ import re
 from pathlib import Path
 
 END = "<!-- ofo:end -->"
-SUBDIRS = ("Strategie", "Pronte", "Deployment", "Paper", "Concetti", "Diario", "Ideas")
+SUBDIRS = ("Strategie", "Pronte", "Deployment", "Paper", "Concetti", "Idee", "Diario", "Ideas")
 KEY_EVENTS = {("judge", "verdict"), ("lab", "ready"), ("trader", "deployed"), ("trader", "retired"),
               ("trader", "confirmed"), ("trader", "signal"), ("scout", "download"), ("lab", "error"),
               ("planner", "queued"), ("lab", "budget"), ("trader", "skipped")}
@@ -249,3 +250,56 @@ def sync(vault: str | Path, studies: list[dict], dossiers: list[dict], deploymen
     wrote["dashboard"] += write_note(root / "OFO.md", {"tags": ["ofo/dashboard"], "updated": now.strftime("%Y-%m-%d")},
                                      "\n".join(dash), L["notes"])
     return wrote
+
+
+WIKILINK = re.compile(r"\[\[([^\]|#]+)")
+MAX_NOTES = 600
+
+
+def read_notes(vault: str | Path) -> dict:
+    """The vault's OFO/ notes as the Researcher may read them: title, links, what the OWNER wrote (below the end
+    marker, or the whole note for notes OFO did not generate). Only OFO/ is read, never the rest of the vault,
+    because this text goes to an AI service. All of it is untrusted text for the model."""
+    root = Path(vault).expanduser() / "OFO"
+    out: dict = {}
+    for folder in SUBDIRS:
+        d = root / folder
+        for p in sorted(d.glob("*.md")) if d.is_dir() else []:
+            if len(out) >= MAX_NOTES or p.stat().st_size > 200_000:
+                continue
+            txt = p.read_text(encoding="utf-8", errors="replace")
+            gen = END in txt
+            body, ann = txt.split(END, 1) if gen else (txt, "")
+            ann = re.sub(r"^\s*## [^\n]*\n", "", ann.strip()).strip()
+            head = body.split("---", 2)[-1].strip() if body.startswith("---") else body.strip()
+            out[p.stem] = {"folder": folder, "generated": gen, "annotation": ann[:600], "head": head[:500],
+                           "links": sorted({m.strip() for m in WIKILINK.findall(txt)})}
+    return out
+
+
+def owner_pairs(notes: dict) -> list[tuple[str, str]]:
+    """Concept pairs the OWNER linked together: a note of theirs (or an annotation) mentioning two concept notes.
+    That is the strongest hint of an idea worth exploring."""
+    pairs = []
+    for name, n in notes.items():
+        text_links = n["links"] if not n["generated"] else sorted({m.strip() for m in WIKILINK.findall(n["annotation"])})
+        cs = {x[len("Concetto - "):] for x in text_links if x.startswith("Concetto - ")}
+        if name.startswith("Concetto - ") and cs:               # an annotation on a concept note links THAT concept to the others
+            cs.add(name[len("Concetto - "):])
+        cs = sorted(cs)
+        for i in range(len(cs)):
+            for j in range(i + 1, len(cs)):
+                pairs.append((cs[i], cs[j]))
+    return sorted(set(pairs))
+
+
+def idea_note(vault: str | Path, a: str, b: str, strategies: list[str], why: str, lang: str = "it") -> Path:
+    L = T["it" if str(lang).lower().startswith(("it", "ital")) else "en"]
+    root = ensure_vault(vault)
+    path = root / "Idee" / f"{safe(a)} x {safe(b)}.md"
+    front = {"tags": ["ofo/idea"], "concepts": [a, b], "strategies": strategies}
+    body = "\n".join([f"# {a} × {b}", "", f"{concept_link(a)} + {concept_link(b)}", "",
+                      f"## {L['rationale']}", why or L["empty"], "", "## " + L["tested"]] +
+                     ([f"- [[{safe(x)}]]" for x in strategies] or [f"- {L['none']}"]))
+    write_note(path, front, body, L["notes"])
+    return path

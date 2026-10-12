@@ -67,7 +67,7 @@ def test_trade_list_still_sums_to_the_backtest_with_exits():
 
 
 def test_grid_and_study_report_risk_reward_table(tmp_path):
-    assert len(exit_grid()) == 20
+    assert len(exit_grid()) == 28 and any(g["rr"] == 0.5 for g in exit_grid())      # includes targets closer than the stop
     from ofo.optimizer import run_study
     from ofo.prop import PRESETS
     from ofo.registry import TrialRegistry
@@ -77,6 +77,6 @@ def test_grid_and_study_report_risk_reward_table(tmp_path):
     reg = TrialRegistry(tmp_path / "r.json")
     rep = run_study(synth(n_sessions=200, seed=3), spec, MNQ, PRESETS["50k"], reg)
     ex = rep["exits"]
-    assert len(ex["grid"]) == 20 and {"stop_atr", "rr", "sharpe", "win_rate", "median_stop_points"} <= set(ex["grid"][0])
-    assert reg.n_trials == spec.n_candidates + 20       # every stop/target cell is a counted trial
+    assert len(ex["grid"]) == 28 and {"stop_atr", "rr", "sharpe", "win_rate", "median_stop_points"} <= set(ex["grid"][0])
+    assert reg.n_trials == spec.n_candidates + 28       # every stop/target cell is a counted trial
     assert rep["series"]["exit"] == (ex["best"] if ex["chosen"] else None)

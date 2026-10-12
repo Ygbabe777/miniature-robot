@@ -431,10 +431,66 @@ class Lab:
             self.events.emit("researcher", "done", f"brainstorm: {n} new proposals")
         return n
 
+    def connect_ideas(self, now: float | None = None) -> int:
+        """The Researcher reads the knowledge network (and your Obsidian notes) and combines two concepts into new
+        strategies: pairs you linked by hand first, then untested or successful concepts that were never combined.
+        Each pair is tried once; the idea is written to the vault (OFO/Idee/) linked to both concepts."""
+        from ..papers import propose_specs
+        now = now or time.time()
+        if now - getattr(self, "_last_connect", 0) < 15 * 60 or isinstance(self.llm, NoLLM):
+            return 0
+        notes = self._vault_notes()
+        g = self.knowledge_graph(notes)
+        f = self.data / "connections.json"
+        done = set(json.loads(f.read_text())) if f.exists() else set()
+        cands = knowledge.connection_candidates(g, obsidian.owner_pairs(notes), done, n=1)
+        if not cands:
+            return 0
+        self._last_connect = now
+        a, b, _ = cands[0]
+        studies = {s["report"]["name"]: s["report"] for s in self._studies_full()}
+
+        def describe(c):
+            d = g["concepts"][c]
+            ex = " | ".join((studies[x].get("rationale") or "")[:300] for x in d["strategies"][:2] if x in studies)
+            return (f"- {c}: " + "; ".join(d["lessons"]) + (f" Example rationale: {ex}" if ex else "")
+                    + (f" Owner's note: {' / '.join(d.get('owner_notes', []))}" if d.get("owner_notes") else ""))
+        text = ("CONNECTION TASK (no paper this time). Two concepts from the lab's knowledge network:\n" + describe(a) + "\n"
+                + describe(b) + f"\nPropose one or two NEW testable strategies that combine '{a}' and '{b}' (for example one as the "
+                "signal and the other as a filter), with an economic mechanism. Do not repeat what already failed.")
+        llm = self.llm["researcher"] if isinstance(self.llm, dict) else self.llm
+        n, names = 0, []
+        with self.working("research"):
+            self.events.emit("researcher", "working", f"connecting ideas: {a} x {b}")
+            try:
+                specs, _ = propose_specs(llm, text, source=f"connection: {a} x {b}", language=self.language,
+                                         memory=knowledge.memory_text(g))
+            except Exception as e:
+                self.events.emit("researcher", "idle", f"connection failed: {e}"[:200])
+                return 0
+            lp = self.loop()
+            have = {_fingerprint(v["spec"]) for v in self.pending.values()}
+            for sp in specs:
+                fp = _fingerprint(sp)
+                if fp not in lp.done_specs and fp not in have:
+                    have.add(fp); self._add_pending(sp, "connection"); n += 1; names.append(sp.name)
+            done.add(f"{a}|{b}")
+            f.write_text(json.dumps(sorted(done)))
+            if self.obs["vault"] and specs:
+                try:
+                    obsidian.idea_note(self.obs["vault"], a, b, names, specs[0].rationale,
+                                       "it" if self.language == "Italian" else "en")
+                except Exception as e:
+                    self.obs["error"] = str(e)[:200]
+            self.events.emit("researcher", "connection", f"{a} x {b}: {n} new proposals",
+                             {"concepts": [a, b], "strategies": names})
+            self.events.emit("researcher", "done", f"connected {a} x {b}")
+        return n
+
     def _refill(self) -> None:
         if self.busy["research"] > 0:
             return
-        if self.seed_specs() == 0:
+        if self.seed_specs() == 0 and self.connect_ideas() == 0:
             self.brainstorm()
 
     def autopilot_state(self) -> dict:
@@ -510,8 +566,18 @@ class Lab:
                 out.append(d)
         return out
 
-    def knowledge_graph(self) -> dict:
-        g = knowledge.build(self._studies_full(), self.scout().state["papers"], self.work / "specs_auto")
+    def _vault_notes(self) -> dict:
+        """The Researcher's access to the Obsidian memory: the vault's OFO/ notes, including what you wrote in them."""
+        if not self.obs["vault"]:
+            return {}
+        try:
+            return obsidian.read_notes(self.obs["vault"])
+        except Exception:
+            return {}
+
+    def knowledge_graph(self, notes: dict | None = None) -> dict:
+        g = knowledge.build(self._studies_full(), self.scout().state["papers"], self.work / "specs_auto",
+                            notes if notes is not None else self._vault_notes())
         try:
             (self.data / "knowledge.json").write_text(json.dumps(g, indent=1, ensure_ascii=False, default=str))
         except OSError:

@@ -41,7 +41,7 @@ def failed_gates(rep: dict) -> list[str]:
     return re.findall(r"'([a-z_]+)'", lk.get("reason") or "")
 
 
-def build(studies: list[dict], papers: dict, specs_dir: Path) -> dict:
+def build(studies: list[dict], papers: dict, specs_dir: Path, notes: dict | None = None) -> dict:
     """studies: [{report,...}]; papers: scout state papers {id: rec}; specs_dir: <work>/specs_auto."""
     by_file, strat_file = {}, {}
     for f in sorted(Path(specs_dir).glob("*.json")) if Path(specs_dir).exists() else []:
@@ -88,6 +88,19 @@ def build(studies: list[dict], papers: dict, specs_dir: Path) -> dict:
             for b in cs:
                 if a != b:
                     co[a][b] += 1
+    ann = defaultdict(list)                              # what the OWNER wrote in Obsidian, attached to concepts
+    for name, n in (notes or {}).items():
+        text = n["annotation"] if n["generated"] else n["head"]
+        if not text:
+            continue
+        if name.startswith("Concetto - "):
+            ann[name[len("Concetto - "):]].append(text)
+        elif name in strategy_concepts:
+            for c in strategy_concepts[name]:
+                ann[c].append(text)
+        else:
+            for c in {x[len("Concetto - "):] for x in n["links"] if x.startswith("Concetto - ")}:
+                ann[c].append(text)
     out = {}
     for c, d in concepts.items():
         n = len(d["strategies"])
@@ -102,7 +115,8 @@ def build(studies: list[dict], papers: dict, specs_dir: Path) -> dict:
             lessons.append("read in papers but no strategy tested yet")
         out[c] = {"papers": sorted(set(d["papers"])), "strategies": sorted(set(d["strategies"])),
                   "tested": n, "approved": ok, "gates": dict(d["gates"]),
-                  "related": [x for x, _ in co[c].most_common(6)], "lessons": lessons}
+                  "related": [x for x, _ in co[c].most_common(6)], "lessons": lessons,
+                  "owner_notes": [t[:300] for t in ann.get(c, [])][:3]}
     return {"concepts": out, "paper_concepts": paper_concepts, "strategy_concepts": strategy_concepts}
 
 
@@ -114,11 +128,40 @@ def memory_text(graph: dict, limit: int = 1800) -> str:
             gates = ", ".join(f"{g}" for g in list(d["gates"])[:2])
             rows.append(f"- {c}: {d['tested']} tested, {d['approved']} approved" + (f"; usually fails: {gates}" if gates and not d["approved"] else ""))
     unexplored = [c for c, d in graph["concepts"].items() if not d["tested"]][:8]
+    owner = [f"- {c}: \"{t}\"" for c, d in graph["concepts"].items() for t in d.get("owner_notes", [])[:1]][:5]
     if not rows and not unexplored:
         return ""
     txt = "WHAT THIS LAB ALREADY LEARNED (facts from past tests; use them):\n" + "\n".join(rows[:12])
     if unexplored:
         txt += "\nConcepts read but not yet tested: " + ", ".join(unexplored)
+    if owner:
+        txt += "\nNotes written by the OWNER in Obsidian (their opinion, not a test result):\n" + "\n".join(owner)
     txt += ("\nDo not re-propose an idea that failed here unless the text brings a NEW mechanism; "
             "prefer untested concepts and ideas that connect two concepts.")
     return txt[:limit]
+
+
+def connection_candidates(graph: dict, owner_pairs: list[tuple[str, str]] | None = None, done: set | None = None,
+                          n: int = 2) -> list[tuple[str, str, float]]:
+    """Pairs of concepts worth combining. A pair the owner linked by hand scores highest; then pairs that include an
+    untested concept or one that already produced an approved strategy; pairs already combined in a paper or a
+    strategy score lower. Returns [(a, b, score)], best first, skipping pairs tried before."""
+    cs = graph["concepts"]
+    owner = {tuple(sorted(p)) for p in (owner_pairs or [])}
+    done = done or set()
+    out = []
+    names = sorted(cs)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            key = f"{a}|{b}"
+            if key in done:
+                continue
+            sc = 5.0 if (a, b) in owner else 0.0
+            for c in (a, b):
+                sc += (1.0 if not cs[c]["tested"] else 0.0) + (2.0 if cs[c]["approved"] else 0.0) + (1.0 if cs[c].get("owner_notes") else 0.0)
+            if b in cs[a]["related"] and (a, b) not in owner:      # combined before: demoted, unless the owner asks for it
+                sc -= 3.0
+            if sc > 0:
+                out.append((a, b, sc))
+    out.sort(key=lambda x: (-x[2], x[0], x[1]))
+    return out[:n]
