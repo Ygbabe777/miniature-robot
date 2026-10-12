@@ -50,6 +50,11 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     days = q.get("days", ["10"])[0]
                     return self._json(lab.candles(q.get("tf", ["15min"])[0], None if days == "all" else int(days),
                                                   q.get("before", [None])[0]))
+                if u.path == "/api/accounts":
+                    return self._json(lab.accounts())
+                if u.path.startswith("/api/trades/"):
+                    d = lab.trades(unquote(u.path[len("/api/trades/"):]))
+                    return self._json(d) if d else self._json({"error": "not found"}, 404)
                 if u.path.startswith("/api/strategy/"):
                     d = lab.detail(unquote(u.path[len("/api/strategy/"):]))
                     return self._json(d) if d else self._json({"error": "not found"}, 404)

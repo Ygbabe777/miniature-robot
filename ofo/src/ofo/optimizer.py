@@ -88,9 +88,11 @@ def _sweep(bars, spec, contract, contracts, slippage_ticks):
 def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules: PropRules,
               registry: TrialRegistry, contracts: int = 2, slippage_ticks: float = 1.0,
               oos_fraction: float = 0.25, train_days: int = 120, test_days: int = 20,
-              surface_th: SurfaceThresholds | None = None) -> dict:
+              surface_th: SurfaceThresholds | None = None, progress=None) -> dict:
     """Sweep every combination of `spec`, judge the surface, walk-forward, and only if
     both survive take ONE look at the locked block."""
+    say = progress or (lambda agent, state, msg="": None)
+    say("optimizer", "working", f"sweep of {spec.n_candidates} candidates")
     cands, series = _sweep(bars, spec, contract, contracts, slippage_ticks)
     sessions = sorted(set().union(*[set(s.index) for s in series.values()]))
     cut = sessions[int(len(sessions) * (1 - oos_fraction))]
@@ -101,6 +103,8 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     rows = [{**c["params"], "tf": c["tf"],
              "sharpe": sharpe(dev[i].reindex(dev_days).fillna(0.0))} for i, c in enumerate(cands)]
     surf = surface_metrics(rows, list(spec.ranges), surface_th)
+    say("optimizer", "done", "sweep finished")
+    say("validator", "working", "walk-forward and market-drift check")
     wf, _ = walk_forward(dev, train_days, test_days)
     wf_pnl = float(wf.sum()) if len(wf) else 0.0
 
@@ -125,7 +129,9 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
                    "sharpe": sharpe(series_d[i].reindex(dev_days).fillna(0.0))} for i, c in enumerate(cands_d)]
         surf_d = surface_metrics(rows_d, list(spec.ranges), surface_th)
     report["surface_detrended"] = surf_d
+    say("validator", "done", "validation finished")
     if surf["robust"] and wf_pnl > 0 and surf_d["robust"]:
+        say("judge", "working", "looking at the hidden block")
         locked_days = [d for d in sessions if d >= cut]
         locked = series[best_i].reindex(locked_days).fillna(0.0)
         var_sr = float(np.var([r["sharpe"] for r in rows], ddof=1))

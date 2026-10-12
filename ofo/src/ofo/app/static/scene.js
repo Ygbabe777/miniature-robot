@@ -8,8 +8,8 @@
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = T.PCFSoftShadowMap;
   const scene = new T.Scene();
-  scene.background = new T.Color(0x04060a);
-  scene.fog = new T.Fog(0x04060a, 62, 125);
+  scene.background = new T.Color(THEME.n.bg);
+  scene.fog = new T.Fog(THEME.n.bg, 62, 125);
   const camera = new T.PerspectiveCamera(42, 1, 0.1, 300);
   camera.position.set(31, 25, 35);
   const controls = new T.OrbitControls(camera, canvas);
@@ -78,10 +78,10 @@
   for (let i = -7; i <= 7; i++) vox(room, i * 2.2, 0.7, Z0 + 0.12, 2.0, 5.4, 0.1, i % 2 ? 0x0e131c : 0x0b0f17, { cast: false });
   for (let j = -6; j <= 6; j++) vox(room, X0 + 0.12, 0.7, j * 2.2, 0.1, 5.4, 2.0, j % 2 ? 0x0e131c : 0x0b0f17, { cast: false });
   vox(room, 0, 0, Z0 + 0.1, X1 - X0, 0.8, 0.3, 0x05070b); vox(room, X0 + 0.1, 0, 0, 0.3, 0.8, Z1 - Z0, 0x05070b);
-  vox(room, 0, 10.3, Z0 + 0.2, X1 - X0, 0.25, 0.2, 0x0a5560, { cast: false, mat: glow(0x0a8a99, 0.9) });   // cyan trim
-  vox(room, X0 + 0.2, 10.3, 0, 0.2, 0.25, Z1 - Z0, 0x0a5560, { cast: false, mat: glow(0x0a8a99, 0.9) });
-  sign(room, 0, 9.2, Z0 + 0.02, 11, 1.9, ['OFO  LAB'], '#05080d', '#5ee27a', 44);
-  sign(room, X0 + 0.02, 8.2, -2, 8, 1.7, ['PROP PROJECT'], '#05080d', '#ffb03a', 30, Math.PI / 2);
+  vox(room, 0, 10.3, Z0 + 0.2, X1 - X0, 0.25, 0.2, 0x8a8a90, { cast: false, mat: glow(0xcfcfd6, 0.7) });   // cyan trim
+  vox(room, X0 + 0.2, 10.3, 0, 0.2, 0.25, Z1 - Z0, 0x8a8a90, { cast: false, mat: glow(0xcfcfd6, 0.7) });
+  sign(room, 0, 9.2, Z0 + 0.02, 11, 1.9, ['OFO  LAB'], '#050505', THEME.accent, 44);
+  sign(room, X0 + 0.02, 8.2, -2, 8, 1.7, ['PROP PROJECT'], '#050505', THEME.dim, 30, Math.PI / 2);
   // clock
   const clock = paint(256, 256, (g, w, h) => {
     g.strokeStyle = '#8b93a8'; g.lineWidth = 12; g.beginPath(); g.arc(128, 128, 112, 0, 6.3); g.stroke();
@@ -92,11 +92,11 @@
   plane(room, 11.5, 7.6, Z0 + 0.03, 1.8, 1.8, clock, 0);
   // hazard sign
   const haz = paint(512, 256, (g, w, h) => {
-    for (let i = -h; i < w; i += 48) { g.fillStyle = '#e0b400'; g.beginPath(); g.moveTo(i, 0); g.lineTo(i + 24, 0); g.lineTo(i + 24 - h, h); g.lineTo(i - h, h); g.fill(); }
+    for (let i = -h; i < w; i += 48) { g.fillStyle = '#e8e8ec'; g.beginPath(); g.moveTo(i, 0); g.lineTo(i + 24, 0); g.lineTo(i + 24 - h, h); g.lineTo(i - h, h); g.fill(); }
     g.fillStyle = '#111'; g.fillRect(24, 48, w - 48, h - 96);
-    g.fillStyle = '#ffd84a'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = '#f2f2f2'; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.font = 'bold 44px monospace'; g.fillText('CAUTION', w / 2, 92); g.font = 'bold 52px monospace'; g.fillStyle = '#ff5c5c'; g.fillText('OVERFITTING', w / 2, 162);
-  }, '#e0b400');
+  }, '#e8e8ec');
   plane(room, 14, 5.2, Z0 + 0.03, 3.6, 1.8, haz, 0);
 
   // ---------- belt ----------
@@ -113,12 +113,12 @@
   }
   for (let s = 0; s <= TOTAL; s += 1) {
     const p = pointAt(s); vox(room, p[0], 0, p[1], 1.6, 0.35, 1.6, 0x0b0d12, { cast: false });
-    const horiz = s < segLen[0]; const k = Math.floor(s) % 2 ? 0xd9ad00 : 0x16181d;       // hazard edge stripes
+    const horiz = s < segLen[0]; const k = Math.floor(s) % 2 ? 0xd9d9de : 0x16181d;       // hazard edge stripes
     vox(room, p[0] + (horiz ? 0 : 1.05), 0, p[1] + (horiz ? 1.05 : 0), horiz ? 1 : 0.28, 0.06, horiz ? 0.28 : 1, k, { cast: false });
     vox(room, p[0] - (horiz ? 0 : 1.05), 0, p[1] - (horiz ? 1.05 : 0), horiz ? 1 : 0.28, 0.06, horiz ? 0.28 : 1, k, { cast: false });
   }
   const chevrons = [];
-  for (let s = 0; s < TOTAL; s += 2.5) { const m = vox(room, 0, 0.36, 0, 0.5, 0.08, 0.5, 0x2adfff, { cast: false, mat: glow(0x2adfff, 0.9) }); m.userData.s = s; chevrons.push(m); }
+  for (let s = 0; s < TOTAL; s += 2.5) { const m = vox(room, 0, 0.36, 0, 0.5, 0.08, 0.5, 0xf2f2f2, { cast: false, mat: glow(0xf2f2f2, 0.8) }); m.userData.s = s; chevrons.push(m); }
   const STOP = { research: 4, optimizer: 11, validator: 18, judge: 22, shelf: 28, trader: TOTAL - 0.5 };
 
   // ---------- scientists ----------
@@ -137,6 +137,7 @@
     [[armL, -1.2], [armR, 1.2]].forEach(([a, x]) => { vox(a, 0, -1.4, 0, 0.55, 1.4, 0.62, coat); vox(a, 0, -1.7, 0, 0.46, 0.34, 0.5, skin); a.position.set(x, 2.8, 0); g.add(a); });
     vox(g, 0, 2.95, 0, 0.5, 0.25, 0.5, skin);
     const head = new T.Group(); head.position.y = 3.55; g.add(head);
+    const bulb = vox(head, 0, 1.55, 0, 0.3, 0.3, 0.3, 0xffffff, { cast: false, mat: glow(0xffffff, 1.3) }); bulb.visible = false;
     vox(head, 0, 0, 0, 1.3, 1.3, 1.2, skin);
     const style = o.hairStyle || 'short';
     if (style !== 'bald') {
@@ -159,7 +160,7 @@
     if (o.item === 'gavel') { vox(armR, 0, -1.95, 0.5, 0.2, 0.2, 0.8, 0x8b5a2b, { cast: false }); vox(armR, 0, -2.05, 0.9, 0.5, 0.5, 0.5, 0xc58a46, { cast: false }); }
     const tag = document.createElement('div'); tag.className = 'tag'; tag.textContent = label; overlay.appendChild(tag);
     const bub = document.createElement('div'); bub.className = 'bubble'; overlay.appendChild(bub);
-    const r = { name, g, armL, armR, head, tag, bub, until: 0, bubUntil: 0, phase: Math.random() * 6, base: 0 };
+    const r = { name, label, g, armL, armR, head, bulb, tag, bub, until: 0, bubUntil: 0, phase: Math.random() * 6, base: 0, state: 'idle', shown: '' };
     robots[name] = r; g.scale.setScalar(0.62); scene.add(g); return r;
   }
   function place(r, x, z, faceX, faceZ, y) { r.g.position.set(x, y || 0, z); r.base = y || 0; r.g.rotation.y = Math.atan2(faceX - x, faceZ - z); }
@@ -182,7 +183,7 @@
   vox(libG, -8.4, 1.72, -9.1, 1.4, 0.06, 0.5, 0x15171d, { cast: false });
   for (let i = 0; i < 4; i++) vox(libG, -10.2, 1.72 + i * 0.1, -9.5, 1.0, 0.1, 1.3, i % 2 ? 0xe8e6dc : 0xd5d2c6, { cast: false });
   vox(libG, -6.5, 1.72, -9.4, 0.4, 0.5, 0.4, 0xe8e6dc); vox(libG, -6.1, 1.72, -10.3, 0.3, 1.2, 0.3, 0x30343f); vox(libG, -6.1, 2.9, -10.0, 0.9, 0.3, 0.9, 0xffd84a, { cast: false, mat: glow(0xffd84a, 0.9) });
-  sign(libG, -9.4, 8.1, -13.85, 6.2, 1.2, ['RESEARCHER'], '#07121f', '#4aa3ff', 26);
+  sign(libG, -9.4, 8.1, -13.85, 6.2, 1.2, ['RESEARCHER'], '#050505', THEME.accent, 26);
   tagStation(libG, 'research');
 
   // --- OPTIMIZER: server racks + parameter sweep machine
@@ -191,7 +192,7 @@
     vox(optG, rx, 0, -12.6, 1.8, 7.0, 1.6, 0x0f131b);
     for (let row = 0; row < 7; row++) {
       vox(optG, rx, 0.5 + row * 0.9, -11.78, 1.5, 0.62, 0.06, 0x070a0f, { cast: false });
-      for (let c = 0; c < 3; c++) { const l = vox(optG, rx - 0.45 + c * 0.45, 0.65 + row * 0.9, -11.74, 0.16, 0.16, 0.05, [0x39ff7a, 0x2adfff, 0xffb03a][(row + c) % 3], { cast: false, mat: glow([0x39ff7a, 0x2adfff, 0xffb03a][(row + c) % 3], 1.1) }); leds.push(l); }
+      for (let c = 0; c < 3; c++) { const l = vox(optG, rx - 0.45 + c * 0.45, 0.65 + row * 0.9, -11.74, 0.16, 0.16, 0.05, [0xf2f2f2, 0x9a9aa2, 0xe8e8ec][(row + c) % 3], { cast: false, mat: glow([0xf2f2f2, 0x9a9aa2, 0xe8e8ec][(row + c) % 3], 1.0) }); leds.push(l); }
     }
   });
   vox(optG, -1.7, 0, -8.7, 5.0, 2.6, 2.8, 0x1a1f2b); vox(optG, -1.7, 2.6, -8.7, 5.3, 0.3, 3.1, 0x0f131b);
@@ -207,7 +208,7 @@
   const drawHeat = () => heat.redraw((g, w, h) => { for (let i = 0; i < 16; i++) for (let j = 0; j < 10; j++) { const v = (Math.sin(i * 0.5 + performance.now() / 700) + Math.cos(j * 0.6)) / 4 + 0.5 + (Math.random() - 0.5) * 0.25; g.fillStyle = `hsl(${200 - v * 150},80%,${22 + v * 35}%)`; g.fillRect(8 + i * 15, 8 + j * 17, 13, 15); } });
   drawHeat();
   vox(optG, 2.3, 1.6, -9.0, 0.2, 2.6, 0.2, 0x15171d); vox(optG, 2.3, 4.0, -9.0, 2.7, 2.2, 0.2, 0x07080b); plane(optG, 2.3, 5.1, -8.88, 2.5, 1.9, heat, 0);
-  sign(optG, -2.2, 8.1, -13.85, 6.2, 1.2, ['OPTIMIZER'], '#1e1100', '#ffb03a', 26);
+  sign(optG, -2.2, 8.1, -13.85, 6.2, 1.2, ['OPTIMIZER'], '#050505', THEME.accent, 26);
   tagStation(optG, 'optimizer');
 
   // --- VALIDATOR: bench with flasks + microscope, and the Monte Carlo glass chamber
@@ -226,19 +227,19 @@
     const p = vox(valG, 6.9, 1, -10, 0.34, 0.34, 0.34, [0xb58cff, 0xffffff, 0x7dd3fc][i % 3], { cast: false, mat: glow(0x442a88, 1.0) });
     p.userData = { v: [(Math.random() - .5), (Math.random() - .5), (Math.random() - .5)], p: [Math.random() * 4 - 2, Math.random() * 4 + 0.8, Math.random() * 3 - 1.5] }; parts.push(p);
   }
-  sign(valG, 5.0, 8.1, -13.85, 6.2, 1.2, ['VALIDATOR'], '#150d28', '#b58cff', 26);
+  sign(valG, 5.0, 8.1, -13.85, 6.2, 1.2, ['VALIDATOR'], '#050505', THEME.accent, 26);
   tagStation(valG, 'validator');
 
   // --- JUDGE: dark podium, verdict screen, lamp, gavel
   const judG = new T.Group(); scene.add(judG);
   vox(judG, 13.2, 0, -5, 3.4, 1.6, 4.4, 0x14100c); vox(judG, 13.2, 1.6, -5, 3.8, 0.3, 4.8, 0x2a1d12); vox(judG, 13.2, 1.9, -2.6, 3.9, 0.12, 0.12, 0xd4af37, { cast: false, mat: glow(0x6a5500, 0.6) });
   vox(judG, 15.2, 0, -5, 0.6, 4.8, 5.0, 0x0e0f14);
-  const verdict = paint(512, 256, centered(['VERDICT', 'waiting...'], '#6b7390', 54), '#07080c');
+  const verdict = paint(512, 256, centered(['VERDICT', 'waiting...'], THEME.dim, 54), '#050505');
   plane(judG, 14.88, 3.4, -5, 4.4, 2.2, verdict, -Math.PI / 2);
   const lamp = vox(judG, 15.2, 4.8, -5, 1.0, 1.0, 1.0, 0x3a3f50);
   const gavel = new T.Group(); gavel.position.set(12.4, 2.2, -3.9); judG.add(gavel);
   vox(gavel, 0, 0, 0, 0.2, 0.2, 1.2, 0x8b5a2b, { cast: false }); vox(gavel, 0, 0, 0.6, 0.55, 0.55, 0.55, 0xc58a46, { cast: false });
-  sign(judG, 14.5, 7.6, -5, 5, 1.1, ['JUDGE'], '#0b0b10', '#ffffff', 26, -Math.PI / 2);
+  sign(judG, 14.5, 7.6, -5, 5, 1.1, ['JUDGE'], '#050505', THEME.accent, 26, -Math.PI / 2);
   tagStation(judG, 'judge');
   const binG = new T.Group(); scene.add(binG);
   vox(binG, 9, 0, -9.8, 2.6, 1.8, 2.6, 0x3b0f0f); vox(binG, 9, 1.8, -9.8, 3, 0.3, 3, 0x1e0707); vox(binG, 9, 1.82, -9.8, 2.0, 0.05, 2.0, 0x050101, { cast: false });
@@ -246,7 +247,7 @@
   vox(binG, 11.4, 0, -10.5, 1.4, 2.0, 1.4, 0x1b3a1f); vox(binG, 11.4, 2.0, -10.5, 1.5, 0.15, 1.5, 0x0f2412); vox(binG, 11.4, 0.9, -9.78, 0.7, 0.6, 0.05, 0x7dff3a, { cast: false, mat: glow(0x7dff3a, 1) });
   const shelfG = new T.Group(); scene.add(shelfG);
   vox(shelfG, 12.4, 0, 1.5, 2.4, 3.2, 3, 0x3a3010); vox(shelfG, 12.4, 3.2, 1.5, 2.8, 0.3, 3.4, 0x1e1808);
-  sign(shelfG, 11.15, 2.0, 1.5, 2.2, 0.9, ['HOLD'], '#1e1808', '#ffd84a', 20, -Math.PI / 2);
+  sign(shelfG, 11.15, 2.0, 1.5, 2.2, 0.9, ['HOLD'], '#050505', THEME.dim, 20, -Math.PI / 2);
 
   // --- TRADER: terminal with candle chart, approved list, status
   const trG = new T.Group(); scene.add(trG);
@@ -255,7 +256,7 @@
   for (let i = -1; i <= 1; i++) {
     vox(trG, 9 + i * 3.2, 1.75, 12.3, 0.5, 0.9, 0.5, 0x0b0d12);
     vox(trG, 9 + i * 3.2, 2.55, 12.4, 3.0, 2.3, 0.3, 0x040507);
-    const tt = paint(512, 384, () => {}, '#040a06');
+    const tt = paint(512, 384, () => {}, '#050505');
     plane(trG, 9 + i * 3.2, 3.7, 12.58, 2.7, 2.0, tt, 0);
     monitors.push(tt);
   }
@@ -275,7 +276,7 @@
   });
   vox(stG, -15.75, 3.0, 8.0, 0.2, 4.6, 8.6, 0x1a1d27); plane(stG, -15.62, 5.3, 8.0, 8.2, 4.2, wb, Math.PI / 2);
   vox(stG, -13.6, 0, 8.0, 2.2, 1.5, 5.2, 0x2a1020); vox(stG, -13.6, 1.5, 8.0, 2.5, 0.22, 5.5, 0x4a1c38);
-  vox(stG, -13.6, 1.72, 6.6, 1.3, 0.1, 1.6, 0x15171d); vox(stG, -13.9, 1.82, 6.6, 0.1, 1.1, 1.5, 0x07080b); plane(stG, -13.84, 2.4, 6.6, 1.4, 0.95, paint(256, 192, centered(['> chat'], '#ff7ac8', 40), '#10040c'), Math.PI / 2);
+  vox(stG, -13.6, 1.72, 6.6, 1.3, 0.1, 1.6, 0x15171d); vox(stG, -13.9, 1.82, 6.6, 0.1, 1.1, 1.5, 0x07080b); plane(stG, -13.84, 2.4, 6.6, 1.4, 0.95, paint(256, 192, centered(['> chat'], '#f2f2f2', 40), '#050505'), Math.PI / 2);
   [0xffd84a, 0xff7ac8, 0x7dff3a, 0x2adfff].forEach((c, i) => vox(stG, -13.4, 1.72, 8.2 + i * 0.6, 0.45, 0.04, 0.45, c, { cast: false }));
   tagStation(stG, 'strategist');
   // --- lab bench with flasks along the left wall
@@ -293,9 +294,61 @@
   vox(tankG, 15.0, 4.6, -11.8, 1.6, 0.3, 1.6, 0x14171f);
   for (let i = 0; i < 9; i++) { const b = vox(tankG, 15.0, 1, -11.8, 0.18, 0.18, 0.18, 0xbfffd8, { cast: false, mat: glow(0x7dffb0, 1) }); b.userData = { y: Math.random() * 4, x: (Math.random() - .5) * 0.8, z: (Math.random() - .5) * 0.8, v: 0.8 + Math.random() }; bubbles.push(b); }
 
+  // ---------- VIVARIUM: one specimen flask per prop account ----------
+  // liquid level = distance from the drawdown floor. evaluation = slime with an antenna, funded = monster with
+  // horns. Wearing a crown = passed, red + shaking = close to the floor, lying down in an empty flask = busted.
+  const vivG = new T.Group(); scene.add(vivG);
+  vox(vivG, -4.3, 0, 13.0, 13.4, 1.3, 1.5, 0x0e0f12); vox(vivG, -4.3, 1.3, 13.0, 13.7, 0.18, 1.8, 0x2a2b31);
+  vox(vivG, -10.6, 1.4, 13.75, 0.2, 3.8, 0.2, 0x1a1a1f); vox(vivG, -4.2, 1.4, 13.75, 0.2, 3.8, 0.2, 0x1a1a1f);
+  const vivSign = sign(vivG, -7.4, 5.2, 13.75, 6.6, 1.3, ['ACCOUNTS'], '#050505', THEME.accent, 28, 0);
+  tagStation(vivG, 'accounts');
+  const acctG = new T.Group(); scene.add(acctG);
+  const acctTags = [], creatures = [];
+  function makeCreature(kind, state) {
+    const g = new T.Group(), body = state === 'danger' ? 0xff8080 : state === 'busted' ? 0x4a4a52 : 0xe6e6ea, dark = 0x0b0b0e;
+    const eyes = (y, z) => { [-0.22, 0.22].forEach(x => {
+      if (state === 'busted') { vox(g, x, y, z, 0.24, 0.06, 0.05, dark, { cast: false }); vox(g, x, y - 0.09, z, 0.06, 0.24, 0.05, dark, { cast: false }); }
+      else { vox(g, x, y, z, 0.24, 0.24, 0.06, 0xffffff, { cast: false }); vox(g, x, y + 0.06, z + 0.04, 0.11, 0.11, 0.05, dark, { cast: false }); } }); };
+    if (kind === 'funded') {
+      vox(g, 0, 0, 0, 0.95, 1.05, 0.8, body, { cast: false }); [-0.3, 0.3].forEach(x => vox(g, x, 1.05, 0, 0.2, 0.38, 0.2, body, { cast: false }));
+      eyes(0.62, 0.41); vox(g, 0, 0.26, 0.41, 0.5, 0.14, 0.06, dark, { cast: false });
+      [-0.15, 0.15].forEach(x => vox(g, x, 0.26, 0.44, 0.08, 0.1, 0.04, 0xffffff, { cast: false }));
+      [-0.6, 0.6].forEach(x => vox(g, x, 0.3, 0, 0.2, 0.5, 0.25, body, { cast: false }));
+    } else {
+      vox(g, 0, 0, 0, 1.05, 0.62, 0.85, body, { cast: false }); vox(g, 0, 0.62, 0, 0.7, 0.18, 0.6, body, { cast: false });
+      eyes(0.4, 0.44); vox(g, 0, 0.8, 0, 0.08, 0.4, 0.08, 0x8a8a90, { cast: false }); vox(g, 0, 1.2, 0, 0.18, 0.18, 0.18, 0xffffff, { cast: false, mat: glow(0xffffff, 1.0) });
+    }
+    if (state === 'passed') { const y = kind === 'funded' ? 1.4 : 0.98; vox(g, 0, y, 0, 0.7, 0.18, 0.5, 0xd4af37, { cast: false, mat: glow(0xd4af37, 0.7) }); [-0.25, 0, 0.25].forEach(x => vox(g, x, y + 0.18, 0, 0.14, 0.16, 0.14, 0xd4af37, { cast: false, mat: glow(0xd4af37, 0.7) })); }
+    if (state === 'busted') g.rotation.z = Math.PI / 2;
+    return g;
+  }
+  function setAccounts(list, texts, signLines) {
+    while (acctG.children.length) acctG.remove(acctG.children[0]);
+    acctTags.splice(0).forEach(o => o.el.remove()); creatures.length = 0;
+    vivSign.tt.redraw(centered(signLines || ['ACCOUNTS'], '#f2f2f2', signLines && signLines.length > 1 ? 40 : 56), '#050505');
+    list.slice(0, 6).forEach((a, i) => {
+      const fg = new T.Group(); fg.position.set(-10.4 + i * 2.1, 1.48, 13.0); acctG.add(fg);
+      const bust = a.state === 'busted', col = bust ? 0x222226 : a.state === 'danger' ? 0xff5c5c : a.state === 'passed' ? 0xfff0c0 : 0xcfd6e6;
+      vox(fg, 0, 0, 0, 1.5, 3.0, 1.5, 0xcfd6e6, { cast: false, mat: { transparent: true, opacity: bust ? 0.08 : 0.15, depthWrite: false } });
+      if (!bust) vox(fg, 0, 3.0, 0, 1.6, 0.2, 1.6, 0x2a2b31); else { vox(fg, -0.2, 1.6, 0.76, 0.05, 1.2, 0.04, 0x050505, { cast: false }); vox(fg, 0.2, 1.0, 0.76, 0.05, 0.9, 0.04, 0x050505, { cast: false }); }
+      const h = bust ? 0.12 : 0.5 + a.health * 2.1;
+      vox(fg, 0, 0.08, 0, 1.3, h, 1.3, col, { cast: false, mat: Object.assign({ transparent: true, opacity: 0.5, depthWrite: false }, glow(col, bust ? 0.05 : 0.55)) });
+      for (let c = 0; c < Math.min(a.payouts || 0, 5); c++) vox(fg, -0.35 + (c % 2) * 0.5, 0.1 + Math.floor(c / 2) * 0.12, 0.2, 0.42, 0.1, 0.42, 0xd4af37, { cast: false, mat: glow(0xd4af37, 0.8) });
+      const cr = makeCreature(a.kind, a.state); const baseY = bust ? 0.35 : Math.max(0.45, Math.min(2.0, h * 0.7));
+      cr.position.set(bust ? -0.2 : 0, baseY, 0); cr.scale.setScalar(0.85); fg.add(cr);
+      creatures.push({ g: cr, state: a.state, base: baseY, phase: Math.random() * 6, x: cr.position.x });
+      tagStation(fg, 'accounts');
+      const el = document.createElement('div'); el.className = 'acct st-' + a.state;
+      const [l1, l2] = (texts && texts[i]) || [a.firm + ' ' + a.plan, ''];
+      el.innerHTML = '<b></b><span></span>'; el.firstChild.textContent = l1; el.lastChild.textContent = l2; overlay.appendChild(el);
+      acctTags.push({ el, lvl: i % 3, pos: new T.Vector3(-10.4 + i * 2.1, 4.7, 13.0) });
+    });
+  }
+  setAccounts([], []);
+
   // coloured pools of light
-  pool(0x4aa3ff, -9, 5, -8, 0.8); pool(0xffa533, -1.7, 5, -8, 0.95); pool(0xa07bff, 6, 5, -8, 0.9);
-  pool(0xfff2c9, 12, 5, -3, 0.7); pool(0x39ff7a, 9, 5, 10, 0.8); pool(0xff7ac8, -12, 5, 8, 0.8); pool(0x2adfff, -14, 4, -1, 0.5);
+  pool(0xdfe6f5, -9, 5, -8, 0.8); pool(0xf3e9dc, -1.7, 5, -8, 0.9); pool(0xdfe6f5, 6, 5, -8, 0.85);
+  pool(0xfff2e0, 12, 5, -3, 0.7); pool(0xe9f2ff, 9, 5, 10, 0.8); pool(0xf0e6f0, -12, 5, 8, 0.7); pool(0xdfe6f5, -14, 4, -1, 0.5);
 
   makeScientist('research', 'Researcher', { coat: 0xe9edf5, trim: 0xd5dbe8, accent: 0x4aa3ff, hair: 0x3a2a1c, item: 'clipboard' });
   makeScientist('optimizer', 'Optimizer', { coat: 0xe3862a, trim: 0xc87420, accent: 0xffb03a, hair: 0x1c1410, goggles: true, glasses: false, skin: 0xc58d63, item: null });
@@ -341,7 +394,27 @@
     const hex = '#' + col.toString(16).padStart(6, '0');
     verdict.redraw(centered([status === 'INSUFFICIENT_EVIDENCE' ? 'NOT ENOUGH DATA' : status, (name || '').slice(0, 22)], hex, status === 'INSUFFICIENT_EVIDENCE' ? 40 : 56), '#07080c');
   }
+  const AGENTS_OF = { research: ['researcher'], strategist: ['strategist'], optimizer: ['optimizer', 'planner'], validator: ['validator'], judge: ['judge', 'auditor'], trader: [] };
+  const agentState = {};
+  const matWork = mat(0xffffff, glow(0xffffff, 1.3)), matDone = mat(THEME.n.up, glow(THEME.n.up, 1.2));
+  let stateLabels = { idle: 'idle', working: 'working', done: 'done' };
+  function setAgentState(agent, state, at) {
+    const t0 = at == null ? now() : at;
+    agentState[agent] = { state, until: t0 + (state === 'working' ? 180 : state === 'done' ? 12 : 0) };
+  }
+  function robotState(name, t) {
+    let done = false;
+    for (const a of AGENTS_OF[name] || []) {
+      const s = agentState[a]; if (!s) continue;
+      if (s.state === 'working' && t < s.until) return 'working';
+      if (s.state === 'done' && t < s.until) done = true;
+    }
+    return done ? 'done' : 'idle';
+  }
   function onEvent(ev) {
+    if (ev.type === 'working' || ev.type === 'done' || ev.type === 'idle') setAgentState(ev.agent, ev.type);
+    if (ev.type === 'study_started') setAgentState('optimizer', 'working');          // older logs without lifecycle events
+    if (ev.agent === 'judge' && ev.type === 'verdict') { setAgentState('judge', 'done'); setAgentState('validator', 'done'); }
     const st = MAP[ev.agent];
     if (st) speak(st, ev.message);
     const msg = ev.message || '';
@@ -369,11 +442,19 @@
   const clk = new T.Clock();
   function updateOverlay() {
     const w = canvas.clientWidth, h = canvas.clientHeight, v = new T.Vector3();
+    const near = camera.position.distanceTo(controls.target) < 46;
+    acctTags.forEach(o => {
+      const p = o.pos.clone().project(camera), vis = p.z < 1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1;
+      o.el.style.display = vis ? 'block' : 'none'; o.el.style.left = ((p.x * 0.5 + 0.5) * w) + 'px'; o.el.style.top = (((-p.y * 0.5 + 0.5) * h) - o.lvl * (near ? 30 : 20)) + 'px'; o.el.classList.toggle('far', !near);
+    });
     Object.values(robots).forEach(r => {
       r.head.getWorldPosition(v); v.y += 1.1;
       const p = v.clone().project(camera);
       const vis = p.z < 1 && p.x > -1.1 && p.x < 1.1 && p.y > -1.1 && p.y < 1.1;
       const sx = (p.x * 0.5 + 0.5) * w, sy = (-p.y * 0.5 + 0.5) * h;
+      const stTxt = r.label + ' · ' + (r.state === 'working' ? '● ' : r.state === 'done' ? '✓ ' : '') + stateLabels[r.state];
+      if (r.shown !== stTxt) { r.tag.textContent = stTxt; r.shown = stTxt; }
+      r.tag.className = 'tag st-' + r.state;
       r.tag.style.display = vis ? 'block' : 'none'; r.tag.style.left = sx + 'px'; r.tag.style.top = sy + 'px';
       r.bub.style.left = sx + 'px'; r.bub.style.top = (sy - 22) + 'px';
       r.bub.classList.toggle('on', vis && now() < r.bubUntil);
@@ -383,10 +464,15 @@
     const dt = Math.min(clk.getDelta(), 0.1), t = now();
     controls.update();
     Object.values(robots).forEach(r => {
-      const active = t < r.until;
-      r.g.position.y = r.base + Math.abs(Math.sin(t * (active ? 7 : 2) + r.phase)) * (active ? 0.22 : 0.04);
-      r.armL.rotation.x = active ? Math.sin(t * 9 + r.phase) * 0.9 : Math.sin(t * 1.5 + r.phase) * 0.07;
-      r.armR.rotation.x = active ? -Math.sin(t * 9 + r.phase) * 0.9 : -Math.sin(t * 1.5 + r.phase) * 0.07;
+      const st = robotState(r.name, t); r.state = st;
+      const active = t < r.until || st === 'working';
+      r.g.position.y = r.base + Math.abs(Math.sin(t * (active ? 7 : 2) + r.phase)) * (active ? 0.22 : st === 'done' ? 0.12 : 0.03);
+      const wave = Math.sin(t * 9 + r.phase) * 0.9, idleSway = Math.sin(t * 1.2 + r.phase) * 0.05;
+      r.armL.rotation.x = active ? wave : st === 'done' ? -2.5 + Math.sin(t * 6) * 0.25 : idleSway;
+      r.armR.rotation.x = active ? -wave : st === 'done' ? -2.5 - Math.sin(t * 6) * 0.25 : -idleSway;
+      r.head.rotation.x += ((st === 'idle' ? 0.32 : 0) - r.head.rotation.x) * Math.min(1, dt * 4);       // idle: head drops
+      r.bulb.visible = st !== 'idle';
+      if (st !== 'idle') { r.bulb.material = st === 'done' ? matDone : matWork; if (st === 'working') r.bulb.scale.setScalar(0.8 + 0.4 * Math.abs(Math.sin(t * 5))); else r.bulb.scale.setScalar(1); }
     });
     chevrons.forEach(m => { m.userData.s = (m.userData.s + dt * 2.2) % TOTAL; const p = pointAt(m.userData.s); m.position.set(p[0], 0.4, p[1]); });
     gearSpeed += ((optRunning ? 4 : 0.35) - gearSpeed) * Math.min(1, dt * 3);
@@ -405,6 +491,12 @@
     });
     bubbles.forEach(b => { const u = b.userData; u.y += u.v * dt; if (u.y > 4.3) u.y = 0.5; b.position.set(15 + u.x, u.y, -11.8 + u.z); });
     flasks.forEach((f, i) => { f.material.emissiveIntensity = 0.8 + 0.3 * Math.sin(t * 2 + i); });
+    creatures.forEach(c => {
+      if (c.state === 'busted') return;
+      const amp = c.state === 'passed' ? 0.22 : 0.07;
+      c.g.position.y = c.base + Math.sin(t * (c.state === 'passed' ? 4 : 1.6) + c.phase) * amp;
+      if (c.state === 'danger') { c.g.position.x = Math.sin(t * 38 + c.phase) * 0.05; c.g.rotation.z = Math.sin(t * 31 + c.phase) * 0.09; }
+    });
     if (lamp.userData.until && t > lamp.userData.until) { lamp.material = mat(0x3a3f50); lamp.userData.until = 0; }
     const gh = gavel.userData.hit ? t - gavel.userData.hit : 9;
     gavel.rotation.x = gh < 0.8 ? -Math.abs(Math.sin(gh * 14)) * 0.9 : 0;
@@ -441,31 +533,41 @@
     if (hit && window.LabScene.onPick) window.LabScene.onPick(hit.object.userData.station);
   });
 
+  function restoreStates(events) {            // after a reload: replay the last 3 minutes of lifecycle events silently
+    const cutoff = Date.now() - 180000;
+    events.forEach(e => {
+      if (!['working', 'done', 'idle'].includes(e.type)) return;
+      const ts = Date.parse(e.t); if (!(ts > cutoff)) return;
+      setAgentState(e.agent, e.type, now() - (Date.now() - ts) / 1000);
+    });
+  }
   // ---------- trader monitors ----------
   const L = { wait: ['OFO TRADING DESK', 'waiting for', 'approved strategies'], none: 'none yet' };
   function setTrader(names, labels) {
     labels = labels || {};
     const head = labels.head || 'APPROVED';
-    monitors[0].redraw(centered(names.length ? [labels.desk || 'TRADING DESK', names.length + ' ' + (labels.ready || 'ready')] : (labels.wait || L.wait), names.length ? '#5ee27a' : '#3a8a50', 34), '#040a06');
-    monitors[2].redraw(centered(names.length ? [head, ...names.slice(0, 3).map(n => n.slice(0, 18))] : [head, labels.none || L.none], names.length ? '#5ee27a' : '#3a8a50', 32), '#040a06');
+    monitors[0].redraw(centered(names.length ? [labels.desk || 'TRADING DESK', names.length + ' ' + (labels.ready || 'ready')] : (labels.wait || L.wait), names.length ? THEME.accent : THEME.dim, 34), '#050505');
+    monitors[2].redraw(centered(names.length ? [head, ...names.slice(0, 3).map(n => n.slice(0, 18))] : [head, labels.none || L.none], names.length ? THEME.accent : THEME.dim, 32), '#050505');
   }
   function setTraderChart(candles, symbol) {
     if (!candles || !candles.length) return;
     monitors[1].redraw((g, w, h) => {
       const cs = candles.slice(-48), hi = Math.max(...cs.map(c => c[2])), lo = Math.min(...cs.map(c => c[3])), pad = 38, cw = (w - 2 * pad) / cs.length;
       const Y = v => pad + (1 - (v - lo) / ((hi - lo) || 1)) * (h - 2 * pad - 30);
-      g.strokeStyle = '#122418'; g.lineWidth = 1; for (let i = 0; i < 5; i++) { g.beginPath(); g.moveTo(pad, pad + i * 62); g.lineTo(w - pad, pad + i * 62); g.stroke(); }
+      g.strokeStyle = THEME.grid; g.lineWidth = 1; for (let i = 0; i < 5; i++) { g.beginPath(); g.moveTo(pad, pad + i * 62); g.lineTo(w - pad, pad + i * 62); g.stroke(); }
       cs.forEach((c, i) => {
-        const x = pad + i * cw + cw / 2, up = c[4] >= c[1]; g.strokeStyle = g.fillStyle = up ? '#39ff7a' : '#ff4b4b'; g.lineWidth = 2;
+        const x = pad + i * cw + cw / 2, up = c[4] >= c[1]; g.strokeStyle = g.fillStyle = up ? THEME.up : THEME.down; g.lineWidth = 2;
         g.beginPath(); g.moveTo(x, Y(c[2])); g.lineTo(x, Y(c[3])); g.stroke();
         g.fillRect(x - cw * 0.3, Math.min(Y(c[1]), Y(c[4])), cw * 0.6, Math.max(2, Math.abs(Y(c[1]) - Y(c[4]))));
       });
-      g.fillStyle = '#8bd7a0'; g.font = 'bold 26px monospace'; g.textAlign = 'left'; g.fillText((symbol || 'NQ') + ' ' + cs.length + ' candles', pad, 28);
+      g.fillStyle = THEME.dim; g.font = 'bold 26px monospace'; g.textAlign = 'left'; g.fillText((symbol || 'NQ') + ' ' + cs.length + ' candles', pad, 28);
       g.textAlign = 'right'; g.fillText(cs[cs.length - 1][4].toFixed(2), w - pad, 28);
-    }, '#040a06');
+    }, '#050505');
   }
   setTrader([]);
 
-  window.LabScene = { onEvent, speak, setTrader, setTraderChart, onPick: null, ready: true, robots, resize, camera, controls };
+  window.LabScene = { onEvent, speak, setTrader, setTraderChart, setAccounts, onPick: null, ready: true, robots, resize, camera, controls, restoreStates,
+    setStateLabels(l) { stateLabels = Object.assign(stateLabels, l); },
+    states() { const t = now(), o = {}; Object.keys(AGENTS_OF).forEach(n => o[n] = robotState(n, t)); return o; } };
   frame();
 })();

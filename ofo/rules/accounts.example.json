@@ -1,0 +1,7 @@
+{
+  "_README": "Copy to data/accounts.json and edit. One entry per account. kind = evaluation | funded. 'floor' is the current drawdown floor (if omitted: start_balance - max_drawdown). status = active | passed | busted. payouts = number of payouts received. A connector can rewrite this file later.",
+  "accounts": [
+    {"id": "tsx-50k-1", "firm": "Topstep", "plan": "50K", "kind": "evaluation", "start_balance": 50000, "balance": 50850, "profit_target": 3000, "max_drawdown": 2000, "floor": 48850, "status": "active"},
+    {"id": "mffu-50k-1", "firm": "My Funded Futures", "plan": "50K", "kind": "funded", "start_balance": 50000, "balance": 51200, "max_drawdown": 2000, "floor": 50000, "payouts": 1, "status": "active"}
+  ]
+}

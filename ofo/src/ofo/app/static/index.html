@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OFO Lab</title>
 <link rel="icon" href="data:,">
+<link rel="stylesheet" href="theme.css">
 <link rel="stylesheet" href="lab.css">
 </head>
 <body>
@@ -12,7 +13,7 @@
 <div id="bubbles"></div>
 
 <header id="top">
-  <div class="logo"><span class="cube"></span>OFO <b>LAB</b></div>
+  <div class="logo"><img id="logo-img" src="brand/icon.png" alt=""><span class="cube" id="logo-cube"></span>OFO <b>LAB</b></div>
   <div class="chips">
     <div class="chip" data-i18n-title="tip_trials"><span data-i18n="chip_trials"></span><b id="c-trials">0</b></div>
     <div class="chip" data-i18n-title="tip_looks"><span data-i18n="chip_looks"></span><b id="c-looks">0</b></div>
@@ -23,6 +24,8 @@
 </header>
 
 <aside id="left" class="panel">
+  <h2 data-i18n="agents_title"></h2>
+  <div id="agents"></div>
   <h2 data-i18n="feed_title"></h2>
   <div id="feed"></div>
   <h2 data-i18n="papers_title"></h2>
@@ -52,9 +55,12 @@
   </section>
   <section id="tab-trader" class="tabbody" hidden>
     <div class="trow"><div class="seg" id="tf"></div><div class="seg" id="rng"></div></div>
+    <div class="tsel"><span data-i18n="t_strat"></span><select id="tstrat"></select></div>
     <div id="tinfo" class="tinfo"></div>
     <div id="tchart"></div>
     <div class="tnote" id="tnote"></div>
+    <h2 style="margin:10px 0 4px" data-i18n="acct_title"></h2>
+    <div id="accts"></div>
   </section>
 </aside>
 
@@ -70,6 +76,7 @@
 <script src="vendor/OrbitControls.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
 <script src="vendor/lightweight-charts.js"></script>
+<script src="theme.js"></script>
 <script src="scene.js"></script>
 <script src="charts.js"></script>
 <script src="i18n.js"></script>

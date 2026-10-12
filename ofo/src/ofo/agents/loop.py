@@ -73,12 +73,15 @@ class ResearchLoop:
             if h in self.processed_ideas:
                 continue
             self.events.emit("researcher", "reading", f"reading {p.name}")
+            self.events.emit("researcher", "working", f"reading {p.name}")
             try:
                 text = extract_pdf_text(str(p)) if p.suffix.lower() == ".pdf" else p.read_text(errors="replace")
                 specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=p.name, language=self.language)
             except Exception as e:                       # unreadable file or LLM down: retry later
                 self.events.emit("researcher", "error", f"{p.name}: {e}")
+                self.events.emit("researcher", "idle", "stopped")
                 continue
+            self.events.emit("researcher", "done", f"{p.name}: {len(specs)} proposals")
             self.processed_ideas.add(h)
             (self.work / "specs_auto").mkdir(exist_ok=True)
             (self.work / "specs_auto" / f"{_slug(p.stem)}.json").write_text(json.dumps(
@@ -96,7 +99,8 @@ class ResearchLoop:
     def process(self, spec: StrategySpec, depth: int = 0) -> dict:
         ev = self.events
         ev.emit("optimizer", "study_started", f"{spec.name}: {spec.n_candidates} candidates")
-        rep = run_study(self.bars, spec, self.contract, self.rules, self.registry, contracts=self.contracts)
+        rep = run_study(self.bars, spec, self.contract, self.rules, self.registry, contracts=self.contracts,
+                        progress=lambda agent, state, msg='': ev.emit(agent, state, msg))
         self.trials_spent += rep["n_candidates"]
         self.done_specs.add(_fingerprint(spec))
         s = rep["surface"]

@@ -1,0 +1,21 @@
+/* ===== OFO brand theme: the ONLY place to change colours =====
+   OFO = Order Flow Organization: black, shades of grey, white.
+   Replace the hex values below with the exact brand codes and reload the page. */
+:root{
+  --bg:#050505;        /* page / 3D background */
+  --panel:#0b0b0c;     /* side panels */
+  --panel2:#131315;    /* cards, inputs, tabs */
+  --line:#000000;      /* hard pixel borders */
+  --txt:#f2f2f2;       /* main text (brand white) */
+  --dim:#8a8a90;       /* secondary text (brand grey) */
+  --accent:#f2f2f2;    /* accent: buttons, active tab, logo (brand white) */
+  --accent-ink:#0a0a0a;/* text drawn on top of the accent */
+  --grid:#202024;      /* chart grid, soft borders */
+  --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;   /* font */
+  /* meaning colours: kept separate on purpose (profit/loss, verdicts). Set them to greys
+     if you want a strictly monochrome look. */
+  --up:#3ddc84; --down:#ff5c5c; --warn:#d8b24a;
+  /* one grey per agent in the log */
+  --a-researcher:#f2f2f2; --a-strategist:#cfcfd4; --a-optimizer:#aaaab1; --a-planner:#8d8d94;
+  --a-validator:#70707a; --a-judge:#ffffff; --a-auditor:#bcbcc2; --a-lab:#ff5c5c;
+}

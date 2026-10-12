@@ -22,7 +22,9 @@ from ..prop import PRESETS
 from ..registry import TrialRegistry
 from ..specs import StrategySpec
 from ..storage import list_studies, load_study, slugify
+from ..accounts import demo_accounts, load_accounts
 from ..data import resample
+from ..trades import extract_trades, summarize
 from ..strategies import TEMPLATES
 
 
@@ -59,6 +61,7 @@ class Lab:
         self._bars: pd.DataFrame | None = None
         self._sessions = None
         self.language = "Italian"
+        self._trades_cache: dict = {}
         self.requests_file = self.data / "template_requests.json"
         self.ideas.mkdir(parents=True, exist_ok=True)
 
@@ -180,6 +183,8 @@ class Lab:
             except Exception as e:
                 job.update(status="error", error=str(e)[:300])
                 self.events.emit("lab", "error", f"{spec.name}: {e}")
+                for agent in ("optimizer", "validator", "judge"):      # nobody stays "working" after a crash
+                    self.events.emit(agent, "idle", "stopped")
 
     def ingest(self) -> dict:
         def work():
@@ -230,6 +235,30 @@ class Lab:
                 charts[key] = chart_pack(dates, pnl)
         return {"report": d["report"], "planner": d["planner"], "auditor": d["auditor"],
                 "charts": charts, "cut": s.get("cut"), "best_params": s.get("best_params")}
+
+    def accounts(self) -> dict:
+        real = load_accounts(self.data / "accounts.json")
+        return {"accounts": real, "demo": False} if real else {"accounts": demo_accounts(), "demo": True}
+
+    def trades(self, slug: str) -> dict | None:
+        """Entries and exits of a study's best candidate. The hidden block's trades are shown
+        only if the Judge already looked at it, exactly like the hidden block's charts."""
+        d = load_study(self.work, slug)
+        if d is None or not d["series"] or not d["series"].get("best_params"):
+            return None
+        rep, ser = d["report"], d["series"]
+        key = (slug, d.get("saved_at"))
+        if key not in self._trades_cache:
+            params = dict(ser["best_params"]); tf = params.pop("tf")
+            self._trades_cache[key] = extract_trades(self.bars(), TEMPLATES[rep["template"]].fn, params, tf,
+                                                     self.contract, self.contracts)
+        allt = self._trades_cache[key]
+        looked = "checks" in rep["locked"]
+        vis = allt if looked else [t for t in allt if t["session"] < ser["cut"]]
+        tf = ser["best_params"]["tf"]
+        return {"trades": vis, "n_hidden": len(allt) - len(vis), "locked_visible": looked, "tf": tf,
+                "params": {k: v for k, v in ser["best_params"].items() if k != "tf"}, "cut": ser["cut"],
+                "summary": summarize(vis), "name": rep["name"]}
 
     def save_idea(self, name: str, data: bytes) -> dict:
         safe = Path(name).name

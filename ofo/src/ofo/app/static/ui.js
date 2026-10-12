@@ -91,6 +91,7 @@
   async function pollEvents() {
     try {
       const r = await api('/api/events?after=' + evNext);
+      if (evNext === 0 && window.LabScene) LabScene.restoreStates(r.events);
       if (evNext === 0 && r.events.length > 60) r.events = r.events.slice(-60);
       r.events.forEach(e => { addFeed(e); if (window.LabScene && (evNext > 0 || r.events.length < 8)) LabScene.onEvent(e); });
       evNext = r.next;
@@ -105,14 +106,14 @@
     $('#ideas').innerHTML = s.ideas.length ? s.ideas.map(i => `<div><span>${esc(i.name)}</span><span>${i.read ? '<i>' + t('read_ok') + '</i>' : i.kb + ' KB'}</span></div>`).join('') : `<div class="empty">${t('no_files')}</div>`;
     $('#n-strat').textContent = s.pending.length || ''; $('#n-strat').style.display = s.pending.length ? 'inline' : 'none';
     const pend = $('#pending'); pend.innerHTML = s.pending.length ? `<h2>${t('pending_title')}</h2>` : '';
-    s.pending.forEach(sp => { const o = document.createElement('div'); o.style.cssText = 'color:#7d869b;font-size:10px;margin-bottom:2px'; o.textContent = t('origin') + ': ' + t('o_' + sp.origin); pend.appendChild(o); pend.appendChild(specCard(sp)); });
+    s.pending.forEach(sp => { const o = document.createElement('div'); o.style.cssText = 'color:var(--dim);font-size:10px;margin-bottom:2px'; o.textContent = t('origin') + ': ' + t('o_' + sp.origin); pend.appendChild(o); pend.appendChild(specCard(sp)); });
     $('#jobs').innerHTML = s.jobs.filter(j => j.status === 'queued' || j.status === 'running').map(j => `<div class="card"><span class="spin"></span>${t('job_run', { n: '<b>' + esc(j.name) + '</b>', c: j.n_candidates })}</div>`).join('')
-      + s.jobs.filter(j => j.status === 'error').slice(-1).map(j => `<div class="card" style="border-color:#ff5c5c">${t('job_err', { n: esc(j.name), e: esc(j.error) })}</div>`).join('');
+      + s.jobs.filter(j => j.status === 'error').slice(-1).map(j => `<div class="card" style="border-color:var(--down)">${t('job_err', { n: esc(j.name), e: esc(j.error) })}</div>`).join('');
     $('#studies').innerHTML = `<h2>${t('studies_title')}</h2>` + (s.strategies.length ? s.strategies.map(x => `<div class="row" data-slug="${esc(x.slug)}"><div><b>${esc(x.name)}</b><small>${esc(x.template)} · ${x.n_candidates} ${t('combos')} · ${t('med_sharpe')} ${num(x.median_sharpe, 3)} · ${x.robust ? t('robust') : t('fragile')}</small></div><span class="badge b-${x.status}">${t('v_' + x.status)}</span></div>`).join('') : `<div class="empty">${t('none_yet')}</div>`);
     $('#studies').querySelectorAll('.row').forEach(r => r.onclick = () => openDetail(r.dataset.slug));
     $('#reqs').innerHTML = s.template_requests.length ? `<h2>${t('reqs_title')}</h2>` + s.template_requests.map(r => `<div class="card"><b>${esc(r.name)}</b><div class="meta">${esc(r.when)}</div>${esc(r.description)}</div>`).join('') : '';
     if (window.LabScene) LabScene.setTrader(s.strategies.filter(x => x.status === 'APPROVED').map(x => x.name), { wait: t('tr_wait'), desk: t('tr_desk'), ready: t('tr_ready'), head: t('tr_head'), none: t('tr_none') });
-    trader.symbol = s.symbol;
+    trader.symbol = s.symbol; trader.setStrategies(s.strategies);
   }
   async function poll() { try { renderState(await api('/api/state')); } catch (e) {} }
 
@@ -120,23 +121,24 @@
   trader = (function () {
     const TFS = [['1min', '1m'], ['5min', '5m'], ['15min', '15m'], ['30min', '30m'], ['60min', '1h'], ['1D', '1D']];
     const RNG = [['1D', 1, '1min'], ['5D', 5, '5min'], ['1M', 21, '30min'], ['3M', 63, '60min'], ['6M', 126, '1D'], ['1Y', 252, '1D'], ['ALL', 'all', '1D']];
-    let tf = '15min', rng = '5D', chart = null, cs = null, vs = null, last = null, symbol = 'NQ';
+    let tf = '15min', rng = '5D', chart = null, cs = null, vs = null, last = null, symbol = 'NQ', before = null;
+    let trades = null, loaded = [], slug = '', listKey = '';
     const order = TFS.map(x => x[0]);
     const seg = (el, items, cur, fn) => { el.innerHTML = items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${label}</button>`).join(''); el.querySelectorAll('button').forEach(b => b.onclick = () => fn(b.dataset.k)); };
     function draw() {
       seg($('#tf'), TFS, tf, k => { tf = k; draw(); load(); });
-      seg($('#rng'), RNG.map(r => [r[0], r[0] === 'ALL' ? t('t_all') : r[0]]), rng, k => { rng = k; tf = RNG.find(r => r[0] === k)[2]; draw(); load(); });
+      seg($('#rng'), RNG.map(r => [r[0], r[0] === 'ALL' ? t('t_all') : r[0]]), rng, k => { rng = k; before = null; tf = RNG.find(r => r[0] === k)[2]; draw(); load(); });
     }
     function ensure() {
       if (chart) return;
       const el = $('#tchart');
       chart = LightweightCharts.createChart(el, {
-        layout: { background: { type: 'solid', color: '#05070b' }, textColor: '#8b93a8', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 11 },
-        grid: { vertLines: { color: '#0f1622' }, horzLines: { color: '#0f1622' } },
-        rightPriceScale: { borderColor: '#1a2230' }, timeScale: { borderColor: '#1a2230', timeVisible: true, secondsVisible: false },
+        layout: { background: { type: 'solid', color: THEME.bg }, textColor: THEME.dim, fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 11 },
+        grid: { vertLines: { color: THEME.grid }, horzLines: { color: THEME.grid } },
+        rightPriceScale: { borderColor: THEME.grid }, timeScale: { borderColor: THEME.grid, timeVisible: true, secondsVisible: false },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal }, width: el.clientWidth, height: el.clientHeight || 320
       });
-      cs = chart.addCandlestickSeries({ upColor: '#39ff7a', downColor: '#ff4b4b', borderVisible: false, wickUpColor: '#39ff7a', wickDownColor: '#ff4b4b' });
+      cs = chart.addCandlestickSeries({ upColor: THEME.up, downColor: THEME.down, borderVisible: false, wickUpColor: THEME.up, wickDownColor: THEME.down });
       vs = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
       chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
       chart.subscribeCrosshairMove(p => {
@@ -144,28 +146,79 @@
         const v = p.seriesData.get(vs); const up = c.close >= c.open;
         $('#tinfo').innerHTML = `O <b>${c.open}</b> H <b>${c.high}</b> L <b>${c.low}</b> C <b class="${up ? 'up' : 'dn'}">${c.close}</b>${v ? ' ' + t('t_vol') + ' <b>' + v.value + '</b>' : ''}`;
       });
-      new ResizeObserver(fit).observe(el);
+      new ResizeObserver(() => fit()).observe(el);
     }
     function fit(refit) { if (!chart) return; const el = $('#tchart'); chart.applyOptions({ width: el.clientWidth, height: el.clientHeight || 320 }); if (refit === true) chart.timeScale().fitContent(); }
     function showLast() { if (last) $('#tinfo').textContent = last; }
-    async function load(tryTf) {
+
+    // entries (arrows) and exits (circles) of the selected strategy, snapped to the candles on screen
+    function applyMarkers() {
+      if (!cs) return;
+      if (!trades || !trades.trades.length || !loaded.length) { cs.setMarkers([]); return; }
+      const daily = typeof loaded[0][0] === 'string', times = loaded.map(c => c[0]), set = new Set(times);
+      const snap = (epoch, session) => {
+        if (daily) return set.has(session) ? session : null;
+        if (epoch < times[0] || epoch > times[times.length - 1] + 86400) return null;
+        let lo = 0, hi = times.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (times[m] <= epoch) lo = m; else hi = m - 1; }
+        return times[lo];
+      };
+      const inView = trades.trades.filter(x => snap(x.entry_t, x.entry_session) !== null || snap(x.exit_t, x.session) !== null);
+      const labels = inView.length <= 120, mk = [];
+      inView.forEach(x => {
+        const e = snap(x.entry_t, x.entry_session), q = snap(x.exit_t, x.session);
+        if (e !== null) mk.push({ time: e, position: x.side > 0 ? 'belowBar' : 'aboveBar', color: x.side > 0 ? THEME.up : THEME.down, shape: x.side > 0 ? 'arrowUp' : 'arrowDown', text: labels ? (x.side > 0 ? 'L' : 'S') : '' });
+        if (q !== null) mk.push({ time: q, position: 'inBar', color: x.pnl >= 0 ? THEME.up : THEME.down, shape: 'circle', text: labels ? (x.pnl >= 0 ? '+' : '-') + '$' + Math.abs(Math.round(x.pnl)) : '' });
+      });
+      mk.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+      cs.setMarkers(mk.slice(0, 4000));
+    }
+    function note() {
+      let h = '';
+      if (trades) {
+        const s = trades.summary;
+        h += s.n ? `<div><b>${esc(trades.name)}</b> — ${t('t_trades', { n: s.n, w: pct(s.win_rate), p: money(s.pnl) })}</div>` : `<div>${t('t_notrades')}</div>`;
+        if (trades.n_hidden) h += `<div>${t('t_hidden', { n: trades.n_hidden })}</div>`;
+        h += `<div>${t('t_legend')}</div>`;
+      }
+      h += `<div>${t('t_note', { s: symbol })}</div>`;
+      $('#tnote').innerHTML = h;
+    }
+    async function load() {
       ensure(); fit();
       const days = RNG.find(r => r[0] === rng)[1];
       $('#tinfo').textContent = t('t_loading');
-      const d = await api(`/api/candles?tf=${tf}&days=${days}`);
+      const d = await api(`/api/candles?tf=${tf}&days=${days}` + (before ? `&before=${before}` : ''));
       if (d.error === 'too_many') {                       // too many candles: step up to a coarser timeframe
         const next = order[order.indexOf(tf) + 1]; if (!next) { $('#tinfo').textContent = t('t_err', { e: d.error }); return; }
-        tf = next; draw(); $('#tnote').textContent = t('t_coarser', { tf }); return load();
+        tf = next; draw(); return load();
       }
       if (d.error) { $('#tinfo').textContent = t('t_err', { e: d.error }); return; }
-      symbol = d.symbol;
+      symbol = d.symbol; loaded = d.candles;
       cs.setData(d.candles.map(c => ({ time: c[0], open: c[1], high: c[2], low: c[3], close: c[4] })));
-      vs.setData(d.candles.map(c => ({ time: c[0], value: c[5], color: c[4] >= c[1] ? '#39ff7a40' : '#ff4b4b40' })));
-      chart.timeScale().fitContent();
-      last = `${symbol} ${tf} · ` + t('t_sessions', { n: d.n_sessions, a: d.from, b: d.to }); $('#tinfo').textContent = last;
-      $('#tnote').textContent = t('t_note', { s: d.symbol });
+      vs.setData(d.candles.map(c => ({ time: c[0], value: c[5], color: c[4] >= c[1] ? THEME.up + '40' : THEME.down + '40' })));
+      chart.timeScale().fitContent(); applyMarkers();
+      last = `${symbol} ${tf} · ` + t('t_sessions', { n: d.n_sessions, a: d.from, b: d.to }); $('#tinfo').textContent = last; note();
     }
-    return { show() { draw(); ensure(); setTimeout(() => { fit(); if (!last) load(); }, 30); }, fit, set symbol(v) { symbol = v; }, get symbol() { return symbol; } };
+    async function pick(s) {
+      slug = s; trades = null;
+      if (!s) { applyMarkers(); note(); return; }
+      const d = await api('/api/trades/' + encodeURIComponent(s));
+      if (d.error) { note(); return; }
+      trades = d;
+      const lastTrade = d.trades.length ? d.trades[d.trades.length - 1].session : null;
+      if (lastTrade) {                                    // show the most recent trades, on the strategy's own timeframe
+        const dt = new Date(lastTrade + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + 1);
+        before = dt.toISOString().slice(0, 10); rng = '1M'; tf = order.includes(d.tf) ? d.tf : '15min';
+        draw(); await load();
+      } else { applyMarkers(); note(); }
+    }
+    $('#tstrat').onchange = (e) => pick(e.target.value);
+    function setStrategies(list) {
+      const key = list.map(x => x.slug).join('|'); if (key === listKey) return; listKey = key;
+      $('#tstrat').innerHTML = `<option value="">${t('t_none')}</option>` + list.map(x => `<option value="${esc(x.slug)}">${esc(x.name)} · ${t('v_' + x.status)}</option>`).join('');
+      $('#tstrat').value = slug;
+    }
+    return { show() { draw(); ensure(); setTimeout(() => { fit(); if (!last) load(); }, 30); }, fit, setStrategies, set symbol(v) { symbol = v; }, get symbol() { return symbol; } };
   })();
   (async () => {   // the same data on the 3D trading monitors
     try { const d = await api('/api/candles?tf=15min&days=3'); if (d.candles && window.LabScene) LabScene.setTraderChart(d.candles, d.symbol); } catch (e) {}
@@ -210,7 +263,7 @@
     function draw() {
       LabCharts.destroyAll();
       const p = ch[cur], m = p.metrics, mc = p.monte_carlo;
-      $('#warn').innerHTML = cur === 'dev_best' ? `<div class="warnbox">${t('warn_dev')}</div>` : cur === 'locked' ? `<div class="warnbox" style="color:#9bd">${t('warn_lk')}</div>` : '';
+      $('#warn').innerHTML = cur === 'dev_best' ? `<div class="warnbox">${t('warn_dev')}</div>` : cur === 'locked' ? `<div class="warnbox" style="color:var(--dim)">${t('warn_lk')}</div>` : '';
       $('#kpis').innerHTML = kpi(t('m_total'), money(m.total_pnl), m.total_pnl >= 0 ? 'pos' : 'neg') + kpi(t('m_sharpe'), num(m.sharpe)) + kpi(t('m_sortino'), num(m.sortino)) + kpi(t('m_pf'), num(m.profit_factor)) + kpi(t('m_payoff'), num(m.payoff_ratio)) + kpi(t('m_win'), pct(m.win_rate)) + kpi(t('m_dd'), money(m.max_drawdown), 'neg') + kpi(t('m_calmar'), num(m.calmar)) + kpi(t('m_bw'), money(m.best_day) + ' / ' + money(m.worst_day)) + kpi(t('m_days'), m.days)
         + (mc && !mc.error ? kpi(t('mc_med'), money(mc.final.p50), mc.final.p50 >= 0 ? 'pos' : 'neg') + kpi(t('mc_rng'), money(mc.final.p5) + ' / ' + money(mc.final.p95)) + kpi(t('mc_loss'), pct(mc.p_loss), mc.p_loss > 0.4 ? 'neg' : '') : '');
       LabCharts.equity($('#c-eq'), ch, cur === 'locked' ? ['locked'] : cur === 'dev_best' ? ['dev_best', 'wf_oos'] : ['wf_oos']);
@@ -221,6 +274,40 @@
   }
   $('#close').onclick = () => { $('#modal').hidden = true; LabCharts.destroyAll(); };
   document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#close').click(); });
+
+  // ---------- agents at work ----------
+  const ROWS = [['research', 'Researcher'], ['strategist', 'Strategist'], ['optimizer', 'Optimizer + Planner'], ['validator', 'Validator'], ['judge', 'Judge + Auditor']];
+  if (window.LabScene) LabScene.setStateLabels({ idle: t('st_idle'), working: t('st_working'), done: t('st_done') });
+  function renderAgents() {
+    if (!window.LabScene) return;
+    const st = LabScene.states(), cls = { idle: 'i', working: 'w', done: 'd' };
+    $('#agents').innerHTML = ROWS.map(([k, n]) => `<div><span>${n}</span><span class="${cls[st[k]]}">${st[k] === 'done' ? '✓ ' : ''}${t('st_' + st[k])}</span></div>`).join('');
+  }
+  setInterval(renderAgents, 500); renderAgents();
+
+  // ---------- accounts (evaluation / funded) as flasks + list ----------
+  async function loadAccounts() {
+    try {
+      const d = await api('/api/accounts'), L = d.accounts;
+      const stTxt = (a) => t('as_' + a.state);
+      const full = L.map(a => [`${a.firm} ${a.plan} · ${a.kind === 'funded' ? t('acct_funded') : t('acct_eval')}${d.demo ? ' · ' + t('acct_demo') : ''}`,
+        `${money(a.balance)} · ${stTxt(a)}${a.kind === 'funded' ? ' · ' + t('acct_payouts', { n: a.payouts }) : a.progress != null ? ' · ' + t('acct_prog', { p: pct(a.progress) }) : ''}`]);
+      const short = L.map(a => [`${a.firm} ${a.plan}`, `${a.kind === 'funded' ? t('acct_funded') : t('acct_eval')} · ${money(a.balance)}`]);   // compact: fits above the flask
+      const texts = full;
+      if (window.LabScene) LabScene.setAccounts(L, short, d.demo ? t('acct_sign') : t('acct_sign_real'));
+      $('#accts').innerHTML = (d.demo ? `<div class="tnote" style="margin:0 0 6px">${t('acct_demo_note')}</div>` : '') + L.map((a, i) => {
+        const v = a.kind === 'evaluation' && a.progress != null ? a.progress : a.health;
+        return `<div class="ac st-${a.state}"><div><b>${esc(texts[i][0])}</b><small>${esc(texts[i][1])} · ${t('acct_buf', { p: pct(a.health) })}</small></div><div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div></div>`;
+      }).join('');
+    } catch (e) {}
+  }
+  loadAccounts(); setInterval(loadAccounts, 30000);
+
+  // ---------- brand logo (optional file: brand/icon.png) ----------
+  const li = $('#logo-img');
+  li.onload = () => { li.style.display = 'block'; $('#logo-cube').style.display = 'none'; const f = document.querySelector('link[rel=icon]'); if (f) f.href = 'brand/icon.png'; };
+  li.onerror = () => { li.remove(); };
+  if (li.complete && li.naturalWidth) li.onload();
 
   poll(); pollEvents();
   setInterval(poll, 3000); setInterval(pollEvents, 1500);

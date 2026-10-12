@@ -40,12 +40,15 @@ class Agent:
         user = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
         messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user}]
         last = None
+        if self.events:
+            self.events.emit(self.name, "working", "thinking")
         for attempt in range(1, self.max_attempts + 1):
             reply = self.llm.chat(messages, temperature=self.temperature)
             try:
                 out = self.validate(parse_json(reply))
                 if self.events:
                     self.events.emit(self.name, "reply", f"valid reply (attempt {attempt})")
+                    self.events.emit(self.name, "done", "ready")
                 return out
             except Exception as e:                       # weak models: bad JSON, bad values
                 last = e
@@ -54,4 +57,6 @@ class Agent:
                 messages += [{"role": "assistant", "content": reply},
                              {"role": "user", "content": f"Your reply was rejected: {e}. "
                               "Reply again with ONLY the corrected JSON object."}]
+        if self.events:
+            self.events.emit(self.name, "idle", "no valid reply")
         raise AgentError(f"{self.name}: no valid reply after {self.max_attempts} attempts: {last}")

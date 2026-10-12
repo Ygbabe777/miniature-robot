@@ -37,7 +37,12 @@
       tr_wait: ['OFO TRADING DESK', 'in attesa di', 'strategie approvate'], tr_desk: 'TRADING DESK', tr_ready: 'pronte', tr_head: 'APPROVATE', tr_none: 'nessuna',
       t_all: 'TUTTO', t_note: 'Dati: il tuo file storico {s} (orari di New York). Rotella per lo zoom, trascina per spostarti. Qui non c\'è ancora trading automatico.',
       t_loading: 'Carico le candele…', t_coarser: 'Troppe candele: uso il timeframe {tf}', t_sessions: '{n} sessioni · {a} → {b}', t_err: 'Dati non disponibili: {e}',
-      t_vol: 'Vol'
+      t_vol: 'Vol',
+      agents_title: 'Agenti al lavoro', st_idle: 'spento', st_working: 'al lavoro', st_done: 'finito',
+      t_strat: 'Strategia sul grafico', t_none: '— nessuna —', t_trades: '{n} trade · {w} vincenti · P&L {p}', t_hidden: '{n} trade nel blocco nascosto non mostrati',
+      t_notrades: 'Nessun trade da mostrare', t_legend: 'Frecce = ingressi (↑ long, ↓ short) · cerchi = uscite (valore = P&L del trade). Sono i trade della migliore combinazione (in-campione): non provano un profitto.',
+      acct_title: 'Conti', acct_demo_note: 'DATI DI ESEMPIO. Per i tuoi conti: copia rules/accounts.example.json in data/accounts.json e modificalo.', acct_eval: 'EVAL', acct_funded: 'FUNDED', acct_demo: 'DEMO', acct_sign: ['CONTI', 'DATI ESEMPIO'], acct_sign_real: ['CONTI'],
+      as_ok: 'in corso', as_danger: 'vicino al limite', as_passed: 'superato', as_busted: 'saltato', acct_payouts: 'payout: {n}', acct_prog: 'target {p}', acct_buf: 'margine {p}'
     },
     en: {
       feed_title: 'Lab log', papers_title: 'Studies & PDFs', drop: 'Drop research paper PDFs here', drop_sub: 'or put them in the folder',
@@ -75,7 +80,12 @@
       tr_wait: ['OFO TRADING DESK', 'waiting for', 'approved strategies'], tr_desk: 'TRADING DESK', tr_ready: 'ready', tr_head: 'APPROVED', tr_none: 'none yet',
       t_all: 'ALL', t_note: 'Data: your historical file {s} (New York time). Wheel to zoom, drag to pan. There is no automatic trading here yet.',
       t_loading: 'Loading candles…', t_coarser: 'Too many candles: using timeframe {tf}', t_sessions: '{n} sessions · {a} → {b}', t_err: 'Data not available: {e}',
-      t_vol: 'Vol'
+      t_vol: 'Vol',
+      agents_title: 'Agents at work', st_idle: 'idle', st_working: 'working', st_done: 'done',
+      t_strat: 'Strategy on chart', t_none: '— none —', t_trades: '{n} trades · {w} winners · P&L {p}', t_hidden: '{n} trades in the hidden block not shown',
+      t_notrades: 'No trades to show', t_legend: 'Arrows = entries (↑ long, ↓ short) · circles = exits (value = trade P&L). These are the trades of the best combination (in-sample): they do not prove profit.',
+      acct_title: 'Accounts', acct_demo_note: 'DEMO DATA. For your accounts: copy rules/accounts.example.json to data/accounts.json and edit it.', acct_eval: 'EVAL', acct_funded: 'FUNDED', acct_demo: 'DEMO', acct_sign: ['ACCOUNTS', 'DEMO DATA'], acct_sign_real: ['ACCOUNTS'],
+      as_ok: 'on track', as_danger: 'near the limit', as_passed: 'passed', as_busted: 'busted', acct_payouts: 'payouts: {n}', acct_prog: 'target {p}', acct_buf: 'buffer {p}'
     }
   };
   let lang = 'it';
