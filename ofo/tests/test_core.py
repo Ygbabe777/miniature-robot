@@ -66,3 +66,23 @@ def test_short_sample_is_insufficient_not_rejected():
     from ofo.judge import INSUFFICIENT
     v = judge(np.random.default_rng(0).normal(100, 300, 60), PRESETS["50k"], 10, 0.01)
     assert v.status == INSUFFICIENT and not v.approved
+
+
+def test_ci_is_wide_for_short_history_and_narrow_for_long():
+    from ofo.prop import pass_probability_ci
+    rng = np.random.default_rng(11)
+    short = pass_probability_ci(rng.normal(60, 400, 126), PRESETS["50k"], n_outer=60, n_inner=60)
+    long_ = pass_probability_ci(rng.normal(60, 400, 1500), PRESETS["50k"], n_outer=60, n_inner=60)
+    w = lambda r: r["p_pass_ci95"][1] - r["p_pass_ci95"][0]
+    assert w(short) > 2 * w(long_)
+
+
+def test_lucky_noise_sample_does_not_clear_the_pass_prob_bar():
+    """126 zero-edge days that happen to have a positive mean (luck) must still fail."""
+    from ofo.judge import Thresholds
+    rng = np.random.default_rng(5)
+    for _ in range(5):
+        x = rng.normal(0, 400, 126)
+        x = x - x.mean() + 60          # force a lucky positive mean
+        v = judge(x, PRESETS["50k"], n_trials=1, var_sr_trials=0.01, th=Thresholds(min_dsr=0.0))
+        assert not v.checks["pass_prob_ci_lower"], v.mc["p_pass_ci95"]

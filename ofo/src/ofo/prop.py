@@ -83,6 +83,43 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, c - h), min(1.0, c + h))
 
 
+def _resample_blocks(x: np.ndarray, length: int, block: int, rng) -> np.ndarray:
+    n_blocks = -(-length // block)
+    starts = rng.integers(0, len(x) - block + 1, size=n_blocks)
+    return np.concatenate([x[s:s + block] for s in starts])[:length]
+
+
+def pass_probability_ci(daily_pnl, rules: PropRules, n_outer: int = 100, n_inner: int = 100,
+                        horizon: int = 120, block: int = 5, seed: int = 0) -> dict:
+    """Pass probability WITH estimation uncertainty.
+
+    The plain Monte Carlo treats the historical days as the true distribution, so with
+    126 days a lucky sample gives a confident-looking number. Here the history itself is
+    re-drawn `n_outer` times (block bootstrap) and the evaluation is simulated on each
+    redraw; the percentile interval across redraws reflects how little N days can tell."""
+    x = np.asarray(daily_pnl, dtype=float)
+    if len(x) < max(block, 20):
+        raise ValueError("need at least 20 days of P&L to estimate anything")
+    rng = np.random.default_rng(seed)
+    p_pass, p_bust, days = [], [], []
+    for _ in range(n_outer):
+        hist = _resample_blocks(x, len(x), block, rng)
+        outs = [simulate_account(_resample_blocks(hist, horizon, block, rng), rules)
+                for _ in range(n_inner)]
+        p_pass.append(np.mean([o.status == "passed" for o in outs]))
+        p_bust.append(np.mean([o.status == "busted" for o in outs]))
+        days += [o.days for o in outs if o.status == "passed"]
+    return {
+        "p_pass": float(np.mean(p_pass)),
+        "p_pass_ci95": (float(np.percentile(p_pass, 2.5)), float(np.percentile(p_pass, 97.5))),
+        "p_bust": float(np.mean(p_bust)),
+        "p_bust_ci95": (float(np.percentile(p_bust, 2.5)), float(np.percentile(p_bust, 97.5))),
+        "median_days_to_pass": float(np.median(days)) if days else None,
+        "n_history_days": len(x),
+        "note": "interval includes uncertainty from the limited history",
+    }
+
+
 def pass_probability(daily_pnl, rules: PropRules, n_sims: int = 5_000,
                      horizon: int = 120, block: int = 5, seed: int = 0) -> dict:
     """Block-bootstrap Monte Carlo of the evaluation.
@@ -114,5 +151,5 @@ def pass_probability(daily_pnl, rules: PropRules, n_sims: int = 5_000,
         "median_days_to_pass": float(np.median(days_to_pass)) if days_to_pass else None,
         "n_sims": n_sims,
         "n_history_days": len(x),
-        "note": "sampling CI only: ignores that the future may differ from history",
+        "note": "simulation CI only: treats history as the truth. Use pass_probability_ci to judge",
     }

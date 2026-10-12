@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .prop import PropRules, pass_probability
+from .prop import PropRules, pass_probability_ci
 from .stats import deflated_sharpe
 
 
@@ -39,8 +39,8 @@ def judge(oos_daily_pnl, rules: PropRules, n_trials: int, var_sr_trials: float,
     checks = {"enough_days": len(x) >= th.min_days}
     if not checks["enough_days"]:
         return Verdict(INSUFFICIENT, checks)
-    checks["dsr"] = deflated_sharpe(x, n_trials, var_sr_trials) >= th.min_dsr
-    mc = pass_probability(x, rules)
-    checks["pass_prob_ci_lower"] = mc["p_pass_ci95"][0] >= th.min_p_pass_lower
-    checks["bust_risk"] = mc["p_bust"] <= th.max_p_bust
+    checks["dsr"] = bool(deflated_sharpe(x, n_trials, var_sr_trials) >= th.min_dsr)
+    mc = pass_probability_ci(x, rules)
+    checks["pass_prob_ci_lower"] = bool(mc["p_pass_ci95"][0] >= th.min_p_pass_lower)
+    checks["bust_risk"] = bool(mc["p_bust"] <= th.max_p_bust)
     return Verdict(APPROVED if all(checks.values()) else REJECTED, checks, mc)
