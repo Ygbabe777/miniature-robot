@@ -48,3 +48,16 @@ rigorosa e simulazione delle regole prop (account 25k / 50k).
   o modalità automatica (ogni 30 min - 6 h). Le proposte arrivano in "Strategie in attesa": nessun test parte da solo.
 - **Indicatori**: nella scheda Trader, scegliendo una strategia, si vedono sul grafico gli indicatori che usa davvero (medie, canali, bande, range di apertura, VWAP).
 - **Limite chiamate AI**: 30 al MINUTO. In `config/llm.json`: `calls_per_minute` (28 lascia un margine) e `role_calls_per_minute` per agente.
+
+## Autopilota (ciclo completamente autonomo)
+All'avvio del Lab l'**Autopilota** è acceso (se l'AI è configurata): lo Scout cerca paper ogni 30 minuti (quando gli argomenti
+finiscono, il modello ne inventa di nuovi), il Researcher li legge, le proposte vengono testate **senza chiedere il via**
+(anche dopo un riavvio: `data/loop/specs_auto/`), il Giudice decide con regole deterministiche.
+- **Limiti** (in `data/autopilot.json`, modificabili): 4000 prove al giorno, 60000 in totale. Servono: ogni prova in più
+  rende il Giudice più severo (Sharpe deflazionato); senza tetto il ciclo si auto-sabota.
+- **Strategie pronte**: solo quelle APPROVATE dal Giudice. Tab Strategie > "Strategie pronte" (e `data/loop/dossiers/*.json`):
+  descrizione, dimensione consigliata (micro o mini), probabilità di passare con intervallo, stop giornaliero, drawdown.
+  Le regole dei conti usate sono quelle di esempio (50k/25k) e NON sono verificate.
+- Aspettati che quasi tutto venga respinto: finora nessuna famiglia di strategie ha superato il blocco nascosto.
+- Gli scienziati restano alla loro scrivania: "al lavoro" = digitano veloci, "in attesa" = battito lento (non sono mai "spenti"
+  se l'Autopilota è acceso). Lo stato "al lavoro" viene dal server (attività reale), non da timeout.

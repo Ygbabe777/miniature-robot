@@ -108,7 +108,7 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 #credit{position:fixed;left:50%;bottom:4px;transform:translateX(-50%);font-size:9.5px;color:#4b5266;letter-spacing:.06em;pointer-events:none}
 
 /* agent state tags and account flasks in the 3D scene */
-.tag.st-idle{opacity:.55} .tag.st-working{background:#000d;border-color:var(--accent);color:#fff} .tag.st-done{border-color:var(--up)}
+.tag.st-idle{opacity:.55} .tag.st-standby{opacity:.85} .tag.st-working{background:#000d;border-color:var(--accent);color:#fff} .tag.st-done{border-color:var(--up)}
 .acct{position:absolute;transform:translate(-50%,-100%);background:#000d;border:2px solid #000;border-left:4px solid var(--dim);padding:1px 5px;font-size:9px;line-height:1.3;white-space:nowrap;pointer-events:none}
 .acct b{display:block;color:var(--txt);letter-spacing:.04em} .acct span{color:var(--dim)}
 .acct.st-ok{border-left-color:var(--accent)} .acct.st-danger{border-left-color:var(--down)} .acct.st-danger span{color:var(--down)}
@@ -134,3 +134,11 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 .spapers i{font-style:normal;color:var(--dim);white-space:nowrap} .spapers i.ok{color:var(--up)}
 .tlegend{font-size:11px;line-height:1.5;margin:2px 0 6px;min-height:0}
 .spapers i.man{color:var(--warn)}
+
+#agents .s{color:var(--txt)} #agents .s::before{content:'○ '}
+#autopilot{font-size:11.5px;margin-bottom:10px} #autopilot .apm{color:var(--dim);margin:3px 0} #autopilot .apn{color:var(--dim);font-size:10px;margin-top:4px}
+#autopilot .apon{color:var(--up)} #autopilot .apoff{color:var(--warn)}
+.dossier{border:1px solid var(--accent);border-radius:8px;padding:10px;margin-bottom:10px;background:var(--panel2)}
+.dossier h3{margin:0 0 6px;font-size:13px} .dossier p{margin:5px 0;line-height:1.45;font-size:12px} .dossier .dacct{border-top:1px solid #0006;margin-top:8px;padding-top:6px}
+.dossier details{font-size:11px;color:var(--dim)} .dossier table{border-collapse:collapse;width:100%;font-family:var(--mono)} .dossier td,.dossier th{padding:1px 6px;text-align:right} .dossier tr.pick td{color:var(--up)}
+.dossier .cav{color:var(--warn);font-size:11px}

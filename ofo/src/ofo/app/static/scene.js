@@ -360,6 +360,21 @@
   place(robots.research, -8.6, -6.7, -6.5, 0); place(robots.optimizer, -1.7, -6.5, -0.2, 0);
   place(robots.validator, 4.2, -6.7, 5.8, 0); place(robots.judge, 13.2, -5, 9.5, 2, 1.9);
   place(robots.trader, 5.8, 10.2, 10, 14); place(robots.strategist, -11.4, 8.0, -7, 14);
+  // each scientist works at a desk placed right in front of them: arms rest on it, they never mime in thin air
+  const deskLights = {};
+  function makeDesk(r, accent) {
+    const dg = new T.Group(); dg.position.set(r.g.position.x, r.base, r.g.position.z); dg.rotation.y = r.g.rotation.y;
+    const f = 1.3;
+    vox(dg, 0, 1.0, f, 2.6, 0.14, 1.0, 0x20242e); vox(dg, 0, 1.14, f, 2.64, 0.05, 1.04, 0x333947);
+    [-1.15, 1.15].forEach(x => [-0.4, 0.4].forEach(z => vox(dg, x, 0, f + z, 0.12, 1.0, 0.12, 0x14161c)));
+    vox(dg, 0, 0.45, f + 0.5, 2.5, 0.55, 0.06, 0x14161c);                                     // front panel
+    const pad = vox(dg, 0, 1.19, f, 1.5, 0.04, 0.55, accent, { cast: false, mat: glow(accent, 0.5) });  // keyboard / tablet
+    vox(dg, -0.95, 1.19, f - 0.05, 0.5, 0.05, 0.4, 0xf4f1e6, { cast: false });                  // notes
+    vox(dg, 0.98, 1.19, f - 0.1, 0.3, 0.14, 0.3, 0x14161c, { cast: false });                    // lamp base
+    r.pad = pad; deskLights[r.name] = pad; scene.add(dg);
+  }
+  makeDesk(robots.research, 0x4aa3ff); makeDesk(robots.optimizer, 0xffb03a); makeDesk(robots.validator, 0xb58cff);
+  makeDesk(robots.judge, 0xd4af37); makeDesk(robots.strategist, 0xff7ac8);
   Object.values(robots).forEach(r => tagStation(r.g, r.name));
 
   // ---------- crates (strategies travelling on the belt) ----------
@@ -397,19 +412,26 @@
   const AGENTS_OF = { research: ['researcher', 'scout'], strategist: ['strategist'], optimizer: ['optimizer', 'planner'], validator: ['validator'], judge: ['judge', 'auditor'], trader: [] };
   const agentState = {};
   const matWork = mat(0xffffff, glow(0xffffff, 1.3)), matDone = mat(THEME.n.up, glow(THEME.n.up, 1.2));
-  let stateLabels = { idle: 'idle', working: 'working', done: 'done' };
+  let stateLabels = { idle: 'idle', standby: 'standby', working: 'working', done: 'done' };
+  // The server says who is REALLY busy (polled every few seconds). Events only give instant feedback for a few
+  // seconds, so a long wait for the AI can never make a scientist look switched off.
+  let serverWorking = null, serverAt = 0, autopilotOn = false;
+  function setServer(working, autopilot) { serverWorking = new Set(working || []); serverAt = now(); autopilotOn = !!autopilot; }
   function setAgentState(agent, state, at) {
     const t0 = at == null ? now() : at;
-    agentState[agent] = { state, until: t0 + (state === 'working' ? 180 : state === 'done' ? 12 : 0) };
+    agentState[agent] = { state, until: t0 + (state === 'working' ? 8 : state === 'done' ? 12 : 0) };
   }
   function robotState(name, t) {
     let done = false;
+    const fresh = serverWorking && t - serverAt < 20;
     for (const a of AGENTS_OF[name] || []) {
+      if (fresh && serverWorking.has(a)) return 'working';
       const s = agentState[a]; if (!s) continue;
       if (s.state === 'working' && t < s.until) return 'working';
       if (s.state === 'done' && t < s.until) done = true;
     }
-    return done ? 'done' : 'idle';
+    if (done) return 'done';
+    return autopilotOn && name !== 'trader' ? 'standby' : 'idle';
   }
   function onEvent(ev) {
     if (ev.type === 'working' || ev.type === 'done' || ev.type === 'idle') setAgentState(ev.agent, ev.type);
@@ -452,7 +474,7 @@
       const p = v.clone().project(camera);
       const vis = p.z < 1 && p.x > -1.1 && p.x < 1.1 && p.y > -1.1 && p.y < 1.1;
       const sx = (p.x * 0.5 + 0.5) * w, sy = (-p.y * 0.5 + 0.5) * h;
-      const stTxt = r.label + ' · ' + (r.state === 'working' ? '● ' : r.state === 'done' ? '✓ ' : '') + stateLabels[r.state];
+      const stTxt = r.label + ' · ' + (r.state === 'working' ? '● ' : r.state === 'done' ? '✓ ' : r.state === 'standby' ? '○ ' : '') + stateLabels[r.state];
       if (r.shown !== stTxt) { r.tag.textContent = stTxt; r.shown = stTxt; }
       r.tag.className = 'tag st-' + r.state;
       r.tag.style.display = vis ? 'block' : 'none'; r.tag.style.left = sx + 'px'; r.tag.style.top = sy + 'px';
@@ -465,14 +487,24 @@
     controls.update();
     Object.values(robots).forEach(r => {
       const st = robotState(r.name, t); r.state = st;
-      const active = t < r.until || st === 'working';
-      r.g.position.y = r.base + Math.abs(Math.sin(t * (active ? 7 : 2) + r.phase)) * (active ? 0.22 : st === 'done' ? 0.12 : 0.03);
-      const wave = Math.sin(t * 9 + r.phase) * 0.9, idleSway = Math.sin(t * 1.2 + r.phase) * 0.05;
-      r.armL.rotation.x = active ? wave : st === 'done' ? -2.5 + Math.sin(t * 6) * 0.25 : idleSway;
-      r.armR.rotation.x = active ? -wave : st === 'done' ? -2.5 - Math.sin(t * 6) * 0.25 : -idleSway;
-      r.head.rotation.x += ((st === 'idle' ? 0.32 : 0) - r.head.rotation.x) * Math.min(1, dt * 4);       // idle: head drops
-      r.bulb.visible = st !== 'idle';
-      if (st !== 'idle') { r.bulb.material = st === 'done' ? matDone : matWork; if (st === 'working') r.bulb.scale.setScalar(0.8 + 0.4 * Math.abs(Math.sin(t * 5))); else r.bulb.scale.setScalar(1); }
+      const speaking = t < r.until, working = st === 'working';
+      r.g.position.y = r.base + (st === 'done' ? Math.abs(Math.sin(t * 5 + r.phase)) * 0.1 : 0);       // no hopping: feet stay on the floor
+      const hasDesk = !!r.pad;
+      let lx, rx, hd = 0;
+      if (st === 'done') { lx = -2.5 + Math.sin(t * 6) * 0.25; rx = -2.5 - Math.sin(t * 6) * 0.25; }
+      else if (hasDesk && (working || st === 'standby')) {
+        // hands on the desk: fast alternating keystrokes when working, a slow tap while waiting for the next task
+        const f = working ? 11 : 1.6, amp = working ? 0.2 : 0.04;
+        lx = -1.12 + Math.sin(t * f + r.phase) * amp; rx = -1.12 + Math.sin(t * f + r.phase + 2.1) * amp;
+        hd = working ? 0.28 + Math.sin(t * 2.4 + r.phase) * 0.08 : 0.1;                                    // looking down at the work
+      } else if (working || speaking) { const w = Math.sin(t * 9 + r.phase) * 0.6; lx = -1.0 + w; rx = -1.0 - w; hd = 0.12; }
+      else { lx = Math.sin(t * 1.2 + r.phase) * 0.05; rx = -lx; hd = st === 'idle' ? 0.32 : 0; }
+      r.armL.rotation.x += (lx - r.armL.rotation.x) * Math.min(1, dt * 14);
+      r.armR.rotation.x += (rx - r.armR.rotation.x) * Math.min(1, dt * 14);
+      r.head.rotation.x += (hd - r.head.rotation.x) * Math.min(1, dt * 5);
+      r.bulb.visible = st === 'working' || st === 'done';
+      if (r.bulb.visible) { r.bulb.material = st === 'done' ? matDone : matWork; r.bulb.scale.setScalar(st === 'working' ? 0.8 + 0.4 * Math.abs(Math.sin(t * 5)) : 1); }
+      if (r.pad) r.pad.material.emissiveIntensity = working ? 0.9 + 0.5 * Math.sin(t * 9 + r.phase) : st === 'standby' ? 0.45 : 0.15;
     });
     chevrons.forEach(m => { m.userData.s = (m.userData.s + dt * 2.2) % TOTAL; const p = pointAt(m.userData.s); m.position.set(p[0], 0.4, p[1]); });
     gearSpeed += ((optRunning ? 4 : 0.35) - gearSpeed) * Math.min(1, dt * 3);
@@ -566,7 +598,7 @@
   }
   setTrader([]);
 
-  window.LabScene = { onEvent, speak, setTrader, setTraderChart, setAccounts, onPick: null, ready: true, robots, resize, camera, controls, restoreStates,
+  window.LabScene = { onEvent, speak, setTrader, setTraderChart, setAccounts, onPick: null, ready: true, robots, resize, camera, controls, restoreStates, setServer,
     setStateLabels(l) { stateLabels = Object.assign(stateLabels, l); },
     states() { const t = now(), o = {}; Object.keys(AGENTS_OF).forEach(n => o[n] = robotState(n, t)); return o; } };
   frame();

@@ -11,10 +11,13 @@ class EventLog:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.life: dict[str, str] = {}      # last working/done/idle/error per agent, for the live state view
 
     def emit(self, agent: str, type_: str, message: str = "", data: dict | None = None) -> None:
         line = {"t": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
                 "agent": agent, "type": type_, "message": message, "data": data or {}}
+        if type_ in ("working", "done", "idle", "error"):
+            self.life[agent] = type_
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
 

@@ -1,6 +1,7 @@
 """Lab backend: pending strategies, background study jobs, chat, charts. No web code here."""
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -20,8 +21,10 @@ from ..llm.client import LLMError
 from ..metrics import chart_pack
 from ..prop import PRESETS
 from ..registry import TrialRegistry
-from ..specs import StrategySpec
+from ..agents.loop import _fingerprint
+from ..specs import StrategySpec, from_dict
 from ..storage import list_studies, load_study, slugify
+from ..dossier import build_dossier
 from ..accounts import demo_accounts, load_accounts
 from ..data import resample
 from ..trades import extract_trades, summarize
@@ -67,6 +70,14 @@ class Lab:
         self.requests_file = self.data / "template_requests.json"
         self.ideas.mkdir(parents=True, exist_ok=True)
         self._fetch, self._scout, self._scout_running = fetch, None, False
+        self.busy = {"research": 0, "job": 0, "chat": 0}          # real activity, not event timeouts
+        self.ap_file = self.data / "autopilot.json"
+        first = not self.ap_file.exists()
+        self.ap = {"enabled": True, "max_trials_per_day": 4000, "max_trials_total": 60000, "day": "", "trials_today": 0}
+        if not first:
+            self.ap.update(json.loads(self.ap_file.read_text()))
+        self.ap_first_run = first
+        self.dossier_dir = self.work / "dossiers"
 
     # -- engine -------------------------------------------------------------------------
     def bars(self) -> pd.DataFrame:
@@ -129,6 +140,16 @@ class Lab:
             self.pending[sid] = {"spec": spec, "origin": origin}
         return spec_summary(sid, spec, origin, self.registry.n_trials)
 
+    @contextlib.contextmanager
+    def working(self, kind: str):
+        with self.lock:
+            self.busy[kind] += 1
+        try:
+            yield
+        finally:
+            with self.lock:
+                self.busy[kind] -= 1
+
     # -- chat ---------------------------------------------------------------------------
     def chat(self, message: str, history: list | None = None, lang: str | None = None) -> dict:
         self.set_lang(lang)
@@ -140,7 +161,8 @@ class Lab:
         payload = {"message": message, "history": (history or [])[-6:],
                    "trials_so_far": self.registry.n_trials}
         try:
-            out = make_strategist(llm, self.events, self.language).run(payload)
+            with self.working("chat"):
+                out = make_strategist(llm, self.events, self.language).run(payload)
         except (AgentError, LLMError) as e:
             self.events.emit("strategist", "error", str(e)[:300])
             return {"reply": f"Non sono riuscito a rispondere: {e}", "spec": None, "template_request": None, "error": True}
@@ -174,15 +196,17 @@ class Lab:
         return job
 
     def _run_job(self, job: dict, spec: StrategySpec) -> None:
-        with self.run_lock:                       # one study at a time: they are CPU heavy
+        with self.working("job"), self.run_lock:  # one study at a time: they are CPU heavy
             job["status"] = "running"
             try:
                 lp = self.loop()
                 res = lp.process(spec, 0)
                 job.update(status="done", slug=slugify(spec.name), verdict=res["verdict"])
-                while lp.queue:                   # planner proposals wait for the owner's go-ahead
+                while lp.queue:                   # planner proposals: the autopilot runs them, otherwise they wait
                     nxt, _ = lp.queue.pop(0)
                     self._add_pending(nxt, "planner")
+                if res["verdict"] == "APPROVED":
+                    self.make_dossier(job["slug"])
             except Exception as e:
                 job.update(status="error", error=str(e)[:300])
                 self.events.emit("lab", "error", f"{spec.name}: {e}")
@@ -190,11 +214,12 @@ class Lab:
                     self.events.emit(agent, "idle", "stopped")
 
     def _ingest_now(self) -> None:
-        lp = self.loop()
-        lp.ingest_ideas(self.ideas)
-        while lp.queue:
-            spec, _ = lp.queue.pop(0)
-            self._add_pending(spec, "paper")
+        with self.working("research"):
+            lp = self.loop()
+            lp.ingest_ideas(self.ideas)
+            while lp.queue:
+                spec, _ = lp.queue.pop(0)
+                self._add_pending(spec, "paper")
 
     def ingest(self) -> dict:
         def work():
@@ -223,9 +248,10 @@ class Lab:
 
         def work():
             try:
-                res = self.scout().run_once()
-                if res["downloaded"]:
-                    self._ingest_now()                  # new PDFs -> Researcher -> proposals waiting for your go-ahead
+                with self.working("research"):
+                    res = self.scout().run_once()
+                    if res["downloaded"] or self._unread_ideas():
+                        self._ingest_now()                  # new PDFs -> Researcher -> proposals (the autopilot tests them)
             except Exception as e:
                 self.events.emit("lab", "error", f"scout: {e}")
                 self.events.emit("scout", "idle", "stopped")
@@ -255,12 +281,153 @@ class Lab:
             return True
         return False
 
+    def _unread_ideas(self) -> bool:
+        done = self._loop_obj.processed_ideas if self._loop_obj else set()
+        if self._loop_obj is None:
+            f = self.work / "loop_state.json"
+            done = set(json.loads(f.read_text()).get("processed_ideas", [])) if f.exists() else set()
+        return any(hashlib.sha256(p.read_bytes()).hexdigest() not in done for p in self.ideas.rglob("*")
+                   if p.is_file() and p.suffix.lower() in IDEA_SUFFIXES)
+
+    # -- Autopilot: search, test, judge and report without asking ---------------------------
+    def _save_ap(self) -> None:
+        self.ap_file.write_text(json.dumps(self.ap, indent=1))
+
+    def set_autopilot(self, enabled: bool | None = None, max_trials_per_day: int | None = None) -> dict:
+        if enabled is not None:
+            self.ap["enabled"] = bool(enabled)
+        if max_trials_per_day is not None:
+            self.ap["max_trials_per_day"] = max(100, min(int(max_trials_per_day), 20000))
+        self._save_ap()
+        return self.autopilot_state()
+
+    def _ap_budget(self, need: int) -> str | None:
+        day = time.strftime("%Y-%m-%d")
+        if self.ap["day"] != day:
+            self.ap["day"], self.ap["trials_today"] = day, 0
+        if self.registry.n_trials >= self.ap["max_trials_total"]:
+            return "total"
+        if self.ap["trials_today"] + need > self.ap["max_trials_per_day"]:
+            return "day"
+        return None
+
+    def autopilot_tick(self) -> bool:
+        """One step of the autonomous cycle. Deterministic rules still decide every verdict: the
+        autopilot only removes the clicks. Returns True if it started a study."""
+        if not self.ap["enabled"] or isinstance(self.llm, NoLLM):
+            return False
+        if any(j["status"] in ("queued", "running") for j in self.jobs.values()):
+            return False
+        with self.lock:
+            nxt = next(iter(self.pending.items()), None)
+        if nxt is None:
+            return False
+        sid, item = nxt
+        why = self._ap_budget(item["spec"].n_candidates)
+        if why:
+            if self.ap.get("paused") != why:
+                self.ap["paused"] = why
+                self.events.emit("lab", "budget", f"autopilot paused: {why} trial budget reached")
+            return False
+        self.ap["paused"] = None
+        self.ap["trials_today"] += item["spec"].n_candidates
+        self._save_ap()
+        self.events.emit("lab", "autostart", f"autopilot starts: {item['spec'].name}")
+        return not self.start(sid).get("error")
+
+    def autopilot_state(self) -> dict:
+        sc = self.scout()
+        last = sc.state["last_run"]
+        nxt = (last["at"] + sc.state["auto"]["minutes"] * 60) if (sc.state["auto"]["enabled"] and last) else None
+        self._ap_budget(0)
+        return {"enabled": self.ap["enabled"] and not isinstance(self.llm, NoLLM), "paused": self.ap.get("paused"),
+                "trials_today": self.ap["trials_today"], "max_trials_per_day": self.ap["max_trials_per_day"],
+                "max_trials_total": self.ap["max_trials_total"], "queue": len(self.pending),
+                "next_search": nxt, "searching": self._scout_running, "working": sorted(self.working_agents()),
+                "ready": len(self.dossiers())}
+
+    def working_agents(self) -> set[str]:
+        """Who is really busy right now. Derived from live activity counters and the agents' own
+        lifecycle events, never from a timeout: a long LLM wait must not look like 'switched off'."""
+        life, b, out = self.events.life, self.busy, set()
+        if b["research"] > 0:
+            out.add("researcher")
+            if life.get("scout") == "working" or self._scout_running:
+                out.add("scout")
+        if b["job"] > 0:
+            for a in ("optimizer", "validator", "judge", "planner", "auditor"):
+                if life.get(a) == "working":
+                    out.add(a)
+            if not out & {"optimizer", "validator", "judge", "planner", "auditor"}:
+                out.add("optimizer")
+        if b["chat"] > 0:
+            out.add("strategist")
+        return out
+
+    # -- ready strategies -----------------------------------------------------------------
+    def make_dossier(self, slug: str) -> dict | None:
+        d = load_study(self.work, slug)
+        if d is None or not d.get("series"):
+            return None
+        rep = {**d["report"], "series": d["series"]}
+        lang = "it" if self.language == "Italian" else "en"
+        dos = build_dossier(rep, {k: PRESETS[k] for k in ("50k", "25k")}, self.contracts, self.registry.n_trials,
+                            lang, TEMPLATES[rep["template"]].doc, d.get("auditor"))
+        if dos is None:
+            return None
+        dos["slug"], dos["created"] = slug, time.strftime("%Y-%m-%d %H:%M")
+        self.dossier_dir.mkdir(parents=True, exist_ok=True)
+        (self.dossier_dir / f"{slug}.json").write_text(json.dumps(dos, indent=1, ensure_ascii=False, default=str))
+        self.events.emit("lab", "ready", f"READY: {dos['name']}", {"slug": slug})
+        return dos
+
+    def dossiers(self) -> list[dict]:
+        if not self.dossier_dir.exists():
+            return []
+        out = []
+        for f in sorted(self.dossier_dir.glob("*.json"), reverse=True):
+            try:
+                out.append(json.loads(f.read_text()))
+            except ValueError:
+                continue
+        return out
+
+    def recover_specs(self) -> int:
+        """Proposals the Researcher wrote before a restart but that were never tested come back to the queue."""
+        n, lp = 0, self.loop()
+        have = {_fingerprint(v["spec"]) for v in self.pending.values()}
+        for f in sorted((self.work / "specs_auto").glob("*.json")) if (self.work / "specs_auto").exists() else []:
+            try:
+                for d in json.loads(f.read_text()).get("strategies", []):
+                    sp = from_dict(d)
+                    fp = _fingerprint(sp)
+                    if fp not in lp.done_specs and fp not in have:
+                        have.add(fp); self._add_pending(sp, "paper"); n += 1
+            except Exception:
+                continue
+        return n
+
     def start_background(self) -> None:
+        try:
+            self.recover_specs()
+        except Exception as e:
+            self.events.emit("lab", "error", f"recover: {e}")
+        if self.ap_first_run and not isinstance(self.llm, NoLLM):
+            sc = self.scout()                          # first launch: the Researcher searches by itself every 30 min
+            sc.state["auto"] = {"enabled": True, "minutes": 30}
+            sc._save()
+            self._save_ap()
+
         def loop():
+            n = 0
             while True:
-                time.sleep(30)
+                time.sleep(5)
+                n += 1
                 try:
-                    self.scout_tick()
+                    if self.ap["enabled"]:
+                        if n % 6 == 0:
+                            self.scout_tick()
+                        self.autopilot_tick()
                 except Exception as e:
                     self.events.emit("lab", "error", f"scheduler: {e}")
         threading.Thread(target=loop, daemon=True).start()
@@ -285,7 +452,8 @@ class Lab:
                 "ideas": ideas, "pending": pending, "jobs": list(self.jobs.values())[-10:],
                 "strategies": list_studies(self.work), "template_requests": reqs,
                 "templates": {k: t.doc for k, t in TEMPLATES.items() if not t.control}, "symbol": self.contract.symbol,
-                "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state()}
+                "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state(),
+                "autopilot": self.autopilot_state()}
 
     def events_after(self, after: int) -> dict:
         ev = self.events.read()

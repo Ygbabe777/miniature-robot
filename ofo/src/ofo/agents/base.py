@@ -43,7 +43,12 @@ class Agent:
         if self.events:
             self.events.emit(self.name, "working", "thinking")
         for attempt in range(1, self.max_attempts + 1):
-            reply = self.llm.chat(messages, temperature=self.temperature)
+            try:
+                reply = self.llm.chat(messages, temperature=self.temperature)
+            except Exception:
+                if self.events:
+                    self.events.emit(self.name, "idle", "llm unavailable")      # never stay "working" after a crash
+                raise
             try:
                 out = self.validate(parse_json(reply))
                 if self.events:

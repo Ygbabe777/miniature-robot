@@ -52,6 +52,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                                                   q.get("before", [None])[0]))
                 if u.path == "/api/scout":
                     return self._json(lab.scout_state())
+                if u.path == "/api/dossiers":
+                    return self._json({"dossiers": lab.dossiers()})
                 if u.path == "/api/accounts":
                     return self._json(lab.accounts())
                 if u.path.startswith("/api/indicators/"):
@@ -89,6 +91,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.scout_run(data.get("lang")))
                 if u.path == "/api/scout/auto":
                     return self._json(lab.set_scout_auto(bool(data.get("enabled")), data.get("minutes")))
+                if u.path == "/api/autopilot":
+                    return self._json(lab.set_autopilot(data.get("enabled"), data.get("max_trials_per_day")))
                 self._json({"error": "not found"}, 404)
             except Exception as e:
                 self._json({"error": str(e)[:300]}, 500)

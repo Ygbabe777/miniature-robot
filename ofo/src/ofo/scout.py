@@ -13,6 +13,7 @@ import re
 import time
 from pathlib import Path
 
+from .agents.base import Agent
 from .agents.roles import make_curator
 from .papers import relevance
 from .web import Polite, WebError, download_pdf, pdf_allowed, search_arxiv, search_semantic_scholar, search_ssrn
@@ -53,6 +54,7 @@ class Scout:
         self.state = json.loads(self.file.read_text()) if self.file.exists() else {}
         self.state.setdefault("queries", {}); self.state.setdefault("papers", {})
         self.state.setdefault("auto", {"enabled": False, "minutes": 60}); self.state.setdefault("last_run", None)
+        self.state.setdefault("extra_topics", [])
 
     def _emit(self, kind: str, msg: str = "", data: dict | None = None) -> None:
         if self.events:
@@ -63,7 +65,40 @@ class Scout:
 
     def next_queries(self) -> list[str]:
         """The topics searched longest ago (never searched = first)."""
-        return sorted(self.topics, key=lambda q: self.state["queries"].get(q, 0))[: self.queries_per_run]
+        return sorted(self.all_topics, key=lambda q: self.state["queries"].get(q, 0))[: self.queries_per_run]
+
+    @property
+    def all_topics(self) -> list[str]:
+        return list(self.topics) + [q for q in self.state["extra_topics"] if q not in self.topics]
+
+    def expand_topics(self, n: int = 6) -> list[str]:
+        """The fixed list is finite. When searches stop turning up anything new, the model invents new
+        queries (short, validated strings). They only ever go into a search box."""
+        if self.llm is None:
+            return []
+        def check(d):
+            qs = d.get("queries")
+            if not isinstance(qs, list) or not qs:
+                raise ValueError("'queries' must be a non-empty list of strings")
+            out = [" ".join(q.split()) for q in qs if isinstance(q, str) and 8 <= len(q.strip()) <= 120]
+            if not out:
+                raise ValueError("queries must be 8-120 characters each")
+            return {"queries": out[:n]}
+        system = ("You help a futures-trading research lab find academic papers. Reply ONLY with JSON "
+                  "{\"queries\": [..]}: search queries for arXiv/SSRN about tradable, testable systematic "
+                  "strategies on index futures (intraday or daily), different from the ones already used. "
+                  "Each 3-8 words, English. Already used: " + json.dumps(self.all_topics[-40:]))
+        try:
+            res = Agent("scout", self.llm, system, check, self.events).run("Give me new search queries.")
+        except Exception as e:
+            self._emit("error", f"could not invent new topics: {e}")
+            return []
+        new = [q for q in res["queries"] if q not in self.all_topics]
+        self.state["extra_topics"] += new
+        self._save()
+        if new:
+            self._emit("topics", f"{len(new)} new search topics", {"topics": new})
+        return new
 
     def _candidates(self, queries: list[str]) -> list[dict]:
         found, ids = [], set()
@@ -136,6 +171,8 @@ class Scout:
                    "manual": sum(1 for p in picks if p["source"] == "ssrn")}
         self.state["last_run"] = summary
         self._save()
+        if not cands and all(q in self.state["queries"] for q in self.all_topics):
+            self.expand_topics()                         # nothing new anywhere: invent fresh topics
         self._emit("done", f"{len(cands)} new candidates, {got} papers downloaded", summary)
         return summary
 
@@ -144,5 +181,5 @@ class Scout:
         a = self.state["auto"]; last = self.state["last_run"]
         return {"running": running, "auto": a, "last_run": last,
                 "next_run": (last["at"] + a["minutes"] * 60) if (a["enabled"] and last) else None,
-                "queries_done": len(self.state["queries"]), "queries_total": len(self.topics),
+                "queries_done": len(self.state["queries"]), "queries_total": len(self.all_topics),
                 "papers": [{"id": k, **{x: v.get(x) for x in ("title", "url", "published", "why", "status")}} for k, v in papers[:10]]}

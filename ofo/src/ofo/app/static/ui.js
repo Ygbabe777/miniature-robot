@@ -115,7 +115,34 @@
     if (window.LabScene) LabScene.setTrader(s.strategies.filter(x => x.status === 'APPROVED').map(x => x.name), { wait: t('tr_wait'), desk: t('tr_desk'), ready: t('tr_ready'), head: t('tr_head'), none: t('tr_none') });
     trader.symbol = s.symbol; trader.setStrategies(s.strategies);
   }
-  async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); } catch (e) {} }
+  async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); if (s.autopilot) renderAutopilot(s.autopilot); } catch (e) {} }
+
+  // ---------- autopilot + ready strategies ----------
+  function renderAutopilot(a) {
+    if (window.LabScene) LabScene.setServer(a.working, a.enabled);
+    const mins = a.next_search ? Math.max(0, Math.round((a.next_search - Date.now() / 1000) / 60)) : null;
+    const bits = [t('ap_budget', { a: a.trials_today, b: a.max_trials_per_day }), t('ap_queue', { n: a.queue }), t('ap_ready', { n: a.ready })];
+    if (a.searching) bits.push(t('ap_searching')); else if (mins !== null && a.enabled) bits.push(t('ap_next', { m: mins }));
+    const key = JSON.stringify([a.enabled, bits, a.paused, LANG]);
+    if (key === apKey) return; apKey = key;
+    $('#autopilot').innerHTML = `<div class="${a.enabled ? 'apon' : 'apoff'}">${a.enabled ? t('ap_on') : t('ap_off')}</div><div class="apm">${bits.join(' · ')}</div>`
+      + (a.paused ? `<div class="apoff">${t('ap_paused_' + a.paused)}</div>` : '')
+      + `<button class="btn small" id="ap-toggle">${a.enabled ? t('ap_toggle_off') : t('ap_toggle_on')}</button><div class="apn">${t('ap_note')}</div>`;
+    $('#ap-toggle').onclick = async () => { await api('/api/autopilot', { method: 'POST', json: { enabled: !a.enabled } }); apKey = ''; poll(); };
+    if (a.ready !== readyN) { readyN = a.ready; loadReady(); }
+  }
+  let apKey = '', readyN = -1;
+  async function loadReady() {
+    try {
+      const d = await api('/api/dossiers'), el = $('#ready');
+      if (!d.dossiers.length) { el.innerHTML = `<h2>${t('ready_title')}</h2><div class="empty">${t('ready_none')}</div>`; return; }
+      el.innerHTML = `<h2>${t('ready_title')} (${d.dossiers.length})</h2>` + d.dossiers.map(x => {
+        const accts = Object.entries(x.accounts).map(([k, a]) => `<div class="dacct"><b>${t('ready_acct', { a: esc(k) })}</b><p>${esc(a.text)}</p>
+          <details><summary>${t('ready_table')} (${t('ready_cols')})</summary><table>${a.table.map(r => `<tr class="${a.recommended && a.recommended.micro_equiv === r.micro_equiv ? 'pick' : ''}"><td>${r.micro_equiv}</td><td>${pct(r.p_pass)}</td><td>${pct(r.p_pass_lo)}</td><td>${pct(r.p_bust)}</td></tr>`).join('')}</table></details></div>`).join('');
+        return `<div class="dossier"><h3>${esc(x.headline)}</h3><p>${esc(x.strategy_text)}</p>${accts}${x.auditor ? `<p><b>${t('ready_aud')}:</b> ${esc(x.auditor)}</p>` : ''}<p class="cav">${esc(x.caveat)}</p></div>`;
+      }).join('');
+    } catch (e) {}
+  }
 
   // ---------- Trader tab: candlestick chart of the user's own historical data ----------
   trader = (function () {
@@ -311,10 +338,10 @@
 
   // ---------- agents at work ----------
   const ROWS = [['research', 'Researcher + Scout'], ['strategist', 'Strategist'], ['optimizer', 'Optimizer + Planner'], ['validator', 'Validator'], ['judge', 'Judge + Auditor']];
-  if (window.LabScene) LabScene.setStateLabels({ idle: t('st_idle'), working: t('st_working'), done: t('st_done') });
+  if (window.LabScene) LabScene.setStateLabels({ idle: t('st_idle'), standby: t('st_standby'), working: t('st_working'), done: t('st_done') });
   function renderAgents() {
     if (!window.LabScene) return;
-    const st = LabScene.states(), cls = { idle: 'i', working: 'w', done: 'd' };
+    const st = LabScene.states(), cls = { idle: 'i', standby: 's', working: 'w', done: 'd' };
     $('#agents').innerHTML = ROWS.map(([k, n]) => `<div><span>${n}</span><span class="${cls[st[k]]}">${st[k] === 'done' ? '✓ ' : ''}${t('st_' + st[k])}</span></div>`).join('');
   }
   setInterval(renderAgents, 500); renderAgents();
