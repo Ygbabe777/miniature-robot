@@ -158,5 +158,5 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
     caveat = L["caveat"].format(n=len(pnl), trials=trials_total)
     return {"name": report["name"], "template": report["template"], "tf": tf, "params": params, "headline": head,
             "strategy_text": strat, "exits": {"chosen": report["series"].get("exit"), "grid": ex.get("grid", [])}, "accounts": accounts, "caveat": caveat, "n_oos_days": len(pnl),
-            "oos_pnl": float(pnl.sum()), "base_contracts": base_contracts, "language": language,
+            "oos_pnl": float(pnl.sum()), "oos_mean": float(pnl.mean()), "oos_std": float(pnl.std(ddof=1)), "base_contracts": base_contracts, "language": language,
             "auditor": (audit or {}).get("summary"), "risk_flags": (audit or {}).get("risk_flags", [])}

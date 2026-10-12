@@ -102,3 +102,72 @@ def test_unfinished_proposals_come_back_after_restart(tmp_path, bars_csv):
     sd.mkdir(parents=True)
     (sd / "p.json").write_text(json.dumps({"strategies": [SPEC], "rejected": []}))
     assert lab.recover_specs() == 1 and lab.recover_specs() == 0
+
+
+# ---- autonomous (paper) deployment ----
+import pandas as pd
+from ofo import deploy as dep
+from ofo.backtest import MNQ
+
+
+def test_assess_retires_on_drawdown_or_divergence_and_confirms_good_runs():
+    bad = [-300] * 6                                   # -1800 vs allowed 2000: past 80%
+    assert dep.assess(bad, 100, 200, 2000)[0] == "retired"
+    drift = [-60.0] * 45                               # small losses but far below the expected +100/day
+    assert dep.assess(drift, 100, 150, 5000)[0] == "retired"
+    ok = [110.0, 90.0] * 35
+    assert dep.assess(ok, 100, 150, 2000)[0] == "confirmed"
+    assert dep.assess([50.0] * 10, 100, 150, 2000)[0] == "live"
+    assert dep.assess([], 100, 150, 2000) == ("live", "")
+
+
+def test_nothing_deployed_without_a_safe_size():
+    d = {"slug": "x", "name": "x", "template": "orb", "tf": "15min", "params": {}, "accounts": {"50k": {"recommended": None}}}
+    assert dep.make_deployment(d, "2025-01-01", "now") is None
+
+
+def test_approved_strategy_is_deployed_and_updated_without_any_click(tmp_path, bars_csv):
+    lab = make(tmp_path, bars_csv)
+    lab.bars()
+    first_cut = str(lab._sessions[-60])[:10]                       # pretend the strategy was approved 60 sessions ago
+    lab.dossier_dir.mkdir(parents=True)
+    d = {"slug": "bo", "name": "BO", "template": "breakout", "tf": "15min", "params": {"lookback": 20},
+         "exits": {"chosen": {"stop_atr": 2.0, "rr": 2.0}}, "oos_mean": 50.0, "oos_std": 300.0,
+         "accounts": {"50k": {"recommended": {"micro_equiv": 2}}}}
+    (lab.dossier_dir / "bo.json").write_text(json.dumps(d))
+    assert lab.deploy_ready() == 1 and lab.deploy_ready() == 0     # idempotent
+    item = lab.deployments.get("bo")
+    assert item["status"] == "live" and item["micro"] == 2
+    item["cut"] = first_cut
+    assert lab.forward_tick(force=True) is True
+    fw = lab.deployments.get("bo")["forward"]
+    assert fw["days"] > 30 and len(fw["equity"]) == fw["days"] and "eval_if_traded" in fw
+    assert lab.state()["deployed"] in (0, 1)
+    assert "trader" not in lab.working_agents()                    # finished: nobody stuck "working"
+    assert dep.Store(lab.data / "deployments.json").get("bo")      # persisted
+
+
+def test_refresh_data_without_keys_is_a_clean_noop(tmp_path, monkeypatch):
+    monkeypatch.delenv("MASSIVE_S3_ACCESS_KEY", raising=False)
+    assert dep.refresh_data(tmp_path, str(tmp_path / "b.csv.gz"), "NQ") == {"ok": False, "why": "no_keys"}
+
+
+def test_refresh_downloads_new_days_and_rebuilds(tmp_path):
+    day = tmp_path / "us_futures/min/2025/01/2025-01-06.csv.gz"
+    day.parent.mkdir(parents=True)
+    day.write_bytes(b"x")
+    calls = {}
+
+    def download(prefix, a, b, out):
+        calls["args"] = (prefix, str(a), out)
+        (tmp_path / "us_futures/min/2025/01/2025-01-07.csv.gz").write_bytes(b"y")
+
+    def build(paths, root):
+        calls["n"] = len(paths)
+        idx = pd.date_range("2025-01-06 09:30", periods=30, freq="1min")
+        return pd.DataFrame({"open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 10}, index=idx)
+
+    out = dep.refresh_data(tmp_path, str(tmp_path / "NQ_1min.csv.gz"), "NQ", today=__import__("datetime").date(2025, 1, 8),
+                           download=download, build=build)
+    assert out == {"ok": True, "new_files": 1, "rebuilt": True} and calls["args"][0] == "us_futures/min/2025/01/" and calls["n"] == 2
+    assert (tmp_path / "NQ_1min.csv.gz").exists()

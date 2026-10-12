@@ -119,7 +119,7 @@
 
   // ---------- autopilot + ready strategies ----------
   function renderAutopilot(a) {
-    if (window.LabScene) LabScene.setServer(a.working, a.enabled);
+    if (window.LabScene) LabScene.setServer(a.working, a.enabled, a.deployed > 0);
     const mins = a.next_search ? Math.max(0, Math.round((a.next_search - Date.now() / 1000) / 60)) : null;
     const bits = [t('ap_budget', { a: a.trials_today, b: a.max_trials_per_day }), t('ap_queue', { n: a.queue }), t('ap_ready', { n: a.ready })];
     if (a.searching) bits.push(t('ap_searching')); else if (mins !== null && a.enabled) bits.push(t('ap_next', { m: mins }));
@@ -130,8 +130,26 @@
       + `<button class="btn small" id="ap-toggle">${a.enabled ? t('ap_toggle_off') : t('ap_toggle_on')}</button><div class="apn">${t('ap_note')}</div>`;
     $('#ap-toggle').onclick = async () => { await api('/api/autopilot', { method: 'POST', json: { enabled: !a.enabled } }); apKey = ''; poll(); };
     if (a.ready !== readyN) { readyN = a.ready; loadReady(); }
+    if (a.deployed !== depN) { depN = a.deployed; loadDeployed(); }
   }
-  let apKey = '', readyN = -1;
+  let apKey = '', readyN = -1, depN = -1;
+  async function loadDeployed() {
+    try {
+      const d = await api('/api/deployments'), el = $('#deployed');
+      if (!d.items.length) { el.innerHTML = ''; return; }
+      const dt = d.data || {};
+      const note = dt.why === 'no_keys' ? t('dep_nokeys') : dt.ok === false ? t('dep_err', { e: esc(dt.why || '') }) : '';
+      el.innerHTML = `<h2>${t('dep_title')}</h2><div class="sub">${t('dep_data', { d: esc(d.last_bar || '–') })} ${note}</div>` + d.items.map(x => {
+        const f = x.forward || {};
+        const eq = (f.equity || []).map(p => p[1]), max = Math.max(1, ...eq.map(Math.abs));
+        const spark = eq.length > 1 ? `<svg viewBox="0 0 100 24" width="100%" height="24" preserveAspectRatio="none"><polyline fill="none" stroke="${(f.pnl || 0) >= 0 ? 'var(--up)' : 'var(--down)'}" stroke-width="1.5" points="${eq.map((v, i) => (i / (eq.length - 1) * 100).toFixed(1) + ',' + (12 - v / max * 11).toFixed(1)).join(' ')}"/></svg>` : '';
+        return `<div class="card"><b>${esc(x.name)}</b> <span class="badge dep-${x.status}">${t('dep_' + x.status)}</span>
+          <div class="meta">${x.account ? t('dep_on', { n: x.micro, a: esc(x.account) }) + ' · ' : ''}${t('dep_days', { n: f.days || 0 })}${f.days ? ' · P&L ' + money(f.pnl) : ''}${f.eval_if_traded ? ' · ' + t('dep_eval', { s: t('dep_ev_' + f.eval_if_traded.status), n: f.eval_if_traded.days }) : ''}</div>
+          ${spark}${x.reason ? `<div class="sub">${esc(x.reason)}</div>` : ''}</div>`;
+      }).join('');
+    } catch (e) {}
+  }
+  setInterval(() => { depN = -1; }, 300000);
   async function loadReady() {
     try {
       const d = await api('/api/dossiers'), el = $('#ready');

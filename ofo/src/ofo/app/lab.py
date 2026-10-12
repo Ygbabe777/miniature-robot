@@ -24,6 +24,7 @@ from ..registry import TrialRegistry
 from ..agents.loop import _fingerprint
 from ..specs import StrategySpec, from_dict
 from ..storage import list_studies, load_study, slugify
+from .. import deploy as dep
 from ..dossier import build_dossier
 from ..accounts import demo_accounts, load_accounts
 from ..data import resample
@@ -78,6 +79,9 @@ class Lab:
             self.ap.update(json.loads(self.ap_file.read_text()))
         self.ap_first_run = first
         self.dossier_dir = self.work / "dossiers"
+        self.deployments = dep.Store(self.data / "deployments.json")
+        self.busy["forward"] = 0
+        self._last_forward = 0.0
 
     # -- engine -------------------------------------------------------------------------
     def bars(self) -> pd.DataFrame:
@@ -207,6 +211,7 @@ class Lab:
                     self._add_pending(nxt, "planner")
                 if res["verdict"] == "APPROVED":
                     self.make_dossier(job["slug"])
+                    self.deploy_ready()                # approved -> deployed (paper) with no click
             except Exception as e:
                 job.update(status="error", error=str(e)[:300])
                 self.events.emit("lab", "error", f"{spec.name}: {e}")
@@ -357,7 +362,8 @@ class Lab:
                 "trials_today": self.ap["trials_today"], "max_trials_per_day": self.ap["max_trials_per_day"],
                 "max_trials_total": self.ap["max_trials_total"], "queue": len(self.pending),
                 "next_search": nxt, "searching": self._scout_running, "working": sorted(self.working_agents()),
-                "ready": len(self.dossiers())}
+                "ready": len(self.dossiers()),
+                "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed"))}
 
     def working_agents(self) -> set[str]:
         """Who is really busy right now. Derived from live activity counters and the agents' own
@@ -375,6 +381,8 @@ class Lab:
                 out.add("optimizer")
         if b["chat"] > 0:
             out.add("strategist")
+        if b.get("forward", 0) > 0:
+            out.add("trader")
         return out
 
     # -- ready strategies -----------------------------------------------------------------
@@ -404,6 +412,77 @@ class Lab:
             except ValueError:
                 continue
         return out
+
+    # -- autonomous deployment (paper) ------------------------------------------------------
+    def deploy_ready(self) -> int:
+        """Every ready strategy that is not deployed yet goes live on paper. Idempotent."""
+        n = 0
+        for d in self.dossiers():
+            if self.deployments.get(d["slug"]):
+                continue
+            self.bars()
+            last = str(self._sessions[-1])[:10]
+            item = dep.make_deployment(d, last, time.strftime("%Y-%m-%d %H:%M"))
+            if item is None:
+                item = {"slug": d["slug"], "name": d["name"], "status": "not_deployed",
+                        "reason": "no safe size for any account", "forward": {"days": 0}}
+                self.events.emit("trader", "skipped", f"{d['name']}: no safe size, not deployed")
+            else:
+                self.events.emit("trader", "deployed", f"DEPLOYED (paper): {d['name']} - {item['micro']} micro on {item['account']}",
+                                 {"slug": d["slug"]})
+            self.deployments.d["items"].append(item)
+            self.deployments.save()
+            n += 1
+        return n
+
+    def forward_tick(self, now: float | None = None, force: bool = False) -> bool:
+        """Daily-ish: fetch new market days (if Massive keys are set), then update every live paper deployment."""
+        now = now or time.time()
+        live = [x for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed")]
+        if not live or (not force and now - self._last_forward < 6 * 3600):
+            return False
+        self._last_forward = now
+        with self.working("forward"):
+            self.events.emit("trader", "working", "checking for new market data")
+            info = self._refresh_data()
+            self.deployments.d["data"] = {**info, "at": time.strftime("%Y-%m-%d %H:%M"),
+                                          "last_bar": str(self.bars().index[-1])[:16]}
+            bars = self.bars()
+            for x in live:
+                try:
+                    r = dep.forward_update(bars, x, self.contract, self.contracts, self.rules_for(x["account"]))
+                    x["forward"] = r["forward"]
+                    sig = dep.new_signals(bars, x, self.contract, self.contracts)
+                    fresh = sig[x["n_signals"]:]
+                    dep.append_signals(self.data / "signals", x["slug"], fresh)
+                    for t in fresh[-3:]:
+                        self.events.emit("trader", "signal", f"{x['name']}: {'LONG' if t['side'] > 0 else 'SHORT'} {t['entry_px']:.2f} -> {t['exit_px']:.2f} ({t['pnl']:+.0f}$)")
+                    x["n_signals"] = len(sig)
+                    if r["status"] != x["status"] and not (x["status"] == "confirmed" and r["status"] == "live"):
+                        x["status"], x["reason"] = r["status"], r["reason"]
+                        self.events.emit("trader", x["status"], f"{x['name']}: {x['status'].upper()} - {x['reason']}")
+                except Exception as e:
+                    self.events.emit("lab", "error", f"forward {x['slug']}: {e}")
+            self.deployments.save()
+            self.events.emit("trader", "done", f"{len(live)} deployments updated")
+        return True
+
+    def rules_for(self, account: str):
+        return PRESETS.get(account, self.rules)
+
+    def _refresh_data(self) -> dict:
+        import re
+        root = (re.match(r"([A-Za-z]+)_", Path(self.bars_path).name) or [None, "NQ"])[1].upper()
+        info = dep.refresh_data(self.data, self.bars_path, root)
+        if info.get("rebuilt"):
+            with self.lock:                                   # drop the cached 700k-row frame: the next read gets the new days
+                self._bars = None; self._trades_cache.clear(); self._ind_cache.clear()
+            self.bars()
+        return info
+
+    def deployments_view(self) -> dict:
+        return {"items": self.deployments.d["items"], "data": self.deployments.d.get("data", {}),
+                "last_bar": str(self.bars().index[-1])[:10] if Path(self.bars_path).exists() else None}
 
     def recover_specs(self) -> int:
         """Proposals the Researcher wrote before a restart but that were never tested come back to the queue."""
@@ -441,6 +520,9 @@ class Lab:
                         if n % 3 == 0:
                             self.scout_tick()
                         self.autopilot_tick()
+                        if n % 12 == 0:
+                            self.deploy_ready()
+                            self.forward_tick()
                 except Exception as e:
                     self.events.emit("lab", "error", f"scheduler: {e}")
         threading.Thread(target=loop, daemon=True).start()
@@ -466,7 +548,8 @@ class Lab:
                 "strategies": list_studies(self.work), "template_requests": reqs,
                 "templates": {k: t.doc for k, t in TEMPLATES.items() if not t.control}, "symbol": self.contract.symbol,
                 "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state(),
-                "autopilot": self.autopilot_state()}
+                "autopilot": self.autopilot_state(),
+                "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed"))}
 
     def events_after(self, after: int) -> dict:
         ev = self.events.read()

@@ -68,3 +68,15 @@ periodo di sviluppo e mostra la tabella nel dettaglio della strategia. La coppia
 l'uscita propria della strategia di almeno 0.03 di Sharpe giornaliero; il Giudice la valuta poi sul blocco nascosto.
 Regole prudenti: se stop e target cadono nella stessa barra vale lo stop; i gap riempiono all'apertura. Le 20 celle contano
 come prove nel registro. Il fascicolo della strategia pronta riporta stop, target e rischio per operazione in dollari.
+
+## Deployment automatico (paper trading)
+Quando il Giudice approva una strategia, l'Autopilota la **mette in linea da solo** (nessun clic): dal giorno dopo l'ultimo
+dato disponibile applica le sue regole (con stop/target scelti) ai giorni nuovi, nella dimensione consigliata, e confronta
+il risultato con quello atteso. Si vede in Strategie > "Deployment automatici".
+- **Dati nuovi**: con `MASSIVE_S3_ACCESS_KEY` e `MASSIVE_S3_SECRET_KEY` nell'ambiente, ogni 6 ore il Lab scarica i giorni
+  nuovi e ricostruisce `NQ_1min.csv.gz` da solo. Senza chiavi il test avanza solo quando aggiorni tu il file.
+- **Regole automatiche**: RITIRATA se il drawdown paper arriva all'80% del massimo consentito o, dopo 40 giorni, i risultati
+  sono statisticamente peggiori del blocco nascosto (z < -2.5); CONFERMATA dopo 60 giorni in profitto e coerenti.
+- **Segnali**: ogni nuovo trade finisce in `data/signals/<strategia>.jsonl` (aggancio per un bot Discord o per il broker).
+- **Nessun ordine reale parte dal computer.** Operare su un conto vero richiede un collegamento al broker (credenziali,
+  limiti di rischio) che puoi autorizzare solo tu: non lo attivo di nascosto.

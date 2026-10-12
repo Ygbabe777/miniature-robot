@@ -52,6 +52,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                                                   q.get("before", [None])[0]))
                 if u.path == "/api/scout":
                     return self._json(lab.scout_state())
+                if u.path == "/api/deployments":
+                    return self._json(lab.deployments_view())
                 if u.path == "/api/dossiers":
                     return self._json({"dossiers": lab.dossiers()})
                 if u.path == "/api/accounts":

@@ -396,7 +396,7 @@
   // ---------- events ----------
   let gearSpeed = 0.4, partSpeed = 0.3, optRunning = false, valUntil = 0, heatT = 0;
   const now = () => performance.now() / 1000;
-  const MAP = { researcher: 'research', scout: 'research', strategist: 'strategist', you: 'strategist', optimizer: 'optimizer', planner: 'optimizer', validator: 'validator', judge: 'judge', auditor: 'judge', lab: 'judge' };
+  const MAP = { researcher: 'research', scout: 'research', strategist: 'strategist', you: 'strategist', trader: 'trader', optimizer: 'optimizer', planner: 'optimizer', validator: 'validator', judge: 'judge', auditor: 'judge', lab: 'judge' };
   function speak(station, text, secs) {
     const r = robots[station]; if (!r || !text) return;
     r.bub.textContent = text.length > 110 ? text.slice(0, 107) + '...' : text;
@@ -409,14 +409,14 @@
     const hex = '#' + col.toString(16).padStart(6, '0');
     verdict.redraw(centered([status === 'INSUFFICIENT_EVIDENCE' ? 'NOT ENOUGH DATA' : status, (name || '').slice(0, 22)], hex, status === 'INSUFFICIENT_EVIDENCE' ? 40 : 56), '#07080c');
   }
-  const AGENTS_OF = { research: ['researcher', 'scout'], strategist: ['strategist'], optimizer: ['optimizer', 'planner'], validator: ['validator'], judge: ['judge', 'auditor'], trader: [] };
+  const AGENTS_OF = { research: ['researcher', 'scout'], strategist: ['strategist'], optimizer: ['optimizer', 'planner'], validator: ['validator'], judge: ['judge', 'auditor'], trader: ['trader'] };
   const agentState = {};
   const matWork = mat(0xffffff, glow(0xffffff, 1.3)), matDone = mat(THEME.n.up, glow(THEME.n.up, 1.2));
   let stateLabels = { idle: 'idle', standby: 'standby', working: 'working', done: 'done' };
   // The server says who is REALLY busy (polled every few seconds). Events only give instant feedback for a few
   // seconds, so a long wait for the AI can never make a scientist look switched off.
-  let serverWorking = null, serverAt = 0, autopilotOn = false;
-  function setServer(working, autopilot) { serverWorking = new Set(working || []); serverAt = now(); autopilotOn = !!autopilot; }
+  let serverWorking = null, serverAt = 0, autopilotOn = false, traderLive = false;
+  function setServer(working, autopilot, live) { serverWorking = new Set(working || []); serverAt = now(); autopilotOn = !!autopilot; traderLive = !!live; }
   function setAgentState(agent, state, at) {
     const t0 = at == null ? now() : at;
     agentState[agent] = { state, until: t0 + (state === 'working' ? 8 : state === 'done' ? 12 : 0) };
@@ -431,7 +431,7 @@
       if (s.state === 'done' && t < s.until) done = true;
     }
     if (done) return 'done';
-    return autopilotOn && name !== 'trader' ? 'standby' : 'idle';
+    return (autopilotOn && name !== 'trader') || (name === 'trader' && traderLive) ? 'standby' : 'idle';
   }
   function onEvent(ev) {
     if (ev.type === 'working' || ev.type === 'done' || ev.type === 'idle') setAgentState(ev.agent, ev.type);
@@ -489,7 +489,7 @@
       const st = robotState(r.name, t); r.state = st;
       const speaking = t < r.until, working = st === 'working';
       r.g.position.y = r.base + (st === 'done' ? Math.abs(Math.sin(t * 5 + r.phase)) * 0.1 : 0);       // no hopping: feet stay on the floor
-      const hasDesk = !!r.pad;
+      const hasDesk = !!r.pad || r.name === 'trader';
       let lx, rx, hd = 0;
       if (st === 'done') { lx = -2.5 + Math.sin(t * 6) * 0.25; rx = -2.5 - Math.sin(t * 6) * 0.25; }
       else if (hasDesk && (working || st === 'standby')) {
