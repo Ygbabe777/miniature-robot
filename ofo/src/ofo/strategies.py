@@ -47,10 +47,18 @@ def random_control(bars: pd.DataFrame, seed: int, block: int = 20) -> pd.Series:
 
 
 def flatten_overnight(pos: pd.Series, flat_from: str = "16:45", flat_to: str = "18:00") -> pd.Series:
-    """Force flat between flat_from and flat_to (exchange-local time): prop firms
-    require positions closed before the daily close."""
-    t = pos.index.strftime("%H:%M")
-    return pos.where(~((t >= flat_from) & (t < flat_to)), 0.0)
+    """Guarantee nothing is HELD at or after `flat_from` (exchange-local time).
+
+    A target set at the close of bar t is held during bar t+1. For the held position to
+    be zero on every bar that ends after `flat_from`, the target must already be zero on
+    bars starting later than flat_from - 2*bar_length. This works for any bar size: with
+    30/60-minute bars a naive time mask would leave a position open through the
+    17:00-18:00 maintenance break. Prop firms require flat before the daily close."""
+    step = pos.index.to_series().diff().median()
+    limit = pd.Timedelta(hours=int(flat_from[:2]), minutes=int(flat_from[3:])) - 2 * step
+    stop = pd.Timedelta(hours=int(flat_to[:2]), minutes=int(flat_to[3:]))
+    tod = pd.to_timedelta(pos.index.hour, unit="h") + pd.to_timedelta(pos.index.minute, unit="m")
+    return pos.where(~((tod > limit) & (tod < stop)), 0.0)
 
 
 GRIDS = {

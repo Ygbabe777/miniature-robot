@@ -54,3 +54,18 @@ def test_strategies_are_causal():
         cut = len(bars) // 2
         part = fn(bars.iloc[:cut], **grid[0])
         pd.testing.assert_series_equal(full.iloc[:cut], part, check_names=False)
+
+
+def test_nothing_is_held_past_the_flat_time_for_any_bar_size():
+    from ofo.data import resample
+    from ofo.strategies import flatten_overnight
+    bars = synth(n_sessions=12, seed=5)
+    always_long = pd.Series(1.0, index=bars.index)
+    for tf, minutes in (("5min", 5), ("15min", 15), ("30min", 30), ("60min", 60)):
+        b = resample(bars, tf)
+        held = flatten_overnight(pd.Series(1.0, index=b.index)).shift(1).fillna(0.0)
+        tod = b.index.hour * 60 + b.index.minute
+        ends_after_cutoff = (tod + minutes > 16 * 60 + 45) & (tod < 18 * 60)
+        assert (held[ends_after_cutoff] == 0).all(), tf       # nothing held across the cutoff
+        assert (held[tod == 18 * 60] == 0).all(), tf          # session open starts flat
+        assert (held != 0).any(), tf                          # but we do trade during the day
