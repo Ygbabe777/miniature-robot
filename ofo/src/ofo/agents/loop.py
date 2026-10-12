@@ -30,11 +30,15 @@ def _fingerprint(spec: StrategySpec) -> str:
     return json.dumps([spec.template, spec.ranges, spec.timeframes], sort_keys=True)
 
 
+def _llm(llm, role: str):
+    return llm[role] if isinstance(llm, dict) else llm
+
+
 class ResearchLoop:
     def __init__(self, bars, contract, rules, registry, llm, events, workdir, contracts: int = 2,
                  max_cycle_trials: int = 3000, max_depth: int = 2):
         self.bars, self.contract, self.rules, self.registry = bars, contract, rules, registry
-        self.llm, self.events, self.contracts = llm, events, contracts
+        self.llm, self.events, self.contracts = llm, events, contracts   # one LLM, or {role: LLM}
         self.max_cycle_trials, self.max_depth = max_cycle_trials, max_depth
         self.work = Path(workdir)
         self.work.mkdir(parents=True, exist_ok=True)
@@ -69,7 +73,7 @@ class ResearchLoop:
             self.events.emit("researcher", "reading", f"reading {p.name}")
             try:
                 text = extract_pdf_text(str(p)) if p.suffix.lower() == ".pdf" else p.read_text(errors="replace")
-                specs, rejected = propose_specs(self.llm, text, source=p.name)
+                specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=p.name)
             except Exception as e:                       # unreadable file or LLM down: retry later
                 self.events.emit("researcher", "error", f"{p.name}: {e}")
                 continue
@@ -102,7 +106,7 @@ class ResearchLoop:
         if gate:
             left = self.max_cycle_trials - self.trials_spent
             try:
-                decision = make_planner(self.llm, spec, left, depth, ev).run(
+                decision = make_planner(_llm(self.llm, "planner"), spec, left, depth, ev).run(
                     dev_summary(rep, {"trials_total": self.registry.n_trials, "trials_left": left}, depth))
             except AgentError as e:
                 decision["reason"] = f"planner failed: {e}"
@@ -114,7 +118,7 @@ class ResearchLoop:
             payload = {k: v for k, v in rep.items() if k != "wf_oos_series"}
             payload["trials_total"] = self.registry.n_trials
             try:
-                audit = make_auditor(self.llm, ev).run(payload)
+                audit = make_auditor(_llm(self.llm, "auditor"), ev).run(payload)
                 ev.emit("auditor", "commentary", audit["summary"][:300], {"risk_flags": audit["risk_flags"]})
             except AgentError as e:
                 ev.emit("auditor", "error", str(e)[:300])

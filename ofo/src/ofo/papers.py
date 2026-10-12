@@ -30,6 +30,26 @@ def chunk_text(text: str, max_chars: int = 6000, overlap: int = 300) -> list[str
     return out
 
 
+KEYWORDS = ("entry", "exit", "signal", "strategy", "backtest", "parameter", "threshold", "breakout",
+            "momentum", "reversion", "mean-revert", "volatility", "trend", "opening", "range", "vwap",
+            "stop", "profit", "return", "sharpe", "intraday", "futures", "index", "moving average",
+            "lookback", "window", "rule", "trade", "trading")
+
+
+def relevance(chunk: str) -> int:
+    low = chunk.lower()
+    return sum(low.count(k) for k in KEYWORDS)
+
+
+def select_chunks(chunks: list[str], k: int) -> list[str]:
+    """Send the LLM only the k most strategy-relevant chunks, in original order. References,
+    acknowledgements and boilerplate score ~0 and cost nothing."""
+    if len(chunks) <= k:
+        return [c for c in chunks if relevance(c) > 0] or chunks[:1]
+    top = sorted(range(len(chunks)), key=lambda i: -relevance(chunks[i]))[:k]
+    return [chunks[i] for i in sorted(top) if relevance(chunks[i]) > 0]
+
+
 def _catalogue() -> str:
     lines = []
     for name, t in TEMPLATES.items():
@@ -48,7 +68,7 @@ def system_prompt() -> str:
 def propose_specs(llm, text: str, source: str = "", max_chunks: int = 6) -> tuple[list[StrategySpec], list[dict]]:
     """Returns (valid specs, rejected proposals with reasons). `llm` needs .chat(messages)."""
     specs, rejected, seen = [], [], set()
-    for n, chunk in enumerate(chunk_text(text)[:max_chunks]):
+    for n, chunk in enumerate(select_chunks(chunk_text(text), max_chunks)):
         msgs = [{"role": "system", "content": system_prompt()},
                 {"role": "user", "content": f"Source: {source}\n\nTEXT (part {n + 1}):\n{chunk}"}]
         try:

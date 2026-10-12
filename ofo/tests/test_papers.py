@@ -25,7 +25,7 @@ def test_valid_and_invalid_proposals_are_separated():
 
 def test_garbage_reply_is_rejected_not_fatal():
     specs, rejected = propose_specs(FakeLLM(["I cannot do that", "{not json"]),
-                                    "x " * 5000)               # 2 chunks
+                                    "strategy entry " * 500)    # 2 relevant chunks
     assert specs == [] and len(rejected) == 2
 
 
@@ -50,3 +50,14 @@ def test_pdf_text_extraction(tmp_path):
            b"5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\nstartxref\n0\n%%EOF")
     p = tmp_path / "t.pdf"; p.write_bytes(pdf)
     assert "Opening range breakout" in extract_pdf_text(str(p))
+
+
+def test_only_strategy_relevant_chunks_are_sent():
+    from ofo.papers import select_chunks
+    chunks = ["References: Smith 2019. Jones 2020. Acknowledgements to the committee.",
+              "The breakout strategy uses an entry signal when volatility exceeds a threshold parameter.",
+              "Thanks to our funders and families.",
+              "Backtest of the momentum rule: intraday futures return and stop levels."]
+    got = select_chunks(chunks, 2)
+    assert got == [chunks[1], chunks[3]]
+    assert select_chunks(["nothing useful here at all"], 5) == ["nothing useful here at all"]

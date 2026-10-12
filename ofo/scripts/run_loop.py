@@ -9,7 +9,10 @@ import pandas as pd
 from ofo.agents.loop import ResearchLoop
 from ofo.backtest import MNQ, NQ
 from ofo.events import EventLog
+from pathlib import Path
+
 from ofo.llm.client import LLMClient
+from ofo.llm.pool import build_pool
 from ofo.prop import PRESETS
 from ofo.registry import TrialRegistry
 from ofo.specs import from_dict
@@ -20,7 +23,12 @@ bars = pd.read_csv(args[0], index_col=0, parse_dates=True)
 rules = PRESETS[args[1] if len(args) > 1 else "50k"]
 contract = {"MNQ": MNQ, "NQ": NQ}[args[2] if len(args) > 2 else "MNQ"]
 n = int(args[3]) if len(args) > 3 else 2
-loop = ResearchLoop(bars, contract, rules, TrialRegistry("data/registry.json"), LLMClient(),
+if Path("config/llm.json").exists():
+    pool, llm = build_pool("config/llm.json")
+    print("model pool:", {r: m for r, m in pool.roles.items()})
+else:
+    llm = LLMClient()                       # single model from OFO_LLM_MODEL
+loop = ResearchLoop(bars, contract, rules, TrialRegistry("data/registry.json"), llm,
                     EventLog("data/events.jsonl"), "data/loop", contracts=n)
 if once:
     for r in loop.run_once("ideas"):
