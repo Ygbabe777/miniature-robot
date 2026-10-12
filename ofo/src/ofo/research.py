@@ -6,6 +6,7 @@ import pandas as pd
 
 from .backtest import Contract, daily_pnl, run_backtest
 from .data import resample
+from .exits import apply_exits
 from .judge import REJECTED, judge
 from .prop import PropRules
 from .registry import TrialRegistry
@@ -28,10 +29,15 @@ def build_candidates(include_control: bool = True, seeds=(1, 2, 3)):
 
 
 def daily_series(bars_by_tf: dict, cand: dict, contract: Contract, contracts: int,
-                 slippage_ticks: float) -> pd.Series:
+                 slippage_ticks: float, exit: dict | None = None, with_info: bool = False):
+    """exit = {"stop_atr": x, "rr": y|None} adds the stop/target layer of exits.py."""
     b = bars_by_tf[cand["tf"]]
     pos = flatten_overnight(cand["fn"](b, **cand["params"]))
-    return daily_pnl(run_backtest(b, pos, contract, contracts, slippage_ticks))
+    xpx, info = None, None
+    if exit:
+        pos, xpx, info = apply_exits(b, pos, exit["stop_atr"], exit.get("rr"))
+    s = daily_pnl(run_backtest(b, pos, contract, contracts, slippage_ticks, exit_px=xpx))
+    return (s, info) if with_info else s
 
 
 def walk_forward(series: dict, train_days: int, test_days: int, min_active: int = 20):

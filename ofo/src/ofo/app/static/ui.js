@@ -203,7 +203,7 @@
       let h = '';
       if (trades) {
         const s = trades.summary;
-        h += s.n ? `<div><b>${esc(trades.name)}</b> — ${t('t_trades', { n: s.n, w: pct(s.win_rate), p: money(s.pnl) })}</div>` : `<div>${t('t_notrades')}</div>`;
+        h += s.n ? `<div><b>${esc(trades.name)}</b> — ${t('t_trades', { n: s.n, w: pct(s.win_rate), p: money(s.pnl) })}${trades.exit ? ' · ' + t('rr_short', { s: trades.exit.stop_atr, r: trades.exit.rr == null ? t('rr_none') : '1:' + trades.exit.rr }) : ''}</div>` : `<div>${t('t_notrades')}</div>`;
         if (trades.n_hidden) h += `<div>${t('t_hidden', { n: trades.n_hidden })}</div>`;
         h += `<div>${t('t_legend')}</div>`;
       }
@@ -277,6 +277,22 @@
     const l = names.map(n => t('w_' + n) === 'w_' + n ? n : t('w_' + n)).join('; ');
     return /fragile_without_market_drift/.test(r) ? t('r_fragile', { l }) : t('r_failed', { l });
   }
+  function rrBox(ex) {
+    if (!ex) return '';
+    const stops = [...new Set(ex.grid.map(c => c.stop_atr))], rrs = [...new Set(ex.grid.map(c => c.rr))];
+    const cell = (s, r) => ex.grid.find(c => c.stop_atr === s && c.rr === r);
+    const max = Math.max(...ex.grid.map(c => Math.abs(c.sharpe))) || 1;
+    const best = ex.best;
+    const rows = stops.map(s => `<tr><th>${s}× ATR</th>${rrs.map(r => { const c = cell(s, r), a = Math.min(1, Math.abs(c.sharpe) / max);
+      const bg = c.sharpe >= 0 ? `rgba(80,200,120,${0.12 + 0.5 * a})` : `rgba(240,90,90,${0.12 + 0.5 * a})`;
+      const isBest = ex.chosen && best.stop_atr === s && best.rr === r;
+      return `<td style="background:${bg};${isBest ? 'outline:2px solid #fff;' : ''}" title="${t('rr_cell', { w: pct(c.win_rate), n: c.n_trades, p: money(c.pnl) })}">${num(c.sharpe, 3)}</td>`; }).join('')}</tr>`).join('');
+    const chosen = ex.chosen ? t('rr_chosen', { s: best.stop_atr, r: best.rr == null ? t('rr_none') : '1:' + best.rr })
+      : t('rr_not_chosen');
+    return `<div class="judge rrbox"><b>${t('rr_title')}</b><div class="sub">${chosen}</div>
+      <table class="rrt"><tr><th></th>${rrs.map(r => `<th>${r == null ? t('rr_none') : 'R ' + r}</th>`).join('')}</tr>${rows}</table>
+      <div class="sub">${t('rr_note', { b: num(ex.baseline.sharpe, 3), f: pct(ex.frac_better_than_baseline), n: ex.n_trials })}</div></div>`;
+  }
   async function openDetail(slug) {
     const d = await api('/api/strategy/' + encodeURIComponent(slug));
     if (d.error) return;
@@ -293,6 +309,7 @@
         ${L.p_pass != null ? `<div>${t('d_pass')}: <b>${pct(L.p_pass)}</b> (${t('d_interval')} ${pct(L.p_pass_ci95[0])}–${pct(L.p_pass_ci95[1])}) · ${t('d_bust')}: <b>${pct(L.p_bust)}</b> · ${t('d_pnl_block')}: <b class="${L.pnl >= 0 ? 'pos' : 'neg'}">${money(L.pnl)}</b></div>` : ''}</div>
       <div class="grid">${kpi(t('kp_med'), num(sur.median_sharpe, 3))}${kpi(t('kp_pos'), pct(sur.frac_positive))}${kpi(t('kp_plat'), num(sur.plateau_ratio, 2))}${kpi(t('kp_rob'), sur.robust ? t('yes') : t('no'), sur.robust ? 'pos' : 'neg')}${kpi(t('kp_wf'), money(rep.wf_oos_pnl), rep.wf_oos_pnl >= 0 ? 'pos' : 'neg')}</div>
       ${d.best_params ? `<div class="sub">${t('d_best', { p: esc(JSON.stringify(d.best_params)), n: rep.n_candidates })}</div>` : ''}
+      ${rrBox(rep.exits)}
       <div class="seg" id="seg">${keys.map(k => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${title[k]}</button>`).join('')}</div>
       <div id="warn"></div><div class="grid" id="kpis"></div>
       <div class="charts">

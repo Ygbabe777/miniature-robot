@@ -142,3 +142,5 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 .dossier h3{margin:0 0 6px;font-size:13px} .dossier p{margin:5px 0;line-height:1.45;font-size:12px} .dossier .dacct{border-top:1px solid #0006;margin-top:8px;padding-top:6px}
 .dossier details{font-size:11px;color:var(--dim)} .dossier table{border-collapse:collapse;width:100%;font-family:var(--mono)} .dossier td,.dossier th{padding:1px 6px;text-align:right} .dossier tr.pick td{color:var(--up)}
 .dossier .cav{color:var(--warn);font-size:11px}
+
+.rrt{border-collapse:collapse;margin:6px 0;font-family:var(--mono);font-size:11px} .rrt th{color:var(--dim);font-weight:normal;padding:2px 8px;text-align:right} .rrt td{padding:3px 10px;text-align:right;color:#fff}

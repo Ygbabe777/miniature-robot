@@ -29,6 +29,9 @@ T = {
         "vs": "Mini o micro: {why}",
         "vs_micro": "micro. Con i mini la dimensione minima equivale a 10 micro, troppo grossa per questo drawdown o senza un vantaggio misurabile; i micro permettono di scalare e di ridurre dopo una serie negativa.",
         "vs_mini": "mini. A questa dimensione {k} contratto/i mini fanno meglio dei micro di almeno {m:.0%} sul limite inferiore della probabilità di passare.",
+        "exit_on": "Uscite: stop a {s}x ATR e target a {rr} (rapporto rischio/rendimento 1:{rrn}); il grafico dei risultati per ogni coppia è nel dettaglio della strategia. Stop tipico {pts:.1f} punti.",
+        "exit_off": "Uscite: nessuno stop/target ha migliorato in modo netto l'uscita propria della strategia, quindi si usa quella. La tabella rischio/rendimento è nel dettaglio.",
+        "rpt": " Rischio per operazione con {n} micro: circa ${r:,.0f} ({pdd:.0%} del drawdown massimo).",
         "caveat": "Avvertenze: stima su {n} giorni mai visti dall'ottimizzatore, dopo {trials} prove totali in questo laboratorio (il Giudice le ha già conteggiate). Le regole dell'account sono quelle di esempio, NON verificate: controllale sul regolamento del tuo prop firm prima di usarle. Una probabilità non è una promessa.",
         "none": "Nessuna dimensione sicura: anche con 1 micro la probabilità di bruciare l'account supera {b:.0%}. Non operarla su questo account.",
     },
@@ -42,6 +45,9 @@ T = {
         "vs": "Mini or micro: {why}",
         "vs_micro": "micro. With minis the smallest size equals 10 micros, too big for this drawdown or with no measurable benefit; micros let you scale up and cut back after a losing streak.",
         "vs_mini": "mini. At this size {k} mini contract(s) beat micros by at least {m:.0%} on the lower bound of the pass probability.",
+        "exit_on": "Exits: stop at {s}x ATR and target at {rr} (reward:risk 1:{rrn}); results for every pair are in the strategy detail. Typical stop {pts:.1f} points.",
+        "exit_off": "Exits: no stop/target clearly improved on the strategy's own exit, so that one is used. The risk/reward table is in the detail.",
+        "rpt": " Risk per trade with {n} micro: about ${r:,.0f} ({pdd:.0%} of the max drawdown).",
         "caveat": "Caveats: estimate on {n} days the optimiser never saw, after {trials} total trials in this lab (the Judge already counted them). The account rules are example values, NOT verified: check them against your prop firm's rulebook before relying on them. A probability is not a promise.",
         "none": "No safe size: even 1 micro has a bust probability above {b:.0%}. Do not trade this on this account.",
     },
@@ -121,6 +127,24 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
                                  mdd=r["max_drawdown_oos"], hit=r["stop_hit_rate"]),
                 L["vs"].format(why=vs)])
         accounts[acct] = entry
+    ex = report.get("exits") or {}
+    ext = ""
+    if (report["series"].get("exit")):
+        e = report["series"]["exit"]
+        ext = L["exit_on"].format(s=e["stop_atr"], rr=("%sR" % e["rr"]) if e["rr"] else "-", rrn=e["rr"] or "-",
+                                  pts=(ex.get("best_stats") or {}).get("median_stop_points") or 0)
+        if not e["rr"]:
+            ext = ext.replace("e target a - (rapporto rischio/rendimento 1:-)", "senza target").replace(
+                "and target at - (reward:risk 1:-)", "with no target")
+    elif ex:
+        ext = L["exit_off"]
+    stop_pts = (ex.get("best_stats") or {}).get("median_stop_points") if report["series"].get("exit") else None
+    for a in accounts.values():
+        if a.get("recommended") and stop_pts:
+            n = a["recommended"]["micro_equiv"]
+            r = stop_pts * 2.0 * n                       # 1 MNQ = $2 per index point
+            a["risk"]["risk_per_trade"] = r
+            a["text"] += L["rpt"].format(n=n, r=r, pdd=r / a["risk"]["max_drawdown_allowed"])
     params = {k: v for k, v in (report["series"].get("best_params") or {}).items() if k != "tf"}
     tf = (report["series"].get("best_params") or {}).get("tf", "?")
     ps = ", ".join(f"{k}={v}" for k, v in params.items())
@@ -128,10 +152,11 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
     head = L["head"].format(name=report["name"], acct=best)
     strat = L["strat"].format(doc=doc or report["template"], tmpl=report["template"], tf=tf, params=ps,
                               why=(report.get("rationale") or "")[:400])
+    strat += " " + ext if ext else ""
     if report.get("source"):
         strat += L["src"].format(src=str(report["source"])[:160])
     caveat = L["caveat"].format(n=len(pnl), trials=trials_total)
     return {"name": report["name"], "template": report["template"], "tf": tf, "params": params, "headline": head,
-            "strategy_text": strat, "accounts": accounts, "caveat": caveat, "n_oos_days": len(pnl),
+            "strategy_text": strat, "exits": {"chosen": report["series"].get("exit"), "grid": ex.get("grid", [])}, "accounts": accounts, "caveat": caveat, "n_oos_days": len(pnl),
             "oos_pnl": float(pnl.sum()), "base_contracts": base_contracts, "language": language,
             "auditor": (audit or {}).get("summary"), "risk_flags": (audit or {}).get("risk_flags", [])}

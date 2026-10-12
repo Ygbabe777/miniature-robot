@@ -483,7 +483,7 @@ class Lab:
                 dates, pnl = zip(*s[key])
                 charts[key] = chart_pack(dates, pnl)
         return {"report": d["report"], "planner": d["planner"], "auditor": d["auditor"],
-                "charts": charts, "cut": s.get("cut"), "best_params": s.get("best_params")}
+                "charts": charts, "cut": s.get("cut"), "best_params": s.get("best_params"), "exit": s.get("exit")}
 
     def accounts(self) -> dict:
         real = load_accounts(self.data / "accounts.json")
@@ -500,13 +500,13 @@ class Lab:
         if key not in self._trades_cache:
             params = dict(ser["best_params"]); tf = params.pop("tf")
             self._trades_cache[key] = extract_trades(self.bars(), TEMPLATES[rep["template"]].fn, params, tf,
-                                                     self.contract, self.contracts)
+                                                     self.contract, self.contracts, exit=ser.get("exit"))
         allt = self._trades_cache[key]
         looked = "checks" in rep["locked"]
         vis = allt if looked else [t for t in allt if t["session"] < ser["cut"]]
         tf = ser["best_params"]["tf"]
         return {"trades": vis, "n_hidden": len(allt) - len(vis), "locked_visible": looked, "tf": tf,
-                "params": {k: v for k, v in ser["best_params"].items() if k != "tf"}, "cut": ser["cut"],
+                "params": {k: v for k, v in ser["best_params"].items() if k != "tf"}, "cut": ser["cut"], "exit": ser.get("exit"),
                 "summary": summarize(vis), "name": rep["name"]}
 
     def indicators(self, slug: str, start: int | None = None, end: int | None = None) -> dict | None:

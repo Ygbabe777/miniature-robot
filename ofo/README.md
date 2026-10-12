@@ -61,3 +61,10 @@ finiscono, il modello ne inventa di nuovi), il Researcher li legge, le proposte 
 - Aspettati che quasi tutto venga respinto: finora nessuna famiglia di strategie ha superato il blocco nascosto.
 - Gli scienziati restano alla loro scrivania: "al lavoro" = digitano veloci, "in attesa" = battito lento (non sono mai "spenti"
   se l'Autopilota è acceso). Lo stato "al lavoro" viene dal server (attività reale), non da timeout.
+
+## Rischio / rendimento (stop e target)
+Dopo aver scelto la migliore combinazione, l'Optimizer prova 20 coppie stop (1-3× ATR) × target (1R-3R o nessuno) sul solo
+periodo di sviluppo e mostra la tabella nel dettaglio della strategia. La coppia migliore viene adottata solo se batte
+l'uscita propria della strategia di almeno 0.03 di Sharpe giornaliero; il Giudice la valuta poi sul blocco nascosto.
+Regole prudenti: se stop e target cadono nella stessa barra vale lo stop; i gap riempiono all'apertura. Le 20 celle contano
+come prove nel registro. Il fascicolo della strategia pronta riporta stop, target e rischio per operazione in dollari.

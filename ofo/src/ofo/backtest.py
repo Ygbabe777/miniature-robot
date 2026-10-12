@@ -29,14 +29,16 @@ NQ = Contract("NQ", 0.25, 5.00, 2.0)
 
 
 def run_backtest(bars: pd.DataFrame, position, contract: Contract,
-                 contracts: int = 1, slippage_ticks: float = 1.0) -> pd.DataFrame:
+                 contracts: int = 1, slippage_ticks: float = 1.0, exit_px=None) -> pd.DataFrame:
     """bars: DatetimeIndex frame with 'close'. position: target in {-1,0,1} decided
     at the close of each bar and filled at that close; it earns from the NEXT bar
     (the shift below prevents lookahead). Slippage and commission are charged on
-    every position change."""
+    every position change. exit_px (optional, see exits.py): prices at which a stop or target filled
+    inside a bar; on those bars the P&L runs to that price instead of the close."""
     pos = pd.Series(np.asarray(position, dtype=float), index=bars.index).fillna(0.0)
     held = pos.shift(1).fillna(0.0) * contracts
-    gross = held * bars["close"].diff().fillna(0.0) * contract.point_value
+    eff = bars["close"] if exit_px is None else bars["close"].where(exit_px.isna(), exit_px)
+    gross = held * (eff - bars["close"].shift(1)).fillna(0.0) * contract.point_value
     traded = pos.diff().abs().fillna(pos.abs()) * contracts
     cost = traded * (contract.commission_per_side
                      + slippage_ticks * contract.tick_value)

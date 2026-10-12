@@ -13,6 +13,7 @@ import pandas as pd
 
 from .backtest import Contract
 from .data import resample
+from .exits import exit_grid, summarize_info
 from .judge import REJECTED, judge
 from .prop import PropRules
 from .registry import TrialRegistry
@@ -85,6 +86,32 @@ def _sweep(bars, spec, contract, contracts, slippage_ticks):
     return cands, series
 
 
+MIN_EXIT_GAIN = 0.03        # daily-Sharpe improvement needed before a stop/target replaces the strategy's own exit
+
+
+def _exit_study(bars, cand, base_series, contract, contracts, slippage_ticks, cut, dev_days, registry, name):
+    """Which stop distance and reward:risk fit the best candidate? Judged on the development block only
+    and counted in the trial registry (every cell is a trial). The table is returned for the owner to read."""
+    grid = exit_grid()
+    b_tf = {cand["tf"]: resample(bars, cand["tf"])}
+    base_dev = base_series[base_series.index < cut].reindex(dev_days).fillna(0.0)
+    base = {"sharpe": sharpe(base_dev), "pnl": float(base_dev.sum())}
+    cells, full = [], {}
+    for g in grid:
+        s, info = daily_series(b_tf, cand, contract, contracts, slippage_ticks, exit=g, with_info=True)
+        d = s[s.index < cut].reindex(dev_days).fillna(0.0)
+        cells.append({**g, "sharpe": sharpe(d), "pnl": float(d.sum()), **summarize_info(info)})
+        full[(g["stop_atr"], g["rr"])] = s
+    registry.add_trials(len(grid), f"exits:{name}")
+    best = max(cells, key=lambda c: c["sharpe"])
+    chosen = best["sharpe"] >= base["sharpe"] + MIN_EXIT_GAIN and best["pnl"] > 0
+    better = float(np.mean([c["sharpe"] >= base["sharpe"] for c in cells]))
+    rep = {"baseline": base, "grid": cells, "best": {k: best[k] for k in ("stop_atr", "rr")},
+           "best_stats": best, "chosen": bool(chosen), "frac_better_than_baseline": better,
+           "n_trials": len(grid), "atr_n": 14}
+    return rep, (full[(best["stop_atr"], best["rr"])] if chosen else None)
+
+
 def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules: PropRules,
               registry: TrialRegistry, contracts: int = 2, slippage_ticks: float = 1.0,
               oos_fraction: float = 0.25, train_days: int = 120, test_days: int = 20,
@@ -109,6 +136,12 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     wf_pnl = float(wf.sum()) if len(wf) else 0.0
 
     best_i = max(range(len(cands)), key=lambda i: rows[i]["sharpe"])
+    exits_rep, exit_series = _exit_study(bars, cands[best_i], series[best_i], contract, contracts, slippage_ticks,
+                                         cut, dev_days, registry, spec.name)
+    best_exit = exits_rep["best"] if exits_rep["chosen"] else None
+    if exit_series is not None:                      # the stop/target the data prefers becomes part of the candidate
+        series[best_i] = exit_series
+        dev[best_i] = exit_series[exit_series.index < cut]
     pair = lambda ser: [[str(d)[:10], float(v)] for d, v in ser.items()]
     report = {"name": spec.name, "template": spec.template, "rationale": spec.rationale,
               "source": spec.source, "n_candidates": len(cands), "surface": surf,
@@ -118,7 +151,8 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
               # chart data. dev_best is IN-SAMPLE (best of N combinations): the UI labels it so.
               "series": {"cut": str(cut)[:10], "wf_oos": pair(wf),
                          "dev_best": pair(dev[best_i].reindex(dev_days).fillna(0.0)), "locked": None,
-                         "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}}}
+                         "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}, "exit": best_exit},
+              "exits": exits_rep}
     # Beta check: only for surfaces that already look robust (it re-runs the dev sweep).
     surf_d = None
     if surf["robust"] and wf_pnl > 0:
@@ -142,7 +176,7 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
         report["locked"] = {"status": v.status, "checks": v.checks, "pnl": float(locked.sum()),
                             "p_pass": v.mc.get("p_pass"), "p_pass_ci95": v.mc.get("p_pass_ci95"),
                             "p_bust": v.mc.get("p_bust"), "params": cands[best_i]["params"],
-                            "tf": cands[best_i]["tf"]}
+                            "tf": cands[best_i]["tf"], "exit": best_exit}
     else:
         why = [k for k, ok in surf["checks"].items() if not ok]
         if wf_pnl <= 0:
