@@ -17,7 +17,11 @@ rigorosa e simulazione delle regole prop (account 25k / 50k).
 1. `scripts/ingest_paper.py PAPER.pdf` : PDF -> spec di strategie validate (serve FreeLLMAPI acceso).
 2. `scripts/study.py DATI.csv.gz specs/starter.json` : sweep di centinaia di parametri per spec,
    giudizio sulla *robustezza della superficie*, walk-forward, un solo sguardo al blocco bloccato.
-3. `scripts/account_ev.py reports/oos_pnl_X.csv` : valore atteso e dimensione ottimale per ogni piano prop.
+3. `scripts/run_loop.py DATI.csv.gz` : ciclo continuo. Legge i nuovi PDF/.txt in `ideas/`, fa lavorare
+   gli agenti (Researcher, Planner, Auditor; prompt in `src/ofo/agents/prompts/*.md`) e scrive ogni
+   passo in `data/events.jsonl` (la UI 3D lo leggerà). Il verdetto lo dà sempre il codice.
+   Prima prova il tuo LLM con `scripts/check_llm.py`.
+4. `scripts/account_ev.py reports/oos_pnl_X.csv` : valore atteso e dimensione ottimale per ogni piano prop.
    Le regole in `rules/firms.json` sono NON VERIFICATE e le tariffe sono vuote: vanno compilate.
 
 ## Regole non negoziabili

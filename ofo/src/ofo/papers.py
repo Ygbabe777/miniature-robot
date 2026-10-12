@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 
+from .agents.base import load_prompt, parse_json
 from .specs import SpecError, StrategySpec, from_dict
 from .strategies import TEMPLATES, TIMEFRAMES
 
@@ -39,34 +40,16 @@ def _catalogue() -> str:
     return "\n".join(lines)
 
 
-SYSTEM = f"""You turn trading research into testable strategy specifications.
-You may ONLY use these templates:
-{_catalogue()}
-
-Reply with a single JSON object and nothing else:
-{{"strategies":[{{"name":"short name","template":"<one of the templates>",
- "ranges":{{"<param>":{{"min":..,"max":..,"step":..}} or {{"values":[..]}} for EVERY parameter}},
- "timeframes":[subset of {list(TIMEFRAMES)}],
- "rationale":"WHY this should have an edge, quoting what the text claims",
- "source":"title/section of the text"}}]}}
-
-Rules: propose only what the text actually supports; never invent results or numbers the
-text does not contain; if nothing in the text maps to a template, reply {{"strategies":[]}}.
-Sweep REASONABLE ranges around values the text mentions, not a single point."""
-
-
-def parse_json(reply: str) -> dict:
-    a, b = reply.find("{"), reply.rfind("}")
-    if a < 0 or b <= a:
-        raise ValueError("no JSON object in reply")
-    return json.loads(reply[a:b + 1])
+def system_prompt() -> str:
+    """Researcher prompt from agents/prompts/researcher.md (edit that file to change behaviour)."""
+    return load_prompt("researcher", TEMPLATE_CATALOGUE=_catalogue(), TIMEFRAMES=str(list(TIMEFRAMES)))
 
 
 def propose_specs(llm, text: str, source: str = "", max_chunks: int = 6) -> tuple[list[StrategySpec], list[dict]]:
     """Returns (valid specs, rejected proposals with reasons). `llm` needs .chat(messages)."""
     specs, rejected, seen = [], [], set()
     for n, chunk in enumerate(chunk_text(text)[:max_chunks]):
-        msgs = [{"role": "system", "content": SYSTEM},
+        msgs = [{"role": "system", "content": system_prompt()},
                 {"role": "user", "content": f"Source: {source}\n\nTEXT (part {n + 1}):\n{chunk}"}]
         try:
             data = parse_json(llm.chat(msgs, temperature=0.2))

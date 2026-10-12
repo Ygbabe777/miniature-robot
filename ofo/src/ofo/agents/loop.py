@@ -1,0 +1,149 @@
+"""The continuous research loop: ideas in, verified verdicts out, every step logged.
+
+  ideas/ (PDF, .txt, .md)  -> Researcher agent -> specs -> deterministic study
+  -> (if the surface survives) Planner agent: abandon / extend / new hypothesis
+  -> Auditor agent writes the commentary -> reports/<name>.json  + events.jsonl for the UI.
+
+The verdict always comes from code (judge.py). Agents only propose and explain."""
+from __future__ import annotations
+
+import dataclasses
+import hashlib
+import json
+import time
+from pathlib import Path
+
+from ..optimizer import run_study
+from ..papers import extract_pdf_text, propose_specs
+from ..specs import StrategySpec, from_dict
+from .base import AgentError
+from .roles import dev_summary, make_auditor, make_planner
+
+IDEA_SUFFIXES = {".pdf", ".txt", ".md"}
+
+
+def _slug(name: str) -> str:
+    return "".join(c if c.isalnum() else "_" for c in name)[:60]
+
+
+def _fingerprint(spec: StrategySpec) -> str:
+    return json.dumps([spec.template, spec.ranges, spec.timeframes], sort_keys=True)
+
+
+class ResearchLoop:
+    def __init__(self, bars, contract, rules, registry, llm, events, workdir, contracts: int = 2,
+                 max_cycle_trials: int = 3000, max_depth: int = 2):
+        self.bars, self.contract, self.rules, self.registry = bars, contract, rules, registry
+        self.llm, self.events, self.contracts = llm, events, contracts
+        self.max_cycle_trials, self.max_depth = max_cycle_trials, max_depth
+        self.work = Path(workdir)
+        self.work.mkdir(parents=True, exist_ok=True)
+        self.state_file = self.work / "loop_state.json"
+        st = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
+        self.processed_ideas: set = set(st.get("processed_ideas", []))
+        self.done_specs: set = set(st.get("done_specs", []))
+        self.queue: list[tuple[StrategySpec, int]] = []
+        self.trials_spent = 0
+
+    def _save(self) -> None:
+        self.state_file.write_text(json.dumps({"processed_ideas": sorted(self.processed_ideas),
+                                               "done_specs": sorted(self.done_specs)}))
+
+    def enqueue(self, spec: StrategySpec, depth: int = 0) -> bool:
+        fp = _fingerprint(spec)
+        if fp in self.done_specs or any(_fingerprint(s) == fp for s, _ in self.queue):
+            return False
+        self.queue.append((spec, depth))
+        return True
+
+    def ingest_ideas(self, ideas_dir: str | Path) -> int:
+        """Run the Researcher on every new file in ideas_dir. Returns specs enqueued."""
+        added = 0
+        d = Path(ideas_dir)
+        for p in sorted(d.glob("*")) if d.exists() else []:
+            if p.suffix.lower() not in IDEA_SUFFIXES:
+                continue
+            h = hashlib.sha256(p.read_bytes()).hexdigest()
+            if h in self.processed_ideas:
+                continue
+            self.events.emit("researcher", "reading", f"reading {p.name}")
+            try:
+                text = extract_pdf_text(str(p)) if p.suffix.lower() == ".pdf" else p.read_text(errors="replace")
+                specs, rejected = propose_specs(self.llm, text, source=p.name)
+            except Exception as e:                       # unreadable file or LLM down: retry later
+                self.events.emit("researcher", "error", f"{p.name}: {e}")
+                continue
+            self.processed_ideas.add(h)
+            (self.work / "specs_auto").mkdir(exist_ok=True)
+            (self.work / "specs_auto" / f"{_slug(p.stem)}.json").write_text(json.dumps(
+                {"strategies": [dataclasses.asdict(s) for s in specs], "rejected": rejected}, indent=1))
+            for s in specs:
+                if self.enqueue(s):
+                    added += 1
+                    self.events.emit("researcher", "proposal", f"{s.name}: {s.template}, {s.n_candidates} candidates",
+                                     {"rationale": s.rationale, "source": s.source})
+            for r in rejected:
+                self.events.emit("researcher", "rejected", r["reason"][:200])
+            self._save()
+        return added
+
+    def process(self, spec: StrategySpec, depth: int = 0) -> dict:
+        ev = self.events
+        ev.emit("optimizer", "study_started", f"{spec.name}: {spec.n_candidates} candidates")
+        rep = run_study(self.bars, spec, self.contract, self.rules, self.registry, contracts=self.contracts)
+        self.trials_spent += rep["n_candidates"]
+        self.done_specs.add(_fingerprint(spec))
+        s = rep["surface"]
+        ev.emit("validator", "surface", f"{spec.name}: median Sharpe {s['median_sharpe']:+.3f}, "
+                f"{s['frac_positive']:.0%} positive, plateau {s['plateau_ratio']:.2f}, robust={s['robust']}",
+                {"checks": s["checks"]})
+        gate = (s["robust"] and rep["wf_oos_pnl"] > 0 and (rep.get("surface_detrended") or {}).get("robust"))
+        decision = {"decision": "abandon", "reason": "failed a deterministic gate (surface, walk-forward or beta)", "spec": None}
+        if gate:
+            left = self.max_cycle_trials - self.trials_spent
+            try:
+                decision = make_planner(self.llm, spec, left, depth, ev).run(
+                    dev_summary(rep, {"trials_total": self.registry.n_trials, "trials_left": left}, depth))
+            except AgentError as e:
+                decision["reason"] = f"planner failed: {e}"
+            ev.emit("planner", decision["decision"], decision["reason"][:300])
+        locked = rep["locked"]
+        ev.emit("judge", "verdict", f"{spec.name}: {locked['status']}", {k: v for k, v in locked.items() if k != "checks"})
+        audit = None
+        if "checks" in locked or s["robust"]:
+            payload = {k: v for k, v in rep.items() if k != "wf_oos_series"}
+            payload["trials_total"] = self.registry.n_trials
+            try:
+                audit = make_auditor(self.llm, ev).run(payload)
+                ev.emit("auditor", "commentary", audit["summary"][:300], {"risk_flags": audit["risk_flags"]})
+            except AgentError as e:
+                ev.emit("auditor", "error", str(e)[:300])
+        out = {k: v for k, v in rep.items() if k != "wf_oos_series"}
+        dec = {**decision, "spec": dataclasses.asdict(decision["spec"]) if decision["spec"] else None}
+        (self.work / "reports").mkdir(exist_ok=True)
+        (self.work / "reports" / f"{_slug(spec.name)}.json").write_text(
+            json.dumps({"report": out, "planner": dec, "auditor": audit}, indent=1, default=str))
+        nxt = decision["spec"]
+        if nxt is not None and depth < self.max_depth and self.enqueue(nxt, depth + 1):
+            ev.emit("planner", "queued", f"next: {nxt.name} ({nxt.n_candidates} candidates)")
+        self._save()
+        return {"spec": spec.name, "verdict": locked["status"], "decision": decision["decision"], "audit": audit}
+
+    def run_once(self, ideas_dir: str | Path | None = None) -> list[dict]:
+        self.trials_spent = 0
+        if ideas_dir:
+            self.ingest_ideas(ideas_dir)
+        results = []
+        while self.queue:
+            spec, depth = self.queue.pop(0)
+            if self.trials_spent + spec.n_candidates > self.max_cycle_trials:
+                self.events.emit("optimizer", "budget", f"trial budget reached, {spec.name} postponed")
+                self.queue.insert(0, (spec, depth))
+                break
+            results.append(self.process(spec, depth))
+        return results
+
+    def run_forever(self, ideas_dir, poll_seconds: int = 600, sleep=time.sleep, stop=lambda: False) -> None:
+        while not stop():
+            self.run_once(ideas_dir)
+            sleep(poll_seconds)
