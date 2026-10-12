@@ -1,0 +1,33 @@
+{
+ "strategies": [
+  {
+   "name": "ORB sweep",
+   "template": "orb",
+   "ranges": {
+    "or_minutes": {
+     "min": 5,
+     "max": 60,
+     "step": 5
+    }
+   },
+   "rationale": "The first minutes of the US cash open concentrate order flow and information; a break of that range tends to continue (opening-range breakout literature)."
+  },
+  {
+   "name": "Z-score reversion sweep",
+   "template": "mean_reversion",
+   "ranges": {
+    "window": {
+     "min": 20,
+     "max": 200,
+     "step": 20
+    },
+    "z": {
+     "min": 1.0,
+     "max": 3.0,
+     "step": 0.25
+    }
+   },
+   "rationale": "Short-horizon overreaction in index futures; baseline benchmark."
+  }
+ ]
+}
