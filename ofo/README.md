@@ -112,3 +112,13 @@ Il fascicolo di ogni strategia pronta contiene, per il conto 50k e per il 25k:
   quanti ne servono per l'80% / 90% / 95%. Conti aperti insieme con gli stessi trade non sono indipendenti: lì non si moltiplica;
 - il confronto **50k contro 25k** (payout più probabile, valore atteso).
 Le commissioni e le regole di payout sono **ipotesi indicative**: sostituiscile con quelle vere in `rules/economics.json`.
+
+## Obiettivo: passare la valutazione in una settimana
+Il Researcher, il Planner e lo Strategist sanno che operano solo sui futures Nasdaq-100 (NQ/MNQ) e che l'obiettivo è passare
+la valutazione in circa 5 giorni di borsa. Il fascicolo di ogni strategia approvata dice, per il 50k e il 25k: la dimensione
+(micro/mini) che massimizza la probabilità di passare **entro 5 giorni** (con intervallo al 95%), il tempo mediano, il costo
+atteso per ottenere un passaggio, quanti conti servono per l'80% / 90% se non passi al primo, e la dimensione ridotta da usare
+sul funded dopo il passaggio. **"Va bene" solo se il limite inferiore dell'intervallo è ≥ 25%**; altrimenti il fascicolo dice
+"approvata ma troppo lenta" e la strategia NON viene messa in paper trading. Giorni e soglia si cambiano in `rules/economics.json`
+(`goal`). Attenzione: passare in 5 giorni richiede dimensioni aggressive, quindi il rischio di bruciare l'account in quella
+settimana è alto: il numero è nel fascicolo.

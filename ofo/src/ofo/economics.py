@@ -50,7 +50,8 @@ def attempts_needed(p: float, target: float) -> int | None:
     return max(1, math.ceil(math.log(1 - target) / math.log(1 - p)))
 
 
-def multi_account(p_pass: float, p_lo: float, p_hi: float, p_payout: float, fees_per_attempt: float, n_max: int = 10) -> dict:
+def multi_account(p_pass: float, p_lo: float, p_hi: float, p_payout: float, fees_per_attempt: float, n_max: int = 10,
+                  activation: float = 0.0) -> dict:
     """Several attempts, one after another at different dates, so each is an independent draw. P(at least one) =
     1-(1-p)^N. Accounts opened TOGETHER and copying the same trades are strongly correlated and do not follow this."""
     rows = []
@@ -58,6 +59,14 @@ def multi_account(p_pass: float, p_lo: float, p_hi: float, p_payout: float, fees
         used = (1 - (1 - p_pass) ** n) / p_pass if p_pass > 0 else float(n)       # expected attempts actually bought
         rows.append({"accounts": n, "p_pass_any": 1 - (1 - p_pass) ** n, "p_pass_any_lo": 1 - (1 - p_lo) ** n,
                      "p_pass_any_hi": 1 - (1 - p_hi) ** n, "p_payout_any": 1 - (1 - p_payout) ** n,
-                     "expected_cost": fees_per_attempt * used})
+                     "expected_cost": fees_per_attempt * used + activation * (1 - (1 - p_pass) ** n)})
     return {"table": rows, "n_for_80": attempts_needed(p_pass, 0.8), "n_for_90": attempts_needed(p_pass, 0.9),
             "n_for_95": attempts_needed(p_pass, 0.95)}
+
+
+def load_goal(path: str | Path | None) -> dict:
+    """The owner's goal from rules/economics.json: {"goal": {"max_eval_days": 5, "min_p_fast_lower": 0.25}}."""
+    if path and Path(path).exists():
+        g = json.loads(Path(path).read_text()).get("goal") or {}
+        return {k: g[k] for k in ("max_eval_days", "min_p_fast_lower") if k in g}
+    return {}

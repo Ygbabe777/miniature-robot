@@ -32,7 +32,7 @@ def test_dossier_has_size_risk_and_instrument_advice():
     a = d["accounts"]["50k"]
     assert a["recommended"] is not None and a["instrument"] in ("micro", "mini")
     r = a["recommended"]
-    assert 0 <= r["p_pass_lo"] <= r["p_pass"] <= r["p_pass_hi"] <= 1 and r["p_bust"] <= 0.35
+    assert 0 <= r["p_pass_lo"] <= r["p_pass"] <= r["p_pass_hi"] <= 1 and 0 <= r["p_fast_lo"] <= r["p_fast"] <= r["p_fast_hi"] <= 1
     assert a["risk"]["daily_stop"] == PRESETS["50k"].max_drawdown / 3
     assert "micro" in a["text"] and "Gestione del rischio" in a["text"] and "NON verificate" in d["caveat"]
     assert {t["micro_equiv"] for t in a["table"]} >= {1, 10, 20}
@@ -41,7 +41,7 @@ def test_dossier_has_size_risk_and_instrument_advice():
 
 
 def test_dossier_says_no_safe_size_when_every_size_busts():
-    d = build_dossier(report(-80, 900), RULES, 2, 1000)
+    d = build_dossier(report(-400, 500), RULES, 2, 1000)
     a = d["accounts"]["25k"]
     assert a["recommended"] is None and ("Nessuna" in a["text"])
 
@@ -233,3 +233,13 @@ def test_dossier_has_payout_probability_costs_multi_account_and_50k_vs_25k():
                            "payout": {"split": 0.9, "min_winning_days": 5, "min_day_profit": 150.0, "min_payout": 500.0}}})
     assert custom["accounts"]["50k"]["economics"]["eval_fee_monthly"] == 7.0 and "economics" not in custom["accounts"]["25k"]
     assert custom["comparison"] is None                                  # no comparison unless both accounts have assumptions
+
+
+def test_dossier_answers_whether_the_evaluation_can_be_passed_within_a_week():
+    d = build_dossier(report(150, 250), RULES, 2, 1000)
+    a = d["accounts"]["50k"]
+    assert d["goal"] == {"max_eval_days": 5, "min_p_fast_lower": 0.25} and d["fast_ok"] is True
+    assert "entro 5 giorni" in a["text"] and "Soddisfa il tuo obiettivo" in a["text"] and "Costo per passare" in a["text"]
+    assert a["economics"]["cost_per_pass"] > 0 and "50k" in d["comparison"] and "Costo atteso per un passaggio" in d["comparison"]
+    slow = build_dossier(report(150, 250), RULES, 2, 1000, goal={"max_eval_days": 1, "min_p_fast_lower": 0.99})
+    assert slow["fast_ok"] is False and "TROPPO LENTA" in slow["headline"] and "NON soddisfa" in slow["accounts"]["50k"]["text"]

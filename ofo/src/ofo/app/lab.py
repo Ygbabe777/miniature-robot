@@ -28,7 +28,7 @@ from ..storage import list_studies, load_study, slugify
 from .. import deploy as dep
 from .. import knowledge, obsidian
 from ..dossier import build_dossier
-from ..economics import load_assumptions
+from ..economics import load_assumptions, load_goal
 from ..accounts import demo_accounts, load_accounts
 from ..data import resample
 from ..trades import extract_trades, summarize
@@ -539,8 +539,7 @@ class Lab:
         lang = "it" if self.language == "Italian" else "en"
         dos = build_dossier(rep, {k: PRESETS[k] for k in ("50k", "25k")}, self.contracts, self.registry.n_trials,
                             lang, TEMPLATES[rep["template"]].doc, d.get("auditor"),
-                            economics=load_assumptions(next((p for p in (Path(__file__).resolve().parents[3] / "rules" / "economics.json",
-                                                                          Path("rules/economics.json")) if p.exists()), None)))
+                            economics=load_assumptions(self._econ_path()), goal=load_goal(self._econ_path()))
         if dos is None:
             return None
         dos["slug"], dos["created"] = slug, time.strftime("%Y-%m-%d %H:%M")
@@ -548,6 +547,11 @@ class Lab:
         (self.dossier_dir / f"{slug}.json").write_text(json.dumps(dos, indent=1, ensure_ascii=False, default=str))
         self.events.emit("lab", "ready", f"READY: {dos['name']}", {"slug": slug})
         return dos
+
+    @staticmethod
+    def _econ_path():
+        return next((p for p in (Path(__file__).resolve().parents[3] / "rules" / "economics.json", Path("rules/economics.json"))
+                     if p.exists()), None)
 
     def dossiers(self) -> list[dict]:
         if not self.dossier_dir.exists():
@@ -653,8 +657,12 @@ class Lab:
                 continue
             self.bars()
             last = str(self._sessions[-1])[:10]
-            item = dep.make_deployment(d, last, time.strftime("%Y-%m-%d %H:%M"))
-            if item is None:
+            item = dep.make_deployment(d, last, time.strftime("%Y-%m-%d %H:%M")) if d.get("fast_ok", True) else None
+            if item is None and not d.get("fast_ok", True):
+                item = {"slug": d["slug"], "name": d["name"], "status": "not_deployed", "forward": {"days": 0},
+                        "reason": f"approved but too slow for the {d.get('goal', {}).get('max_eval_days', 5)}-day goal"}
+                self.events.emit("trader", "skipped", f"{d['name']}: too slow for the goal, not deployed")
+            elif item is None:
                 item = {"slug": d["slug"], "name": d["name"], "status": "not_deployed",
                         "reason": "no safe size for any account", "forward": {"days": 0}}
                 self.events.emit("trader", "skipped", f"{d['name']}: no safe size, not deployed")

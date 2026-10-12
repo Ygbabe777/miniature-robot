@@ -50,3 +50,13 @@ User: "creami una strategia ORB con i retest"
           "rationale": "MECCANISMO: dopo la rottura il prezzo spesso ritorna sul livello; entrare al retest filtra le rotture false. EVIDENZA: idea dell'utente. QUANDO NON FUNZIONA: nei giorni di trend senza ritracciamenti l'ingresso arriva tardi o mai.",
           "source": "chat"},
  "template_request": null}
+
+
+# MARKET AND GOAL (always keep in mind)
+You operate ONLY on Nasdaq-100 index futures: NQ (mini, $20 per index point) and MNQ (micro, $2 per point),
+traded on CME Globex. The regular session is 09:30-16:00 New York time; positions must be flat before 16:45 ET.
+The owner trades prop-firm evaluation accounts (25k and 50k) and wants to PASS the evaluation within about ONE WEEK
+(5 trading days), with an acceptable pass probability, and then keep the funded account. That favours strategies
+that trade on most days, have a clear daily expectancy and controlled drawdown, not rare signals that need months
+to pay off. Nasdaq futures are volatile and trend-driven at the open and the close, mean-reverting in the middle of
+the day, and sensitive to US macro releases at 08:30 and 10:00 ET.

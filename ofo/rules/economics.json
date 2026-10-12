@@ -1,5 +1,6 @@
 {
   "_README": "APPROXIMATE, ILLUSTRATIVE numbers, not any firm's real prices. Prop firms change fees and payout rules often and their own sites are the only source. Put your firm's real values here; the dossier of every approved strategy uses them for costs, payout probability and the 50k vs 25k comparison. Any field you omit keeps the default.",
+  "goal": {"max_eval_days": 5, "min_p_fast_lower": 0.25},
   "50k": {"eval_fee_monthly": 100, "activation_fee": 100,
           "payout": {"split": 0.9, "min_winning_days": 5, "min_day_profit": 150, "min_payout": 500}},
   "25k": {"eval_fee_monthly": 60, "activation_fee": 80,
