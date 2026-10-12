@@ -80,7 +80,8 @@ def test_scout_downloads_only_the_curators_picks_and_never_the_noise(tmp_path):
     st = sc.public_state()
     assert {p["id"]: p["status"] for p in st["papers"]}["arxiv:2601.00001"] == "downloaded"
     again, _ = scout(tmp_path, Scripted(curator=[pick]))               # a new instance reads the saved state
-    assert again.run_once()["found"] == 0                              # already seen: nothing new, no AI call needed
+    runs = [again.run_once()["found"] for _ in range(5)]
+    assert runs[0] == 1 and runs[-1] == 0        # an unchosen paper is re-offered, at most 3 times
     types = [(e["agent"], e["type"]) for e in EventLog(tmp_path / "e.jsonl").read()]
     assert ("scout", "working") in types and ("scout", "download") in types and ("scout", "done") in types
 
@@ -120,6 +121,7 @@ def test_lab_chain_scout_to_pending_proposals_and_auto_schedule(tmp_path):
     assert lab.registry.n_trials == 0                                  # research alone never spends a trial
     # schedule: off by default, then due after `minutes`
     assert lab.scout_tick() is False
+    lab.ap["enabled"] = False                 # the autopilot has its own continuous cadence
     lab.set_scout_auto(True, 30)
     last = lab.scout().state["last_run"]["at"]
     assert lab.scout_tick(now=last + 10 * 60) is False
@@ -145,10 +147,10 @@ def test_ssrn_papers_are_found_through_crossref_but_never_downloaded(tmp_path):
     pick = json.dumps({"picks": [{"id": "ssrn:7008318", "why": "momentum intraday FX/futures"}]})
     sc, net = scout(tmp_path, Scripted(curator=[pick]), ssrn=True)
     res = sc.run_once()
-    assert res["manual"] == 1 and res["downloaded"] == 0
+    assert res["abstracts"] == 1 and res["downloaded"] == 0     # no free PDF: the abstract is saved for the Researcher
+    assert "abstract only" in (tmp_path / "ideas/web/ssrn_7008318.md").read_text()
     st = {p["id"]: p for p in sc.public_state()["papers"]}["ssrn:7008318"]
-    assert st["status"] == "manual" and st["url"].startswith("https://doi.org/")
+    assert st["status"] == "abstract" and st["url"].startswith("https://doi.org/")
     assert not any("ssrn.com" in u for u in net.urls)                  # SSRN's own site is never contacted
-    assert not list((tmp_path / "ideas").rglob("*ssrn*"))              # nothing was written for it
     kinds = [e["type"] for e in EventLog(tmp_path / "e.jsonl").read() if e["agent"] == "scout"]
-    assert "manual" in kinds
+    assert "download" in kinds

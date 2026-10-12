@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 
 UA = "OFO-Lab/0.1 (personal research tool)"
 ATOM = "{http://www.w3.org/2005/Atom}"
-ALLOWED_PDF_HOSTS = ("arxiv.org", "export.arxiv.org")
+ALLOWED_PDF_HOSTS = ("arxiv.org", "export.arxiv.org", "www.nber.org", "core.ac.uk", "openreview.net")
 QFIN = "(cat:q-fin.TR OR cat:q-fin.ST OR cat:q-fin.CP OR cat:q-fin.PM OR cat:q-fin.GN OR cat:q-fin.MF)"
 
 

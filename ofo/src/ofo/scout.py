@@ -55,6 +55,10 @@ class Scout:
         self.state.setdefault("queries", {}); self.state.setdefault("papers", {})
         self.state.setdefault("auto", {"enabled": False, "minutes": 60}); self.state.setdefault("last_run", None)
         self.state.setdefault("extra_topics", [])
+        self.state.setdefault("seen", {})
+        if not self.state.get("migrated_v2"):             # older versions blocked every unchosen paper for ever
+            self.state["papers"] = {k: v for k, v in self.state["papers"].items() if v.get("status") in ("downloaded", "failed", "abstract")}
+            self.state["migrated_v2"] = True
 
     def _emit(self, kind: str, msg: str = "", data: dict | None = None) -> None:
         if self.events:
@@ -102,20 +106,22 @@ class Scout:
 
     def _candidates(self, queries: list[str]) -> list[dict]:
         found, ids = [], set()
+        self.counts = {"arxiv": 0, "semanticscholar": 0, "ssrn": 0}
         for q in queries:
             self._emit("working", f"searching arXiv: {q}")
             try:
                 batch = search_arxiv(q, self.fetch)
+                self.counts["arxiv"] += len(batch)
                 if self.use_s2:
-                    batch += search_semantic_scholar(q)
+                    b2 = search_semantic_scholar(q); self.counts["semanticscholar"] += len(b2); batch += b2
                 if self.use_ssrn:
-                    batch += search_ssrn(q, self.fetch)
+                    b3 = search_ssrn(q, self.fetch); self.counts["ssrn"] += len(b3); batch += b3
             except WebError as e:
                 self._emit("error", f"{q}: {e}")
                 continue
             self.state["queries"][q] = self.now()
             for p in batch:
-                if p["id"] in ids or p["id"] in self.state["papers"]:
+                if p["id"] in ids or p["id"] in self.state["papers"] or self.state["seen"].get(p["id"], 0) >= 3:
                     continue
                 if not is_financial(p["title"] + " " + p["abstract"]):
                     continue
@@ -143,7 +149,11 @@ class Scout:
         queries = self.next_queries()
         cands = self._candidates(queries)
         picks = self._pick(cands)
-        got = 0
+        if cands and not picks:                          # the curator found nothing worth it: still read the best two
+            picks = [{**p, "why": "keyword ranking (curator picked none)"} for p in cands[:2]]
+        self._emit("info", f"searched {len(queries)} topics: arXiv {self.counts['arxiv']}, Semantic Scholar "
+                   f"{self.counts['semanticscholar']}, SSRN {self.counts['ssrn']} results; {len(cands)} new, {len(picks)} chosen")
+        got = abstracts = 0
         for p in picks:
             rec = {"title": p["title"], "url": p["url"], "published": p["published"], "why": p["why"],
                    "source": p["source"], "found": self.now(), "status": "skipped"}
@@ -158,22 +168,26 @@ class Scout:
                     self._emit("download", f"{p['title'][:90]}", {"url": p["url"], "why": p["why"]})
                 except WebError as e:
                     rec["status"] = "failed"; self._emit("error", f"download failed: {e}")
-            elif p["source"] == "ssrn":
-                rec["status"] = "manual"                  # SSRN PDFs need a login: the owner downloads them into ideas/
-                self._emit("manual", f"SSRN: {p['title'][:80]} - download it from SSRN and drop it in ideas/", {"url": p["url"], "why": p["why"]})
             else:
-                rec["status"] = "no open PDF"
+                # no free PDF (SSRN needs a login): the abstract still carries the hypothesis, so the Researcher reads that
+                self.out.mkdir(parents=True, exist_ok=True)
+                name = safe_name(p["id"])
+                (self.out / f"{name}.md").write_text(f"# {p['title']}\n\n(abstract only: the full text was not available)\n\n{p['abstract']}\n", encoding="utf-8")
+                (self.out / f"{name}.meta.json").write_text(json.dumps({**p, "abstract": p["abstract"][:1500]}, ensure_ascii=False, indent=1))
+                rec["status"] = "abstract"; rec["file"] = f"web/{name}.md"; abstracts += 1
+                self._emit("download", f"abstract only: {p['title'][:80]}", {"url": p["url"], "why": p["why"]})
             self.state["papers"][p["id"]] = rec
-        for p in cands:                                  # remember rejected ones too, never show them again
-            self.state["papers"].setdefault(p["id"], {"title": p["title"], "url": p["url"], "published": p["published"],
-                                                      "why": "", "source": p["source"], "found": self.now(), "status": "skipped"})
-        summary = {"at": self.now(), "queries": queries, "found": len(cands), "downloaded": got,
-                   "manual": sum(1 for p in picks if p["source"] == "ssrn")}
+        chosen = {p["id"] for p in picks}
+        for p in cands:                                  # not chosen: may be offered again, but at most 3 times
+            if p["id"] not in chosen:
+                self.state["seen"][p["id"]] = self.state["seen"].get(p["id"], 0) + 1
+        summary = {"at": self.now(), "queries": queries, "found": len(cands), "downloaded": got, "abstracts": abstracts,
+                   "counts": dict(self.counts), "manual": 0}
         self.state["last_run"] = summary
         self._save()
         if not cands and all(q in self.state["queries"] for q in self.all_topics):
             self.expand_topics()                         # nothing new anywhere: invent fresh topics
-        self._emit("done", f"{len(cands)} new candidates, {got} papers downloaded", summary)
+        self._emit("done", f"{len(cands)} new candidates, {got} PDFs + {abstracts} abstracts saved", summary)
         return summary
 
     def public_state(self, running: bool = False) -> dict:

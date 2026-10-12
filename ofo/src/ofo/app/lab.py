@@ -250,7 +250,7 @@ class Lab:
             try:
                 with self.working("research"):
                     res = self.scout().run_once()
-                    if res["downloaded"] or self._unread_ideas():
+                    if res["downloaded"] or res.get("abstracts") or self._unread_ideas():
                         self._ingest_now()                  # new PDFs -> Researcher -> proposals (the autopilot tests them)
             except Exception as e:
                 self.events.emit("lab", "error", f"scout: {e}")
@@ -263,8 +263,21 @@ class Lab:
             threading.Thread(target=work, daemon=True).start()
         return {"started": True}
 
+    def scout_gap(self) -> int:
+        """Seconds between searches. With the autopilot the work is continuous: a short pause after a run that
+        found something, a few minutes after one that found nothing (new topics are invented meanwhile)."""
+        sc = self.scout()
+        last = sc.state["last_run"]
+        if not self.ap["enabled"] or last is None:
+            return sc.state["auto"]["minutes"] * 60
+        return 45 if (last.get("found") or last.get("downloaded")) else 240
+
     def scout_state(self) -> dict:
-        return self.scout().public_state(self._scout_running)
+        st = self.scout().public_state(self._scout_running)
+        last = st["last_run"]
+        if st["auto"]["enabled"] and last:
+            st["next_run"] = last["at"] + self.scout_gap()
+        return st
 
     def set_scout_auto(self, enabled: bool, minutes: int | None = None) -> dict:
         sc = self.scout()
@@ -276,7 +289,7 @@ class Lab:
         """Called every ~30 s by the background thread: starts a search when the schedule says so."""
         sc, now = self.scout(), now or time.time()
         a, last = sc.state["auto"], sc.state["last_run"]
-        if a["enabled"] and not self._scout_running and (last is None or now - last["at"] >= a["minutes"] * 60):
+        if a["enabled"] and not self._scout_running and (last is None or now - last["at"] >= self.scout_gap()):
             self.scout_run()
             return True
         return False
@@ -338,7 +351,7 @@ class Lab:
     def autopilot_state(self) -> dict:
         sc = self.scout()
         last = sc.state["last_run"]
-        nxt = (last["at"] + sc.state["auto"]["minutes"] * 60) if (sc.state["auto"]["enabled"] and last) else None
+        nxt = (last["at"] + self.scout_gap()) if (sc.state["auto"]["enabled"] and last) else None
         self._ap_budget(0)
         return {"enabled": self.ap["enabled"] and not isinstance(self.llm, NoLLM), "paused": self.ap.get("paused"),
                 "trials_today": self.ap["trials_today"], "max_trials_per_day": self.ap["max_trials_per_day"],
@@ -425,7 +438,7 @@ class Lab:
                 n += 1
                 try:
                     if self.ap["enabled"]:
-                        if n % 6 == 0:
+                        if n % 3 == 0:
                             self.scout_tick()
                         self.autopilot_tick()
                 except Exception as e:

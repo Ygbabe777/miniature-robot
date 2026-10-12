@@ -326,11 +326,11 @@
     const key = JSON.stringify([sc.running, sc.auto, sc.last_run, sc.papers.map(p => p.id + p.status), Math.floor((sc.next_run || 0) / 60)]);
     if (key === scoutKey) return; scoutKey = key;
     const mins = sc.next_run ? Math.max(0, Math.round((sc.next_run - Date.now() / 1000) / 60)) : null;
-    const st = { downloaded: 'sp_downloaded', skipped: 'sp_skipped', failed: 'sp_failed', 'no open PDF': 'sp_nopdf', manual: 'sp_manual' };
+    const st = { downloaded: 'sp_downloaded', skipped: 'sp_skipped', failed: 'sp_failed', 'no open PDF': 'sp_nopdf', manual: 'sp_manual', abstract: 'sp_abstract' };
     $('#scout').innerHTML = `<div class="srow"><button class="btn small" id="scout-go" ${sc.running ? 'disabled' : ''}>${sc.running ? t('scout_running') : t('scout_now')}</button>
       <label>${t('scout_auto')} <select id="scout-auto">${[0, 30, 60, 180, 360].map(m => `<option value="${m}" ${(m === 0 ? !sc.auto.enabled : sc.auto.enabled && sc.auto.minutes === m) ? 'selected' : ''}>${m === 0 ? t('scout_off') : t('scout_every', { m })}</option>`).join('')}</select></label></div>
       <div class="smeta">${t('scout_topics', { a: sc.queries_done, b: sc.queries_total })}${sc.last_run ? ' · ' + t('scout_last', { f: sc.last_run.found, d: sc.last_run.downloaded }) : ''}${mins !== null && sc.auto.enabled ? ' · ' + t('scout_next', { m: mins }) : ''}</div>
-      <div class="spapers">${sc.papers.length ? sc.papers.slice(0, 6).map(p => `<div title="${esc(p.why || '')}"><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc((p.title || '').slice(0, 60))}</a><i class="${p.status === 'downloaded' ? 'ok' : p.status === 'manual' ? 'man' : ''}">${t(st[p.status] || 'sp_skipped')}</i></div>`).join('') : `<div class="empty">${t('scout_none')}</div>`}</div>
+      <div class="spapers">${sc.papers.length ? sc.papers.slice(0, 6).map(p => `<div title="${esc(p.why || '')}"><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc((p.title || '').slice(0, 60))}</a><i class="${p.status === 'downloaded' || p.status === 'abstract' ? 'ok' : p.status === 'manual' ? 'man' : ''}">${t(st[p.status] || 'sp_skipped')}</i></div>`).join('') : `<div class="empty">${t('scout_none')}</div>`}</div>
       <div class="smeta">${t('scout_note')}</div>`;
     $('#scout-go').onclick = async () => { await api('/api/scout/run', { method: 'POST', json: { lang: LANG } }); scoutKey = ''; poll(); };
     $('#scout-auto').onchange = async (e) => { const m = +e.target.value; await api('/api/scout/auto', { method: 'POST', json: { enabled: m > 0, minutes: m || 60 } }); scoutKey = ''; poll(); };
