@@ -14,7 +14,7 @@ import numpy as np
 class Trailing(Enum):
     STATIC = "static"        # floor never moves
     EOD = "eod"              # floor trails the highest end-of-day balance
-    # Intraday trailing needs intrabar data; not modelled at daily granularity.
+    INTRADAY = "intraday"    # floor trails the highest balance INCLUDING unrealised profit: needs prop_intraday.py
 
 
 @dataclass(frozen=True)
@@ -43,10 +43,15 @@ class Outcome:
     status: str   # "passed" | "busted" | "timeout"
     days: int
     final_balance: float
+    model: str = "daily_simplified"   # this simulator sees only end-of-day P&L: intrabar drawdown is invisible to it
 
 
 def simulate_account(daily_pnl, rules: PropRules) -> Outcome:
-    """Run one attempt over a sequence of daily P&L values."""
+    """Run one attempt over a sequence of daily P&L values. SIMPLIFIED model: it sees one number per day, so a drawdown
+    that happens during the day and recovers by the close is invisible, and intraday trailing rules cannot be applied
+    (they raise). prop_intraday.simulate_intraday does the same job on bar-level equity."""
+    if rules.trailing is Trailing.INTRADAY:
+        raise ValueError("intraday trailing drawdown cannot be simulated from daily P&L: use prop_intraday.simulate_intraday")
     balance = rules.start_balance
     peak = balance
     floor = balance - rules.max_drawdown

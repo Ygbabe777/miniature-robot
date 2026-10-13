@@ -35,6 +35,8 @@ class Ledger:
     trades: list = field(default_factory=list)      # closed round trips
     pnl: pd.Series | None = None                    # net P&L per bar (gross - costs), same index as the bars
     open_trade: dict | None = None                  # position still open on the last bar (not in `trades`)
+    worst: pd.Series | None = None                  # per bar: worst unrealised P&L reached while holding (vs previous close)
+    best: pd.Series | None = None                   # per bar: best unrealised P&L reached while holding
     costs: dict = field(default_factory=dict)
 
 
@@ -59,6 +61,7 @@ def run_ledger(bars: pd.DataFrame, position, contract: Contract, contracts: int 
             else idx.normalize().strftime("%Y-%m-%d").to_numpy())
     led = Ledger()
     pnl = np.zeros(n)
+    worst, best = np.zeros(n), np.zeros(n)
     held, entry, blocked = 0.0, None, 0.0
     tot_comm = tot_slip = 0.0
 
@@ -101,7 +104,20 @@ def run_ledger(bars: pd.DataFrame, position, contract: Contract, contracts: int 
                     hit_reason = "stop"
                 elif ht:
                     hit_px, hit_reason = entry["tgt"], "target"
-            gross = held * ((hit_px if hit_px is not None else c[t]) - c[t - 1]) * pv
+            end = hit_px if hit_px is not None else c[t]
+            gross = held * (end - c[t - 1]) * pv
+            # intrabar path of the open position, for intraday drawdown rules. Adverse extreme = the bar's low (long) or
+            # high (short); favourable = the opposite one. A stop closes the path at the stop (it cannot go further against
+            # us); a target closes it at the target. Unknown ordering inside a bar is resolved against the account.
+            adv, fav = (l[t], h[t]) if held > 0 else (h[t], l[t])
+            if hit_reason == "stop":
+                adv = end
+                if entry is not None and entry["tgt"] is not None:
+                    fav = min(fav, entry["tgt"]) if held > 0 else max(fav, entry["tgt"])
+            elif hit_reason == "target":
+                fav = end
+            worst[t] = min(held * (adv - c[t - 1]) * pv, gross)
+            best[t] = max(held * (fav - c[t - 1]) * pv, gross)
         cur = held
         if hit_px is not None:
             cost += record_fill(t, -held, hit_px, hit_reason)
@@ -132,6 +148,8 @@ def run_ledger(bars: pd.DataFrame, position, contract: Contract, contracts: int 
         led.open_trade = {"side": int(entry["side"]), "entry_t": _seconds(idx[entry["bar"]]), "entry_px": float(entry["px"]),
                           "entry_session": str(sess[entry["bar"]]), "last_px": float(c[-1])}
     led.pnl = pd.Series(pnl, index=bars.index)
+    led.worst = pd.Series(worst, index=bars.index)
+    led.best = pd.Series(best, index=bars.index)
     led.costs = {"commission": tot_comm, "slippage": tot_slip}
     return led
 

@@ -72,42 +72,136 @@ def assess(daily, exp_mean, exp_std, max_dd_allowed: float) -> tuple[str, str]:
     return "live", ""
 
 
-def forward_update(bars: pd.DataFrame, dep: dict, contract, base_contracts: int, rules: PropRules) -> dict:
-    """Recompute the paper ledger of one deployment from the bars (history gives the indicators their warm-up)."""
-    t = TEMPLATES[dep["template"]]
-    cand = {"fn": t.fn, "params": dep["params"], "tf": dep["tf"]}
-    s = daily_series({dep["tf"]: resample(bars, dep["tf"]) if dep["tf"] != "1min" else bars}, cand, contract,
-                     base_contracts, 1.0, exit=dep.get("exit"))
-    fwd = s[s.index > pd.Timestamp(dep["cut"])] * (dep["micro"] / base_contracts)
+def _scaled(value, factor):
+    """value * factor, or None when the value is unknown. (Never `value and value * factor`: a legitimate 0.0 is not "missing".)"""
+    return None if value is None else float(value) * factor
+
+
+class SignalLog:
+    """Append-only, hash-chained record of what a paper deployment did. Once written, a line is never changed: refreshing
+    or rebuilding the dataset cannot rewrite the operating history. Every line carries the hash of the previous one, so
+    an edit anywhere is detectable (`verify`). If a later recomputation disagrees with a recorded trade, the log gets a new
+    `restatement` line next to it; a trade that appears in the PAST after the fact gets a `late_trade` line and is not
+    counted. The original lines stay exactly as they were."""
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self.records = []
+        if self.path.exists():
+            for line in self.path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    self.records.append(json.loads(line))
+
+    @staticmethod
+    def _hash(prev: str, body: dict) -> str:
+        import hashlib
+        return hashlib.sha256((prev + json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)).encode()).hexdigest()
+
+    @property
+    def last_hash(self) -> str:
+        return self.records[-1]["hash"] if self.records else "genesis"
+
+    def append(self, body: dict) -> dict:
+        import os
+        rec = {**body, "seq": len(self.records), "prev": self.last_hash}
+        rec["hash"] = self._hash(rec["prev"], {k: v for k, v in rec.items() if k != "hash"})
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, default=str) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        self.records.append(rec)
+        return rec
+
+    def verify(self) -> dict:
+        prev = "genesis"
+        for i, r in enumerate(self.records):
+            body = {k: v for k, v in r.items() if k != "hash"}
+            if r.get("seq") != i or r.get("prev") != prev or r.get("hash") != self._hash(prev, body):
+                return {"ok": False, "first_bad_seq": i, "n": len(self.records)}
+            prev = r["hash"]
+        return {"ok": True, "first_bad_seq": None, "n": len(self.records)}
+
+    def _by(self, kind: str) -> dict:
+        return {r["id"]: r for r in self.records if r["kind"] == kind}
+
+    def exits(self) -> list[dict]:
+        return list(self._by("exit").values())
+
+    def sync(self, slug: str, trades: list[dict], dataset_fp: str | None = None, tolerance: float = 0.5) -> list[dict]:
+        """Record what is NEW: an `entry` line the first time a trade is seen, an `exit` line once it has closed. A closed
+        trade that is recomputed differently later (more than `tolerance` dollars of P&L) adds a `restatement` line."""
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        entries, exits = self._by("entry"), self._by("exit")
+        seen_restate = {(r["id"], round(r["recomputed_pnl"], 2)) for r in self.records if r["kind"] == "restatement"}
+        seen_late = {r["id"] for r in self.records if r["kind"] == "late_trade"}
+        frontier = max((r["entry_t"] for r in entries.values()), default=None)       # the latest entry already on record
+        added = []
+        for t in trades:
+            tid = f"{slug}:{t['entry_t']}:{t['side']}"
+            if tid not in entries and frontier is not None and t["entry_t"] < frontier:
+                # a trade OLDER than the latest recorded one that the log has never seen can only appear if past data changed
+                # (a vendor correction, a rebuilt file). It is noted, not added to the operating history or to the P&L.
+                if tid not in seen_late:
+                    added.append(self.append({"kind": "late_trade", "slug": slug, "id": tid, "entry_t": t["entry_t"],
+                                              "pnl_if_counted": t["pnl"], "dataset_fp": dataset_fp, "recorded_at": now}))
+                continue
+            if tid not in entries:
+                added.append(self.append({"kind": "entry", "slug": slug, "id": tid, "entry_t": t["entry_t"], "side": t["side"],
+                                          "entry_px": t["entry_px"], "entry_session": t["entry_session"],
+                                          "dataset_fp": dataset_fp, "recorded_at": now}))
+            if t.get("reason") == "open":
+                continue
+            if tid not in exits:
+                added.append(self.append({"kind": "exit", "slug": slug, "id": tid, "exit_t": t["exit_t"], "exit_px": t["exit_px"],
+                                          "pnl": t["pnl"], "session": t["session"], "reason": t.get("reason"),
+                                          "dataset_fp": dataset_fp, "recorded_at": now}))
+            elif abs(exits[tid]["pnl"] - t["pnl"]) > tolerance and (tid, round(t["pnl"], 2)) not in seen_restate:
+                added.append(self.append({"kind": "restatement", "slug": slug, "id": tid, "recorded_pnl": exits[tid]["pnl"],
+                                          "recomputed_pnl": t["pnl"], "dataset_fp": dataset_fp, "recorded_at": now}))
+        return added
+
+
+def forward_update(bars: pd.DataFrame, dep: dict, contract, base_contracts: int, rules: PropRules, log: SignalLog | None = None) -> dict:
+    """Paper results of one deployment, built from the IMMUTABLE signal log: realised P&L of the exits recorded there,
+    one number per session after the deployment cut (zero on sessions without an exit). Refreshing the data can add new
+    lines to the log but never changes the ones already written. Without a log (tests, tools) the log is built in memory."""
+    log = log if log is not None else _memory_log()
+    from .optimizer import dataset_fingerprint
+    log.sync(dep["slug"], new_signals(bars, dep, contract, base_contracts), dataset_fp=dataset_fingerprint(bars))
+    key = pd.to_datetime(bars["session"]) if "session" in bars.columns else pd.Series(bars.index.normalize(), index=bars.index)
+    sessions = sorted(d for d in key.unique() if d > pd.Timestamp(dep["cut"]))
+    daily = {pd.Timestamp(d): 0.0 for d in sessions}
+    for e in log.exits():
+        d = pd.Timestamp(e["session"])
+        if d in daily and e["id"].startswith(dep["slug"] + ":"):
+            daily[d] += e["pnl"]
+    fwd = pd.Series(daily, dtype=float).sort_index()
     days = len(fwd)
     cum = fwd.cumsum()
     out = {"days": days, "pnl": float(fwd.sum()) if days else 0.0,
            "equity": [[str(d)[:10], float(v)] for d, v in cum.items()][-250:],
-           "last_session": str(fwd.index[-1])[:10] if days else None}
+           "last_session": str(fwd.index[-1])[:10] if days else None, "signal_log": log.verify()["ok"] if log.records else True}
     if days:
         o = simulate_account(fwd.values, rules)
         out["eval_if_traded"] = {"status": o.status, "days": o.days}
         out["max_drawdown"] = float(np.max(np.maximum.accumulate(np.concatenate([[0.0], cum.values]))[1:] - cum.values))
-    status, reason = assess(fwd.values, dep.get("oos_mean") and dep["oos_mean"] * dep["micro"] / base_contracts,
-                            dep.get("oos_std") and dep["oos_std"] * dep["micro"] / base_contracts, rules.max_drawdown)
+    factor = dep["micro"] / base_contracts
+    status, reason = assess(fwd.values, _scaled(dep.get("oos_mean"), factor), _scaled(dep.get("oos_std"), factor), rules.max_drawdown)
     return {"forward": out, "status": status, "reason": reason, "series": fwd}
 
 
+def _memory_log() -> SignalLog:
+    import tempfile
+    return SignalLog(Path(tempfile.mkdtemp()) / "memory.jsonl")
+
+
 def new_signals(bars: pd.DataFrame, dep: dict, contract, base_contracts: int) -> list[dict]:
-    """Trades entered after the deployment cut (the signal log). Sized in the deployed contracts."""
+    """Trades entered after the deployment cut, from the execution ledger, sized in the deployed contracts."""
     t = TEMPLATES[dep["template"]]
     tr = extract_trades(bars, t.fn, dep["params"], dep["tf"], contract, dep["micro"] if contract.symbol.startswith("M") else
                         max(1, round(dep["micro"] / 10)), 1.0, exit=dep.get("exit"))
     return [x for x in tr if x["entry_session"] > dep["cut"]]
-
-
-def append_signals(dirpath: Path, slug: str, trades: list[dict]) -> None:
-    if not trades:
-        return
-    dirpath.mkdir(parents=True, exist_ok=True)
-    with (dirpath / f"{slug}.jsonl").open("a", encoding="utf-8") as f:
-        for x in trades:
-            f.write(json.dumps({"slug": slug, **x}) + "\n")
 
 
 class Store:

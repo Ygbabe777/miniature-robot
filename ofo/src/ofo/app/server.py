@@ -98,6 +98,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                         return self._json(lab.set_obsidian(data.get("vault")))
                     except ValueError as e:
                         return self._json({"error": str(e)}, 400)
+                if u.path == "/api/markets":
+                    return self._json(lab.set_markets(list(data.get("markets") or [])))
                 if u.path == "/api/autopilot":
                     return self._json(lab.set_autopilot(data.get("enabled"), data.get("max_trials_per_day")))
                 self._json({"error": "not found"}, 404)

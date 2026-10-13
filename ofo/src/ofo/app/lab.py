@@ -28,6 +28,9 @@ from ..specs import StrategySpec, from_dict
 from ..storage import list_studies, load_study, slugify
 from .. import deploy as dep
 from .. import knowledge, obsidian
+from ..ledger import run_ledger
+from ..prop_intraday import arrays_from_ledger, describe as describe_intraday, intraday_report
+from ..strategies import flatten_overnight
 from ..dossier import build_dossier
 from ..economics import load_assumptions, load_goal
 from ..accounts import demo_accounts, load_accounts
@@ -113,7 +116,7 @@ class Lab:
         self.busy = {"research": 0, "job": 0, "chat": 0}          # real activity, not event timeouts
         self.ap_file = self.data / "autopilot.json"
         first = not self.ap_file.exists()
-        self.ap = {"v": 2, "enabled": True, "max_trials_per_day": 30000, "max_trials_total": 300000, "day": "", "trials_today": 0}
+        self.ap = {"v": 2, "markets": None, "enabled": True, "max_trials_per_day": 30000, "max_trials_total": 300000, "day": "", "trials_today": 0}
         if not first:
             saved = json.loads(self.ap_file.read_text())
             if saved.get("v", 1) < 2:                 # v1 capped at 4000/day: queued strategies sat there for hours
@@ -196,12 +199,26 @@ class Lab:
                 "n_sessions": len(sessions), "first_available": str(c.sessions[0])[:10],
                 "last_available": str(c.sessions[-1])[:10], "symbol": c.contract.symbol, "market": c.sym}
 
+    def enabled_markets(self) -> list[str]:
+        """Markets strategies are tested on. None in the saved setting = every market with data. Never empty."""
+        sel = self.ap.get("markets")
+        out = [m for m in self.mk if sel is None or m in sel]
+        return out or [self.primary]
+
+    def set_markets(self, markets: list[str]) -> dict:
+        """The market filter: e.g. ["NQ"] tests on Nasdaq only (NQ/MNQ prices, MNQ sizing), ["NQ","ES"] adds the S&P 500."""
+        clean = [m for m in markets if m in self.mk]
+        self.ap["markets"] = clean or [self.primary]
+        self._save_ap()
+        self.events.emit("lab", "markets", "testing on: " + ", ".join(self.enabled_markets()))
+        return self.autopilot_state()
+
     def _add_pending_all(self, spec: StrategySpec, origin: str) -> int:
         """Queue a strategy once per market (skipping what that market already tested or has queued): the lab learns
         on which index each idea works. Returns how many queue entries were added."""
         n = 0
         fp = _fingerprint(spec)
-        for m in self.mk:
+        for m in self.enabled_markets():
             queued = any(v.get("market") == m and _fingerprint(v["spec"]) == fp for v in self.pending.values())
             if fp in self.loop(m).done_specs or queued:
                 continue
@@ -413,12 +430,15 @@ class Lab:
             return False
         if any(j["status"] in ("queued", "running") for j in self.jobs.values()):
             return False
-        with self.lock:
-            queue = list(self.pending.items())
+        on = set(self.enabled_markets())
+
+        def waiting():
+            with self.lock:                            # entries for a market the filter switched off simply stay parked
+                return [(i, v) for i, v in self.pending.items() if (v.get("market") or self.primary) in on]
+        queue = waiting()
         if not queue:
             self._refill()                             # nothing waiting: seed starters, then brainstorm
-            with self.lock:
-                queue = list(self.pending.items())
+            queue = waiting()
         if not queue:
             return False
         # first strategy that FITS the budget: one huge proposal must not block the small ones behind it
@@ -560,6 +580,8 @@ class Lab:
                 "max_trials_total": self.ap["max_trials_total"], "queue": len(self.pending),
                 "next_search": nxt, "searching": self._scout_running, "working": sorted(self.working_agents()),
                 "ready": len(self.dossiers()),
+                "markets": [{"sym": k, "name": MARKETS[k]["name"], "micro": c.contract.symbol, "mini": MARKETS[k]["mini"].symbol,
+                             "enabled": k in self.enabled_markets()} for k, c in self.mk.items()],
                 "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed"))}
 
     def working_agents(self) -> set[str]:
@@ -596,11 +618,29 @@ class Lab:
                             market=c.sym, micro=c.contract.symbol, point_value=c.contract.point_value)
         if dos is None:
             return None
+        self._add_intraday(dos, rep, c, lang)
         dos["slug"], dos["created"] = slug, time.strftime("%Y-%m-%d %H:%M")
         self.dossier_dir.mkdir(parents=True, exist_ok=True)
         (self.dossier_dir / f"{slug}.json").write_text(json.dumps(dos, indent=1, ensure_ascii=False, default=str))
         self.events.emit("lab", "ready", f"READY: {dos['name']}", {"slug": slug})
         return dos
+
+    def _add_intraday(self, dos: dict, rep: dict, c: "MarketCtx", lang: str) -> None:
+        """Replay the unseen block bar by bar at each account's recommended size (unrealised P&L, intraday trailing)."""
+        try:
+            bp = rep["series"]["best_params"]
+            params = {k: v for k, v in bp.items() if k != "tf"}
+            b = c.bars() if bp["tf"] == "1min" else resample(c.bars(), bp["tf"])
+            pos = flatten_overnight(TEMPLATES[rep["template"]].fn(b, **params))
+            led = run_ledger(b, pos, c.contract, self.contracts, 1.0, rep["series"].get("exit"))
+            arr = arrays_from_ledger(b, led, only_from=pd.Timestamp(rep["series"]["cut"]))
+            for acct, entry in dos["accounts"].items():
+                if entry.get("recommended"):
+                    k = entry["recommended"]["micro_equiv"] / self.contracts
+                    entry["intraday"] = intraday_report(arr, PRESETS[acct], scale=k)
+                    entry["text"] += describe_intraday(entry["intraday"], "intraday", lang)
+        except Exception as e:
+            dos["intraday_error"] = str(e)[:200]
 
     @staticmethod
     def _econ_path():
@@ -745,14 +785,18 @@ class Lab:
                 try:
                     c = self.ctx(x.get("market"))
                     bars = c.bars()
-                    r = dep.forward_update(bars, x, c.contract, self.contracts, self.rules_for(x["account"]))
+                    log = dep.SignalLog(self.data / "signals" / f"{x['slug']}.jsonl")      # append-only, hash-chained
+                    before = len(log.records)
+                    r = dep.forward_update(bars, x, c.contract, self.contracts, self.rules_for(x["account"]), log)
                     x["forward"] = r["forward"]
-                    sig = dep.new_signals(bars, x, c.contract, self.contracts)
-                    fresh = sig[x["n_signals"]:]
-                    dep.append_signals(self.data / "signals", x["slug"], fresh)
-                    for t in fresh[-3:]:
-                        self.events.emit("trader", "signal", f"{x['name']}: {'LONG' if t['side'] > 0 else 'SHORT'} {t['entry_px']:.2f} -> {t['exit_px']:.2f} ({t['pnl']:+.0f}$)")
-                    x["n_signals"] = len(sig)
+                    for rec in log.records[before:]:
+                        if rec["kind"] == "exit":
+                            self.events.emit("trader", "signal", f"{x['name']}: exit {rec['exit_px']:.2f} ({rec['pnl']:+.0f}$)")
+                        elif rec["kind"] == "entry":
+                            self.events.emit("trader", "signal", f"{x['name']}: {'LONG' if rec['side'] > 0 else 'SHORT'} at {rec['entry_px']:.2f}")
+                        elif rec["kind"] == "restatement":
+                            self.events.emit("trader", "restatement", f"{x['name']}: recomputed P&L differs from the recorded one")
+                    x["n_signals"] = len(log.records)
                     if r["status"] != x["status"] and not (x["status"] == "confirmed" and r["status"] == "live"):
                         x["status"], x["reason"] = r["status"], r["reason"]
                         self.events.emit("trader", x["status"], f"{x['name']}: {x['status'].upper()} - {x['reason']}")

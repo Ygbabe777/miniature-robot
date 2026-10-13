@@ -20,6 +20,7 @@ from .exits import exit_grid, summarize_info
 from .judge import REJECTED, judge
 from .ledger import AccountingError, reconcile, run_ledger, run_ledger_next_open
 from .prop import PropRules
+from .prop_intraday import arrays_from_ledger, intraday_report
 from .registry import DuplicateExperiment, TrialRegistry
 from .research import daily_series, walk_forward
 from .specs import StrategySpec
@@ -243,7 +244,7 @@ def guarded_full_series(bars, cand, exit, contract, contracts, slippage_ticks, d
     rc = reconcile(full_tf[tf], pos_full, contract, contracts, slippage_ticks, exit)
     if not rc["ok"]:
         raise AccountingError(f"{name}: vectorised engine and execution ledger disagree: {rc}")
-    return s_full, rc
+    return s_full, rc, pos_full, full_tf[tf]
 
 
 def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules: PropRules,
@@ -319,7 +320,7 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     if surf["robust"] and wf_pnl > 0 and surf_d["robust"] and quality["ok"]:
         say("judge", "working", "looking at the hidden block")
         cand, tf = cands[best_i], cands[best_i]["tf"]
-        s_full, rc = guarded_full_series(bars, cand, best_exit, contract, contracts, slippage_ticks, dev_days, final_dev, spec.name)
+        s_full, rc, pos_full, b_full = guarded_full_series(bars, cand, best_exit, contract, contracts, slippage_ticks, dev_days, final_dev, spec.name)
         report["ledger_check"] = rc
         locked_days = [d for d in sessions if d >= cut]
         locked = s_full.reindex(locked_days).fillna(0.0)
@@ -333,6 +334,13 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
                             "p_pass": v.mc.get("p_pass"), "p_pass_ci95": v.mc.get("p_pass_ci95"),
                             "p_bust": v.mc.get("p_bust"), "params": cand["params"],
                             "tf": tf, "exit": best_exit, "prop_model": "daily_simplified"}
+        # The Judge above is DETERMINISTIC and uses the simplified daily account model. After its look, the same unseen
+        # block is replayed bar by bar with unrealised P&L and intraday drawdown rules, for the owner to read.
+        try:
+            led_full = run_ledger(b_full, pos_full, contract, contracts, slippage_ticks, best_exit)
+            report["locked"]["intraday"] = intraday_report(arrays_from_ledger(b_full, led_full, only_from=cut), rules)
+        except Exception as e:                                           # informational: never lose a finished study
+            report["locked"]["intraday"] = {"error": str(e)[:200]}
     else:
         why = [k for k, ok in surf["checks"].items() if not ok]
         if wf_pnl <= 0:

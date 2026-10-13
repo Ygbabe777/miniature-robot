@@ -135,11 +135,13 @@
     const mins = a.next_search ? Math.max(0, Math.round((a.next_search - Date.now() / 1000) / 60)) : null;
     const bits = [t('ap_phase_' + a.phase), t('ap_budget', { a: a.trials_today, b: a.max_trials_per_day }), t('ap_queue', { n: a.queue }), t('ap_ready', { n: a.ready })];
     if (a.searching) bits.push(t('ap_searching')); else if (mins !== null && a.enabled) bits.push(t('ap_next', { m: mins }));
-    const key = JSON.stringify([a.enabled, bits, a.paused, LANG]);
+    const key = JSON.stringify([a.enabled, bits, a.paused, LANG, a.markets]);
     if (key === apKey) return; apKey = key;
     $('#autopilot').innerHTML = `<div class="${a.enabled ? 'apon' : 'apoff'}">${a.enabled ? t('ap_on') : t('ap_off')}</div><div class="apm">${bits.join(' · ')}</div>`
       + (a.paused ? `<div class="apoff">${t('ap_paused_' + a.paused)}</div>` : '')
+      + (a.markets && a.markets.length > 1 ? `<div class="apm"><b>${t('mk_title')}</b>${a.markets.map(m => `<label style="display:block"><input type="checkbox" class="mk-on" value="${m.sym}" ${m.enabled ? 'checked' : ''}> ${esc(m.name)} (${m.mini}/${m.micro})</label>`).join('')}</div>` : '')
       + `<button class="btn small" id="ap-toggle">${a.enabled ? t('ap_toggle_off') : t('ap_toggle_on')}</button><div class="apn">${t('ap_note')}</div>`;
+    document.querySelectorAll('.mk-on').forEach(c => c.onchange = async () => { const on = [...document.querySelectorAll('.mk-on')].filter(x => x.checked).map(x => x.value); await api('/api/markets', { method: 'POST', json: { markets: on } }); apKey = ''; poll(); });
     $('#ap-toggle').onclick = async () => { await api('/api/autopilot', { method: 'POST', json: { enabled: !a.enabled } }); apKey = ''; poll(); };
     if (a.ready !== readyN) { readyN = a.ready; loadReady(); }
     if (a.deployed !== depN) { depN = a.deployed; loadDeployed(); }

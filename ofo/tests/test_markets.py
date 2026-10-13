@@ -114,3 +114,27 @@ def test_build_market_makes_a_file_from_the_day_files_and_explains_failures(tmp_
     assert "plan does not include" in str(e.value)
     with pytest.raises(ValueError):
         build_market(tmp_path / "empty", "ES")
+
+
+def test_market_filter_decides_where_strategies_are_tested(tmp_path, bars_csv):
+    lab = two_markets(tmp_path, bars_csv)
+    assert lab.enabled_markets() == ["NQ", "ES"]                                         # default: every market with data
+    st = lab.set_markets(["NQ"])
+    assert lab.enabled_markets() == ["NQ"] and [m["enabled"] for m in st["markets"]] == [True, False]
+    assert lab._add_pending_all(from_dict(SPEC), "paper") == 1
+    assert [v["market"] for v in lab.pending.values()] == ["NQ"]                          # nothing queued for ES
+    lab.set_markets(["NQ", "ES"])
+    assert lab._add_pending_all(from_dict(SPEC), "paper") == 1                           # ES joins; NQ already queued
+    assert sorted(v["market"] for v in lab.pending.values()) == ["ES", "NQ"]
+    lab.set_markets(["ES"])                                                               # entries of a disabled market stay parked
+    assert lab.autopilot_tick() is True and [j["market"] for j in lab.jobs.values()] == ["ES"]
+    wait_all(lab)
+    assert [v["market"] for v in lab.pending.values()] == ["NQ"]
+    assert lab.autopilot_tick() is True                                                   # idle on ES: a classic family is seeded there
+    last = list(lab.jobs.values())[-1]
+    assert last["market"] == "ES" and last["name"].endswith("[ES]")                       # ...and the parked NQ entry did not start
+    assert any(v["market"] == "NQ" and v["spec"].name == "ORB retest small" for v in lab.pending.values())
+    wait_all(lab)
+    assert lab.set_markets(["XX", "GC"])["markets"][0]["enabled"] is True                 # an invalid selection never leaves zero markets
+    lab2 = two_markets(tmp_path, bars_csv)                                                # the choice survives a restart
+    assert lab2.enabled_markets() == ["NQ"]

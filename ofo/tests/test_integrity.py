@@ -63,6 +63,8 @@ def test_sweep_receives_no_locked_data_and_registry_records_the_single_look(tmp_
     rep = run_study(bars, from_dict(SPEC), MNQ, PRESETS["50k"], reg)
     assert rep["ledger_check"]["ok"] and rep["locked"]["status"] in ("APPROVED", "REJECTED", "INSUFFICIENT_EVIDENCE")
     assert "checks" in rep["locked"] and rep["locked"]["prop_model"] == "daily_simplified"
+    intr = rep["locked"]["intraday"]                                       # the same block replayed with intraday drawdown rules
+    assert set(intr) == {"static", "eod", "intraday"} and intr["intraday"]["model"] == "intraday" and intr["intraday"]["n_windows"] > 10
     assert reg.data["locked_looks"] == 1 and reg.locked_looks_on(rep["dataset_fp"]) == 1
     row = reg._con.execute("SELECT experiment_id, dataset_fp, oos_start FROM locked_looks").fetchone()
     assert row == (rep["experiment_id"], rep["dataset_fp"], rep["series"]["cut"])

@@ -138,3 +138,31 @@ altri mercati si chiamano `nome [ES]` / `nome [GC]`. Le prove di tutti i mercati
 deployment in paper e le note Obsidian riportano il mercato; la memoria degli agenti dice per ogni famiglia su quale indice è
 stata testata e con che esito ("orb: NQ 3 testate/0 approvate, ES 3/1"), così i Researcher/Planner la usano. Nel tab Trader c'è il
 selettore del mercato. Se i file giornalieri non contengono l'oro (COMEX), `build_dataset.py` dà "no outright GC contracts found".
+
+
+## Affidabilità quantitativa (revisione esterna)
+Cosa è stato verificato e cambiato, punto per punto:
+1. **Contabilità del backtest.** Il motore vettoriale (`backtest.py` + `exits.py`) è confrontato barra per barra con un
+   *execution ledger* indipendente (`ledger.py`: segnali, fill con prezzo/slippage/commissione, uscite intrabar). 300 scenari
+   casuali, 0 discordanze. Prima di ogni verdetto lo studio riconcilia i due motori e verifica che la strategia sia causale
+   (`AccountingError` altrimenti). Ingressi e uscite del grafico e del paper trading vengono dal ledger. In più, un test "fill
+   all'apertura successiva" (`run_ledger_next_open`) e un test al doppio dei costi sono filtri dello studio.
+2. **Isolamento del blocco finale.** L'ultimo 25% delle sessioni viene tagliato prima di tutto: sweep, superficie, uscite,
+   walk-forward, qualità e controllo del trend ricevono solo barre di sviluppo. Il blocco finale compare solo, per l'unico
+   candidato finale, nel look del Giudice. Un test sostituisce il blocco con prezzi casuali e verifica che ogni output di sviluppo
+   sia identico. La memoria degli agenti contiene solo fatti di sviluppo, mai verdetti del blocco finale.
+3. **Walk-forward annidato.** In ogni finestra l'addestramento sceglie parametri, timeframe e stop/target; la finestra
+   successiva testa la configurazione congelata. Si calcola per le superfici già robuste (le altre vengono respinte comunque).
+4. **Registro in SQLite** (`data/registry.db`, transazioni, id degli esperimenti, impronta del dataset, log degli accessi al blocco
+   finale, deduplica strategia+dati). Il vecchio `registry.json` è importato una volta e resta intatto come copia.
+5. **Prop firm intraday** (`prop_intraday.py`): drawdown static / EOD / intraday con P&L non realizzato e violazioni a posizione
+   aperta, su equity a barre. Il simulatore giornaliero resta, etichettato `daily_simplified`. Il fascicolo riporta anche il
+   confronto tra i due.
+6. **Paper trading**: registro dei segnali a sola aggiunta con catena di hash (`data/signals/*.jsonl`); un aggiornamento dei
+   dati non riscrive la storia (restatement / late_trade annotati, mai applicati).
+7. **Robustezza**: robustezza dei parametri (vicini allo stesso timeframe) separata da quella tra timeframe; minimo 100
+   operazioni; Sharpe positivo al doppio dei costi e con fill all'apertura successiva.
+
+## Filtro dei mercati
+Nel pannello Autopilota, "Mercati su cui testare": solo Nasdaq (NQ/MNQ) oppure anche S&P 500 (ES/MES) e oro (GC/MGC).
+Le voci già in coda per un mercato disattivato restano ferme finché non lo riattivi.
