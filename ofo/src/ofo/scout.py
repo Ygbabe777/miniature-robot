@@ -186,6 +186,15 @@ class Scout:
                 self._emit("error", f"curator unavailable ({type(e).__name__}: {e}); using the keyword ranking")
         return [{**p, "why": "keyword ranking (no AI curator)"} for p in cands[: self.max_picks]]
 
+    def provide(self, pid: str, filename: str) -> bool:
+        """The owner supplied the full text of a paper by hand: it is no longer waiting."""
+        rec = self.state["papers"].get(pid)
+        if not rec:
+            return False
+        rec["status"] = "downloaded"; rec["manual"] = False; rec["file"] = filename
+        self._save()
+        return True
+
     def _abstract_only(self, p: dict, rec: dict) -> int:
         """No free PDF (SSRN needs a login): the abstract still carries the hypothesis, so the Researcher reads that."""
         self.out.mkdir(parents=True, exist_ok=True)
@@ -195,6 +204,8 @@ class Scout:
         rec["status"] = "abstract"; rec["file"] = f"web/{name}.md"
         if p["source"] == "ssrn":
             rec["manual"] = True                                            # the owner can fetch it by hand into ideas/
+            rec["pid"] = p["id"]
+            self._emit("need_pdf", p["title"][:120], {"id": p["id"], "title": p["title"], "url": p["url"]})   # -> notification in the UI
         self._emit("download", f"abstract only: {p['title'][:80]}", {"url": p["url"], "why": p["why"]})
         return 1
 
@@ -283,7 +294,7 @@ class Scout:
         a = self.state["auto"]; last = self.state["last_run"]
         return {"running": running, "auto": a, "health": self.state.get("health", {}), "last_run": last,
                 "next_run": (last["at"] + a["minutes"] * 60) if (a["enabled"] and last) else None,
-                "manual_ssrn": [{"title": v.get("title"), "url": v.get("url")} for v in self.state["papers"].values()
-                                if v.get("manual") and v.get("status") == "abstract"][:8],
+                "manual_ssrn": [{"id": k, "title": v.get("title"), "url": v.get("url")} for k, v in self.state["papers"].items()
+                                if v.get("manual") and v.get("status") == "abstract"][:12],
                 "queries_done": len(self.state["queries"]), "queries_total": len(self.all_topics),
                 "papers": [{"id": k, **{x: v.get(x) for x in ("title", "url", "published", "why", "status")}} for k, v in papers[:10]]}

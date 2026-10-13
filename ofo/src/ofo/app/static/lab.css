@@ -198,3 +198,8 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 #webbigbody{flex:1;overflow:auto;font:13px/1.45 ui-monospace,Consolas,monospace;background:#0b0b0e;padding:8px}
 #webbigbody .w{padding:3px 0;border-bottom:1px solid #1a1a1f;word-break:break-word}#webbigbody .w b{display:inline-block;min-width:110px;color:#8ab4ff}
 #webbigbody .w.error{color:#ff5c6c}#webbigbody .w.saved{color:#3ddc97}#webbigbody .w.search{color:#e8c36a}#webbigbody small{display:block;color:#9a9aa4;padding-left:14px}#webbigbody a{color:inherit}
+
+#toasts{position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;gap:8px;width:min(520px,92vw)}
+.toast{position:relative;background:var(--panel);border:3px solid var(--accent);box-shadow:5px 5px 0 #000b;padding:10px 30px 10px 12px;font-size:12px;line-height:1.4}
+.toast .x{position:absolute;top:4px;right:6px;background:none;border:0;color:inherit;cursor:pointer;font-size:14px}
+.toast a{color:var(--accent);margin-right:8px}

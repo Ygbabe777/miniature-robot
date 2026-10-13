@@ -277,3 +277,24 @@ def test_child_environment_never_carries_api_keys(monkeypatch):
     monkeypatch.setattr(src.subprocess, "run", lambda argv, **kw: (seen.update(kw["env"]) or type("P", (), {"stdout": b"ok", "stderr": b"", "returncode": 0})()))
     src.run_cli(["yt-dlp", "--version"])
     assert "OFO_LLM_API_KEY" not in seen and seen.get("APPDATA") == "C:\\x"
+
+
+def test_pdf_request_notification_and_upload_marks_it_received(tmp_path):
+    import json
+    from test_research import synth
+    from ofo.app.lab import Lab
+    import ofo.scout as scout_mod
+    csv = tmp_path / "b.csv.gz"; synth(n_sessions=30, seed=2).to_csv(csv)
+    lab = Lab(str(csv), data_dir=str(tmp_path / "d"), ideas_dir=str(tmp_path / "i"))
+    sc = lab.scout()
+    p = {"id": "ssrn:777", "source": "ssrn", "title": "Gap fill in NQ", "abstract": "nasdaq gap " * 30,
+         "url": "https://doi.org/10.2139/ssrn.777", "pdf_url": "", "published": "2024", "authors": [], "why": "t"}
+    rec = {"title": p["title"], "url": p["url"], "source": "ssrn", "status": "skipped"}
+    sc._abstract_only(p, rec); sc.state["papers"][p["id"]] = rec
+    assert any(e["type"] == "need_pdf" and e["data"]["id"] == "ssrn:777" for e in lab.events.tail())
+    assert sc.public_state()["manual_ssrn"][0]["id"] == "ssrn:777"
+    out = lab.save_idea("paper.pdf", b"%PDF-1.4 test", for_id="ssrn:777")
+    assert out["saved"] == "paper.pdf" and sc.state["papers"]["ssrn:777"]["status"] == "downloaded"
+    assert sc.public_state()["manual_ssrn"] == []
+    meta = json.loads((tmp_path / "i" / "paper.meta.json").read_text())
+    assert meta["title"] == "Gap fill in NQ"

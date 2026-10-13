@@ -123,6 +123,7 @@
     const f = $('#feed'); f.insertBefore(d, f.firstChild); while (f.children.length > 150) f.removeChild(f.lastChild);
   }
   function noteEvent(e) {
+    if (e.type === 'need_pdf') { needPdf(e); notify('left'); }
     if (e.type === 'verdict' || e.type === 'autostart' || e.type === 'template_request') notify('right', 'strategies');
     if (e.type === 'verdict' || e.type === 'download' || e.type === 'autostart' || e.type === 'budget' || e.type === 'proposal') notify('left');
     if (e.agent === 'strategist' && (e.type === 'proposal' || e.type === 'message')) notify('right', 'chat');
@@ -553,6 +554,26 @@
   $('#close').onclick = () => { $('#modal').hidden = true; LabCharts.destroyAll(); };
   document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#close').click(); });
 
+  // ---------- PDF the Researcher asked for: notification + upload ----------
+  function toast(html, ms) {
+    let box = $('#toasts'); if (!box) { box = document.createElement('div'); box.id = 'toasts'; document.body.appendChild(box); }
+    const d = document.createElement('div'); d.className = 'toast'; d.innerHTML = html + '<button class="x">✕</button>'; box.appendChild(d);
+    d.querySelector('.x').onclick = () => d.remove(); if (ms) setTimeout(() => d.remove(), ms); return d;
+  }
+  function pickPdf(id) {
+    const f = document.createElement('input'); f.type = 'file'; f.accept = '.pdf,.txt,.md';
+    f.onchange = async () => { const file = f.files[0]; if (!file) return;
+      const r = await api('/api/ideas/' + encodeURIComponent(file.name) + '?for=' + encodeURIComponent(id), { method: 'PUT', body: await file.arrayBuffer() });
+      toast(r.error ? esc(r.error) : '✔ ' + t('pdf_sent', { n: esc(r.saved) }), 6000); scoutKey = ''; poll(); };
+    f.click();
+  }
+  function needPdf(e) {
+    const d = e.data || {};
+    const el = toast(`📄 <b>${t('pdf_need')}</b><div>${esc((d.title || e.message || '').slice(0, 110))}</div>
+      <a href="${esc(d.url || '#')}" target="_blank" rel="noopener">${t('pdf_open')}</a> <button class="btn small" id="tp-${Date.now()}">${t('pdf_upload')}</button>`, 0);
+    const b = el.querySelector('button.btn'); if (b) b.onclick = () => { pickPdf(d.id); el.remove(); };
+  }
+
   // ---------- Scout: autonomous literature search ----------
   let scoutKey = '';
   function renderScout(sc) {
@@ -565,8 +586,9 @@
       <div class="smeta">${t('scout_topics', { a: sc.queries_done, b: sc.queries_total })}${sc.last_run ? ' · ' + t('scout_last', { f: sc.last_run.found, d: sc.last_run.downloaded }) : ''}${mins !== null && sc.auto.enabled ? ' · ' + t('scout_next', { m: mins }) : ''}</div>
       <div class="smeta">${t('scout_channels')}: ${(sc.channels || []).join(', ')}</div>
       <div class="spapers">${sc.papers.length ? sc.papers.slice(0, 6).map(p => `<div title="${esc(p.why || '')}"><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc((p.title || '').slice(0, 60))}</a><i class="${p.status === 'downloaded' || p.status === 'abstract' ? 'ok' : p.status === 'manual' ? 'man' : ''}">${t(st[p.status] || 'sp_skipped')}</i></div>`).join('') : `<div class="empty">${t('scout_none')}</div>`}</div>
-      ${(sc.manual_ssrn || []).length ? `<div class="smeta"><b>${t('ssrn_manual')}</b></div><div class="spapers">${sc.manual_ssrn.slice(0, 5).map(p => `<div><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc((p.title || '').slice(0, 70))}</a></div>`).join('')}</div>` : ''}
+      ${(sc.manual_ssrn || []).length ? `<div class="smeta"><b>${t('ssrn_manual')}</b></div><div class="spapers">${sc.manual_ssrn.slice(0, 8).map(p => `<div><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc((p.title || '').slice(0, 60))}</a> <button class="btn small pdfup" data-id="${esc(p.id)}">${t('pdf_upload')}</button></div>`).join('')}</div>` : ''}
       <div class="smeta">${t('scout_note')}</div>`;
+    $('#scout').querySelectorAll('.pdfup').forEach(b => b.onclick = () => pickPdf(b.dataset.id));
     $('#scout-go').onclick = async () => { await api('/api/scout/run', { method: 'POST', json: { lang: LANG } }); scoutKey = ''; poll(); };
     $('#scout-auto').onchange = async (e) => { const m = +e.target.value; await api('/api/scout/auto', { method: 'POST', json: { enabled: m > 0, minutes: m || 60 } }); scoutKey = ''; poll(); };
   }

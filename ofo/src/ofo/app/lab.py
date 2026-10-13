@@ -1076,7 +1076,7 @@ class Lab:
         return {"series": out, "tf": tf, "template": rep["template"], "params": params,
                 "help": INDICATOR_HELP.get(rep["template"], {})}
 
-    def save_idea(self, name: str, data: bytes) -> dict:
+    def save_idea(self, name: str, data: bytes, for_id: str | None = None) -> dict:
         safe = Path(name).name
         if Path(safe).suffix.lower() not in IDEA_SUFFIXES:
             return {"error": "sono ammessi solo PDF, .txt e .md"}
@@ -1089,4 +1089,10 @@ class Lab:
             n += 1
         dest.write_bytes(data)
         self.events.emit("you", "upload", dest.name)
+        if for_id:                                           # the PDF the Researcher asked for: keep its source and mark it received
+            rec = self.scout().state["papers"].get(for_id) or {}
+            dest.with_suffix(".meta.json").write_text(json.dumps({"title": rec.get("title", dest.stem), "url": rec.get("url", ""),
+                                                                  "source": "ssrn (provided by the owner)"}, ensure_ascii=False))
+            if self.scout().provide(for_id, dest.name):
+                self.events.emit("researcher", "message", f"PDF ricevuto: {rec.get('title', dest.name)[:90]}. Lo leggo.")
         return {"saved": dest.name}

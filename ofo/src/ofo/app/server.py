@@ -116,7 +116,7 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
             u = urlparse(self.path)
             try:
                 if u.path.startswith("/api/ideas/"):
-                    return self._json(lab.save_idea(unquote(u.path[len("/api/ideas/"):]), self._body()))
+                    return self._json(lab.save_idea(unquote(u.path[len("/api/ideas/"):]), self._body(), parse_qs(u.query).get("for", [None])[0]))
                 self._json({"error": "not found"}, 404)
             except Exception as e:
                 self._json({"error": str(e)[:300]}, 500)
