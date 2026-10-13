@@ -26,11 +26,7 @@
   }
   document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.onclick = () => tab(b.dataset.tab));
   $('#wide').onclick = () => { $('#right').classList.toggle('wide'); setTimeout(() => { if (window.LabScene) LabScene.resize(); trader && trader.fit(true); }, 80); };
-  if (window.LabScene) LabScene.onPick = (st) => {
-    if (st === 'strategist') tab('chat'); else if (st === 'trader') tab('trader');
-    else if (st === 'research') { const d = $('#drop'); d.classList.add('over'); setTimeout(() => d.classList.remove('over'), 1200); } else tab('strategies');
-  };
-
+  if (window.LabScene) LabScene.onPick = (st, key) => { if (key) openInspector(key); };
   // ---------- chat ----------
   let history = store.get('ofo_chat', []);
   function addMsg(role, text, cls) {
@@ -117,7 +113,9 @@
   // ---------- feed ----------
   let evNext = 0;
   function feedLocal(msg, agent) { addFeed({ agent, type: '', message: msg, t: new Date().toISOString() }); }
+  const evCache = [];
   function addFeed(e) {
+    evCache.push(e); if (evCache.length > 500) evCache.shift();
     const d = document.createElement('div'); d.className = 'ev ' + e.agent;
     d.innerHTML = `<small>${esc(AGENTS[e.agent] || e.agent)} · ${esc(e.type)} · ${esc((e.t || '').slice(11, 19))}</small>${esc(e.message)}`;
     const f = $('#feed'); f.insertBefore(d, f.firstChild); while (f.children.length > 150) f.removeChild(f.lastChild);
@@ -140,7 +138,9 @@
   }
 
   // ---------- state ----------
+  let lastState = null, lastAcct = [];
   function renderState(s) {
+    lastState = s;
     if (s.build) { const c = $('#credit'); if (c && !c.dataset.b) { c.dataset.b = 1; c.textContent = 'build ' + s.build + ' · ' + c.textContent; } }
     $('#c-trials').textContent = s.trials; $('#c-looks').textContent = s.locked_looks;
     $('#c-calls').textContent = s.calls_last_minute == null ? '–' : s.calls_last_minute + '/' + (s.calls_per_minute ?? '–');
@@ -858,7 +858,7 @@
   // ---------- accounts (evaluation / funded) as flasks + list ----------
   async function loadAccounts() {
     try {
-      const d = await api('/api/accounts'), L = d.accounts;
+      const d = await api('/api/accounts'), L = d.accounts; lastAcct = L;
       const stTxt = (a) => t('as_' + a.state);
       const full = L.map(a => [`${a.firm} ${a.plan} · ${a.kind === 'funded' ? t('acct_funded') : t('acct_eval')}${d.demo ? ' · ' + t('acct_demo') : ''}`,
         `${money(a.balance)} · ${stTxt(a)}${a.kind === 'funded' ? ' · ' + t('acct_payouts', { n: a.payouts }) : a.progress != null ? ' · ' + t('acct_prog', { p: pct(a.progress) }) : ''}`]);
@@ -872,6 +872,69 @@
     } catch (e) {}
   }
   loadAccounts(); setInterval(loadAccounts, 30000);
+
+  // ---------- the Validation Chamber and Risk Manager screens show the LATEST real study and the real accounts ----------
+  let valSlug = null;
+  async function feedScreens() {
+    if (!window.LabScene || !LabScene.setValidation || !lastState) return;
+    const last = (lastState.strategies || [])[0];
+    if (last && last.slug !== valSlug) {
+      valSlug = last.slug;
+      try { const d = await api('/api/strategy/' + encodeURIComponent(last.slug)); const c = d.charts && (d.charts.wf_oos || d.charts.dev_best); LabScene.setValidation({ name: last.name, equity: c ? c.equity : null }); } catch (e) { valSlug = null; }
+    }
+    if (last) {
+      const rl = last.role ? t('ro_' + last.role) : '–';
+      LabScene.setRisk({ study: [String(last.name).slice(0, 30), t('v_' + last.status), rl.slice(0, 32), (last.robust ? t('robust') : t('fragile'))],
+        accounts: (lastAcct || []).slice(0, 6).map(a => `${a.firm} ${a.plan} ${a.kind === 'funded' ? 'F' : 'E'} ${Math.round((a.health || 0) * 100)}%`) });
+    }
+  }
+  setInterval(feedScreens, 6000);
+
+  // ---------- departments: zoom bar + Inspector (live data only: nothing here is made up) ----------
+  const DEPT_AGENTS = { research: ['researcher', 'scout'], optimizer: ['optimizer', 'planner'], validator: ['validator'], strategist: ['strategist'], risk: ['risk'], judge: ['judge', 'auditor'], trader: ['trader'], core: [], vault: [], farm: [] };
+  const DEPT_STATE = { research: 'research', optimizer: 'optimizer', validator: 'validator', strategist: 'strategist', risk: 'risk', judge: 'judge', trader: 'trader' };
+  let inspKey = null;
+  function buildDeptBar() {
+    const bar = $('#deptbar'); if (!bar || !window.LabScene || !LabScene.departments) return;
+    bar.innerHTML = `<button class="home" data-k="">${t('dp_home')}</button>` + LabScene.departments().map(d => `<button data-k="${d.key}">${esc(t('dp_' + d.key))}</button>`).join('');
+    bar.querySelectorAll('button').forEach(b => b.onclick = () => { if (b.dataset.k) { LabScene.focus(b.dataset.k); openInspector(b.dataset.k); } else { LabScene.home(); closeInspector(); } });
+  }
+  function closeInspector() { inspKey = null; $('#inspector').hidden = true; markBar(null); }
+  function markBar(k) { document.querySelectorAll('#deptbar button').forEach(b => b.classList.toggle('on', !!k && b.dataset.k === k)); }
+  function openInspector(key) { inspKey = key; markBar(key); renderInspector(); }
+  function evLines(agents, n) {
+    return evCache.filter(e => agents.includes(e.agent) && !['working', 'done', 'idle', 'web'].includes(e.type)).slice(-n).reverse()
+      .map(e => `<div class="ev2"><small>${esc(AGENTS[e.agent] || e.agent)} · ${esc(e.type)} · ${esc((e.t || '').slice(11, 19))}</small>${esc(String(e.message || '').slice(0, 180))}</div>`).join('') || `<div class="smeta">${t('dp_noev')}</div>`;
+  }
+  function renderInspector() {
+    const box = $('#inspector'); if (!inspKey || !box) return; const k = inspKey, s = lastState || {}, kv = (a, b) => `<div class="kv"><span>${a}</span><b>${b}</b></div>`;
+    const sts = LabScene.states ? LabScene.states() : {}, stn = DEPT_STATE[k] ? sts[DEPT_STATE[k]] : null;
+    const jobs = s.jobs || [], run = jobs.find(j => j.status === 'running'), queued = jobs.filter(j => j.status === 'queued').length, strat = s.strategies || [];
+    const cnt = st => strat.filter(x => x.status === st).length, last = strat[0];
+    let rows = '', extra = '', acts = '';
+    if (k === 'research') { const r = s.researcher || {}; rows = kv(t('dp_unread'), r.unread ?? '–') + kv(t('dp_queue'), r.queue ?? '–') + kv('AI', r.ai ? t('rs_on') : t('rs_off')) + kv(t('rs_hyp'), esc(r.hypothesis ? (r.hypothesis.ready ? t('rs_hyp_ready') : r.hypothesis.why) : '–')); acts = `<button class="btn small" data-go="chat">${t('dp_talk')}</button>`; }
+    else if (k === 'optimizer') { rows = kv(t('dp_running'), run ? esc(run.name) : '–') + kv(t('dp_stage'), run ? esc(t('stg_' + (run.stage || 'starting'))) : '–') + kv(t('dp_waiting'), queued) + kv(t('dp_trials'), s.trials ?? '–'); }
+    else if (k === 'validator') { rows = last ? kv(t('dp_last'), esc(last.name)) + kv(t('med_sharpe'), num(last.median_sharpe, 3)) + kv(t('dp_surface'), last.robust ? t('robust') : t('fragile')) : `<div class="smeta">${t('dp_nostudy')}</div>`; }
+    else if (k === 'core') { rows = kv(t('dp_running'), run ? esc(run.name) : '–') + kv(t('dp_waiting'), queued) + kv(t('dp_studies'), strat.length) + kv(t('v_APPROVED'), cnt('APPROVED')) + kv(t('v_REJECTED'), cnt('REJECTED')) + kv(t('v_INSUFFICIENT_EVIDENCE'), cnt('INSUFFICIENT_EVIDENCE')); acts = `<button class="btn small" data-go="strategies">${t('dp_open_strat')}</button>`; }
+    else if (k === 'strategist') { rows = ''; acts = `<button class="btn small" data-go="chat">${t('dp_talk')}</button>`; }
+    else if (k === 'risk') { rows = kv(t('dp_review'), s.farming_pending ?? 0) + (last ? kv(t('dp_last'), esc(last.name)) + kv(t('ro_title').split(':')[0], last.role ? esc(t('ro_' + last.role)) : '–') : ''); }
+    else if (k === 'judge') { rows = kv(t('v_APPROVED'), cnt('APPROVED')) + kv(t('v_REJECTED'), cnt('REJECTED')) + kv(t('v_INSUFFICIENT_EVIDENCE'), cnt('INSUFFICIENT_EVIDENCE')) + kv(t('dp_looks'), s.locked_looks ?? '–'); }
+    else if (k === 'vault') { const f = s.fascicoli || []; rows = kv(t('dp_dossiers'), f.length); extra = f.slice(0, 8).map(x => `<div class="fl" data-fasc="${esc(x.slug)}">▸ ${esc(x.nome)} · ${esc(x.decisione || t('dp_pending'))}</div>`).join(''); }
+    else if (k === 'farm') { const A = lastAcct || []; const by = st => A.filter(a => a.state === st).length; rows = kv(t('dp_accounts'), A.length) + kv(t('acct_eval'), A.filter(a => a.kind !== 'funded').length) + kv(t('acct_funded'), A.filter(a => a.kind === 'funded').length) + kv('passed', by('passed')) + kv('busted', by('busted')) + kv(t('dp_payouts'), A.reduce((x, a) => x + (a.payouts || 0), 0)); }
+    else if (k === 'trader') { rows = kv(t('v_APPROVED'), cnt('APPROVED')); acts = `<button class="btn small" data-go="trader">${t('dp_open_trader')}</button>`; }
+    const ag = DEPT_AGENTS[k] || [];
+    box.hidden = false;
+    box.innerHTML = `<div class="ih"><b>${esc(t('dp_' + k))}</b><button id="insp-x">✕</button></div>
+      ${stn ? `<span class="st ${stn}">${esc(t('st_' + stn))}</span>` : ''}<div class="desc">${esc(t('dpd_' + k))}</div>${rows}${extra}
+      ${ag.length ? `<h3>${t('dp_events')}</h3>${evLines(ag, 5)}` : ''}<div class="acts"><button class="btn small ghost" id="insp-zoom">${t('dp_zoom')}</button>${acts}</div>`;
+    $('#insp-x').onclick = () => { LabScene.home(); closeInspector(); };
+    $('#insp-zoom').onclick = () => LabScene.focus(k);
+    box.querySelectorAll('[data-go]').forEach(b => b.onclick = () => tab(b.dataset.go));
+    box.querySelectorAll('[data-fasc]').forEach(b => b.onclick = () => openFasc(b.dataset.fasc));
+  }
+  setInterval(() => { if (inspKey) renderInspector(); }, 4000);
+  if (window.LabScene && LabScene.departments) { buildDeptBar(); LabScene.onSelectCb = k => { if (k) { inspKey = k; markBar(k); renderInspector(); } }; }
+  window.addEventListener('ofo-lang', buildDeptBar);
 
   // ---------- brand logo (optional file: brand/icon.png) ----------
   const li = $('#logo-img');

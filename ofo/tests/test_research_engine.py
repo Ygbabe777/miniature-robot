@@ -884,3 +884,43 @@ def test_the_ui_uses_only_the_ofo_monochrome_palette_plus_the_four_state_colours
                 bad.setdefault(fn, set()).add(h)
     assert not bad, bad
     assert (base / "brand" / "icon.png").exists() and (base / "brand" / "icon.png").read_bytes()[:4] == b"\x89PNG"      # the supplied logo, used as it is
+
+
+def test_the_lab_layout_has_ten_departments_and_dossiers_follow_the_real_events_through_the_core(tmp_path):
+    """Spatial redesign: Research | Optimization | Validation on the back wall, Strategist | OFO CORE | Risk Manager in the middle, Vault | Judge | Prop Farm in front.
+    A dossier moves only when the backend emits the event: proposal -> optimizer -> surface -> verdict -> Core -> Judge -> Vault."""
+    import json, sqlite3, threading
+    pw = pytest.importorskip("playwright.sync_api")
+    from ofo.app.lab import Lab
+    from ofo.app.server import make_server
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    srv = make_server(lab, port=8796); threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with pw.sync_playwright() as p:
+            try:
+                b = p.chromium.launch(executable_path="/opt/pw-browsers/chromium", args=["--use-gl=swiftshader", "--enable-unsafe-swiftshader", "--no-sandbox"])
+            except Exception:
+                pytest.skip("no chromium available")
+            pg = b.new_page(viewport={"width": 1400, "height": 850})
+            errs = []; pg.on("pageerror", lambda e: errs.append(str(e)))
+            pg.goto("http://127.0.0.1:8796/"); pg.wait_for_timeout(5000)
+            depts = pg.evaluate("LabScene.departments().map(d => d.key)")
+            assert set(depts) == {"research", "optimizer", "validator", "strategist", "core", "risk", "trader", "judge", "vault", "farm"}
+            assert pg.evaluate("LabScene.crates().length") == 0                                        # nothing moves without events
+            send = lambda a, t, m="": pg.evaluate("LabScene.onEvent(%s)" % json.dumps({"agent": a, "type": t, "message": m, "data": {}}))
+            send("researcher", "proposal", "x"); pg.wait_for_timeout(300)
+            assert pg.evaluate("LabScene.crates().length") == 1
+            send("optimizer", "study_started", "x"); send("validator", "surface", "x"); send("judge", "verdict", "x: APPROVED")
+            for _ in range(60):                                                                          # software rendering is slow: wait for the arrival, not for a fixed time
+                pg.wait_for_timeout(1000)
+                c = pg.evaluate("LabScene.crates()")
+                if c and c[0]["at"][0] < -8 and c[0]["at"][2] > 9:
+                    break
+            assert c and c[0]["at"][0] < -8 and c[0]["at"][2] > 9                                        # it arrived at the VAULT end of the belt (front left)
+            pg.evaluate("LabScene.focus('core')"); pg.wait_for_timeout(1500)
+            assert pg.evaluate("document.querySelector('#inspector').hidden") is False                  # selecting a department opens its Inspector
+            pg.evaluate("LabScene.home()"); pg.wait_for_timeout(300)
+            assert not errs, errs
+            b.close()
+    finally:
+        srv.shutdown()
