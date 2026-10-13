@@ -9,6 +9,7 @@ text that only reaches validators."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -17,7 +18,7 @@ from .agents.base import Agent
 from .agents.roles import make_curator
 from .papers import relevance
 from .sources import FUTURES_TOPICS, Channel, SourceError, futures_score
-from .web import Polite, WebError, download_pdf, pdf_allowed, search_arxiv, search_semantic_scholar, search_ssrn
+from .web import Polite, WebError, download_open_pdf, download_pdf, find_open_pdf, pdf_allowed, search_arxiv, search_semantic_scholar, search_ssrn
 
 TOPICS = [
     "opening range breakout futures", "intraday momentum index futures", "time series momentum intraday",
@@ -185,6 +186,26 @@ class Scout:
                 self._emit("error", f"curator unavailable ({type(e).__name__}: {e}); using the keyword ranking")
         return [{**p, "why": "keyword ranking (no AI curator)"} for p in cands[: self.max_picks]]
 
+    def _abstract_only(self, p: dict, rec: dict) -> int:
+        """No free PDF (SSRN needs a login): the abstract still carries the hypothesis, so the Researcher reads that."""
+        self.out.mkdir(parents=True, exist_ok=True)
+        name = safe_name(p["id"])
+        (self.out / f"{name}.md").write_text(f"# {p['title']}\n\n(abstract only: the full text was not available)\n\n{p['abstract']}\n", encoding="utf-8")
+        (self.out / f"{name}.meta.json").write_text(json.dumps({**p, "abstract": p["abstract"][:1500]}, ensure_ascii=False, indent=1))
+        rec["status"] = "abstract"; rec["file"] = f"web/{name}.md"
+        if p["source"] == "ssrn":
+            rec["manual"] = True                                            # the owner can fetch it by hand into ideas/
+        self._emit("download", f"abstract only: {p['title'][:80]}", {"url": p["url"], "why": p["why"]})
+        return 1
+
+    def _open_copy(self, p: dict) -> str:
+        doi = p.get("url", "").replace("https://doi.org/", "")
+        self._web("read", "ssrn", "looking for a free full-text copy: " + p["title"][:70], url=p.get("url", ""))
+        url = find_open_pdf(doi, self.fetch, os.environ.get("OFO_UNPAYWALL_EMAIL") or None)
+        if not url:
+            self._web("skip", "ssrn", "no free copy (SSRN needs your login): saved the abstract, download by hand", url=p.get("url", ""))
+        return url
+
     def _save_text(self, p: dict, rec: dict) -> bool:
         """Full text of a web / github / rss / video / social candidate, saved for the Researcher as UNTRUSTED data."""
         self._web("read", p["source"], p["title"][:90], url=p.get("url", ""))
@@ -221,10 +242,12 @@ class Scout:
         for p in picks:
             rec = {"title": p["title"], "url": p["url"], "published": p["published"], "why": p["why"],
                    "source": p["source"], "found": self.now(), "status": "skipped", "query": p.get("query", "")}
-            if p.get("pdf_url") and pdf_allowed(p["pdf_url"]):
+            if p["source"] == "ssrn" and not p.get("pdf_url"):
+                p["pdf_url"] = self._open_copy(p)                 # a legal free copy of the SSRN paper, if one exists
+            if p.get("pdf_url") and (pdf_allowed(p["pdf_url"]) or p["source"] in ("ssrn", "semanticscholar")):
                 self._web("read", p["source"], "PDF: " + p["title"][:80], url=p["pdf_url"])
                 try:
-                    data = download_pdf(p["pdf_url"], self.fetch)
+                    data = (download_pdf if pdf_allowed(p["pdf_url"]) else download_open_pdf)(p["pdf_url"], self.fetch)
                     self.out.mkdir(parents=True, exist_ok=True)
                     name = safe_name(p["id"])
                     (self.out / f"{name}.pdf").write_bytes(data)
@@ -235,16 +258,12 @@ class Scout:
                 except WebError as e:
                     rec["status"] = "failed"; self._emit("error", f"download failed: {e}")
                     self._web("error", p["source"], f"download failed: {e}"[:160], url=p["pdf_url"])
+                    if p["source"] in ("ssrn", "semanticscholar"):          # a free copy that cannot be fetched: keep the abstract
+                        abstracts += self._abstract_only(p, rec)
             elif p["source"] in self.by_channel and self._save_text(p, rec):
                 got += 1
             else:
-                # no free PDF (SSRN needs a login): the abstract still carries the hypothesis, so the Researcher reads that
-                self.out.mkdir(parents=True, exist_ok=True)
-                name = safe_name(p["id"])
-                (self.out / f"{name}.md").write_text(f"# {p['title']}\n\n(abstract only: the full text was not available)\n\n{p['abstract']}\n", encoding="utf-8")
-                (self.out / f"{name}.meta.json").write_text(json.dumps({**p, "abstract": p["abstract"][:1500]}, ensure_ascii=False, indent=1))
-                rec["status"] = "abstract"; rec["file"] = f"web/{name}.md"; abstracts += 1
-                self._emit("download", f"abstract only: {p['title'][:80]}", {"url": p["url"], "why": p["why"]})
+                abstracts += self._abstract_only(p, rec)
             self.state["papers"][p["id"]] = rec
         chosen = {p["id"] for p in picks}
         for p in cands:                                  # not chosen: may be offered again, but at most 3 times
@@ -264,5 +283,7 @@ class Scout:
         a = self.state["auto"]; last = self.state["last_run"]
         return {"running": running, "auto": a, "health": self.state.get("health", {}), "last_run": last,
                 "next_run": (last["at"] + a["minutes"] * 60) if (a["enabled"] and last) else None,
+                "manual_ssrn": [{"title": v.get("title"), "url": v.get("url")} for v in self.state["papers"].values()
+                                if v.get("manual") and v.get("status") == "abstract"][:8],
                 "queries_done": len(self.state["queries"]), "queries_total": len(self.all_topics),
                 "papers": [{"id": k, **{x: v.get(x) for x in ("title", "url", "published", "why", "status")}} for k, v in papers[:10]]}

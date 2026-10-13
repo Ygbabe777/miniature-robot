@@ -217,3 +217,43 @@ def test_agent_thinking_message_names_the_topic():
     Agent("researcher", L(), "sys", lambda d: d, ev).run("Paper: opening range breakout on NQ futures")
     msgs = [e["message"] for e in ev.tail()]
     assert any(m.startswith("thinking: Paper: opening range") for m in msgs) and any("VWAP fade" in m for m in msgs)
+
+
+def test_ssrn_full_text_comes_from_a_legal_free_copy_or_falls_back_to_the_abstract(tmp_path):
+    import json
+    from ofo.scout import Scout
+    import ofo.scout as scout_mod
+    import ofo.web as web
+
+    ssrn = {"id": "ssrn:123", "source": "ssrn", "title": "Futures intraday momentum", "abstract": "nasdaq futures intraday momentum " * 20,
+            "url": "https://doi.org/10.2139/ssrn.123", "pdf_url": "", "published": "2023", "authors": []}
+    pdf = b"%PDF-1.4 " + b"x" * 2000
+
+    def fetch_ok(url, **kw):
+        if "semanticscholar" in url:
+            return json.dumps({"openAccessPdf": {"url": "https://authors.example.edu/paper.pdf"}}).encode()
+        return pdf
+    sc = Scout(tmp_path / "s1", tmp_path / "i1", None, None, fetch=fetch_ok, use_semantic_scholar=False)
+    scout_mod.search_arxiv = lambda q, fetch=None: []
+    scout_mod.search_ssrn = lambda q, fetch=None: [dict(ssrn)]
+    sc.run_once()
+    assert sc.state["papers"]["ssrn:123"]["status"] == "downloaded" and (tmp_path / "i1" / "web" / "ssrn_123.pdf").exists()
+
+    def fetch_none(url, **kw):
+        if "semanticscholar" in url:
+            return b"{}"
+        raise web.WebError("unexpected")
+    sc2 = Scout(tmp_path / "s2", tmp_path / "i2", None, None, fetch=fetch_none, use_semantic_scholar=False)
+    sc2.run_once()
+    rec = sc2.state["papers"]["ssrn:123"]
+    assert rec["status"] == "abstract" and rec["manual"] and sc2.public_state()["manual_ssrn"][0]["url"].endswith("ssrn.123")
+
+
+def test_open_pdf_download_refuses_unsafe_addresses():
+    import pytest
+    from ofo.web import WebError, download_open_pdf
+    for bad in ("http://example.org/a.pdf", "https://127.0.0.1/a.pdf", "https://localhost/a.pdf", "https://10.0.0.5/x.pdf"):
+        with pytest.raises(WebError):
+            download_open_pdf(bad, fetch=lambda u, **k: b"%PDF-1")
+    with pytest.raises(WebError):
+        download_open_pdf("https://example.org/a.pdf", fetch=lambda u, **k: b"<html>")

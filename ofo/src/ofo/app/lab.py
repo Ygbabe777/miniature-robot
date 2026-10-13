@@ -963,7 +963,7 @@ class Lab:
                             self.deploy_ready()
                             self.forward_tick()
                             self.obsidian_sync()
-                            if self.obs["vault"] and self.busy["research"] == 0 and self._unread_ideas():
+                            if (self.obs["vault"] or self.ap["enabled"]) and self.busy["research"] == 0 and self.llm_allowed("researcher") and self._unread_ideas():
                                 threading.Thread(target=self._ingest_now, daemon=True).start()
                 except Exception as e:
                     self.events.emit("lab", "error", f"scheduler: {e}")

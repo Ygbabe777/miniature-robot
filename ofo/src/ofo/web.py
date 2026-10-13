@@ -161,3 +161,43 @@ def download_pdf(url: str, fetch=None, max_bytes: int = 25 * 1024 * 1024) -> byt
     if not data.startswith(b"%PDF"):
         raise WebError("not a PDF")
     return data
+
+
+def find_open_pdf(doi: str, fetch=None, unpaywall_email: str | None = None) -> str:
+    """A LEGAL free copy of a paper, looked up by DOI: Semantic Scholar's openAccessPdf (no key, no e-mail), then Unpaywall
+    only if the owner set OFO_UNPAYWALL_EMAIL (Unpaywall requires an e-mail; it is never taken from anywhere else).
+    SSRN's own PDF needs a login and acceptance of its terms and is NOT fetched: many SSRN papers also exist as a free
+    working paper elsewhere, which is what this finds. Returns '' when nothing free exists. Never raises."""
+    fetch = fetch or Polite(interval=1.5)
+    d = urllib.parse.quote(doi, safe="/")
+    try:
+        data = json.loads(fetch(f"https://api.semanticscholar.org/graph/v1/paper/DOI:{d}?fields=openAccessPdf"))
+        url = (data.get("openAccessPdf") or {}).get("url") or ""
+        if url:
+            return url
+    except (WebError, ValueError):
+        pass
+    if unpaywall_email:
+        try:
+            data = json.loads(fetch(f"https://api.unpaywall.org/v2/{d}?email={urllib.parse.quote(unpaywall_email)}"))
+            loc = data.get("best_oa_location") or {}
+            return loc.get("url_for_pdf") or ""
+        except (WebError, ValueError):
+            pass
+    return ""
+
+
+def download_open_pdf(url: str, fetch=None, max_bytes: int = 25 * 1024 * 1024) -> bytes:
+    """Download a PDF from any PUBLIC https address (open-access copies live on author and university sites). Safety: no IP
+    literals / local names, https only, size cap, and the content must really be a PDF."""
+    from .sources import SourceError, public_url
+    try:
+        public_url(url)
+    except SourceError as e:
+        raise WebError(str(e)) from e
+    if not url.lower().startswith("https://"):
+        raise WebError("open-access downloads must be https")
+    data = (fetch or Polite())(url, max_bytes=max_bytes)
+    if not data.startswith(b"%PDF"):
+        raise WebError("not a PDF")
+    return data
