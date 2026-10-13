@@ -82,3 +82,29 @@ def test_dossier_uses_the_markets_micro_contract_and_point_value():
     assert d["market"] == "GC" and d["micro"] == "MGC" and "(MGC)" in d["accounts"]["50k"]["text"]
     n = d["accounts"]["50k"]["recommended"]["micro_equiv"]
     assert abs(d["accounts"]["50k"]["risk"]["risk_per_trade"] - 10.0 * 10.0 * n) < 1e-6        # 10 points x $10 x micros
+
+
+def test_build_market_makes_a_file_from_the_day_files_and_explains_failures(tmp_path):
+    import gzip
+    from ofo.markets import build_market
+    HEADER = "ticker,exchange,session_end_date,window_start,open,high,low,close,volume,dollar_volume,transactions\n"
+
+    def row(t, ts, price, vol):
+        ns = int(pd.Timestamp(ts, tz="UTC").value)
+        return f"{t},4,{str(ts)[:10]},{ns},{price},{price+1},{price-1},{price},{vol},0,1\n"
+    for day in ("05", "06", "07", "08"):
+        rows = [row("ESZ5", f"2025-11-{day} 15:0{m}", 6000.0 + m, 500) for m in range(3)]
+        rows += [row("GCZ5", f"2025-11-{day} 15:0{m}", 2500.0 + m, 300) for m in range(3)]
+        rows += [row("NQZ5", f"2025-11-{day} 15:0{m}", 21000.0, 400) for m in range(3)]
+        with gzip.open(tmp_path / f"2025-11-{day}.csv.gz", "wt") as f:
+            f.write(HEADER + "".join(rows))
+    es = build_market(tmp_path, "ES", min_lead_days=3)
+    gc = build_market(tmp_path, "GC", min_lead_days=3)
+    assert es["chain"] == ["ESZ5"] and gc["chain"] == ["GCZ5"] and (tmp_path / "ES_1min.csv.gz").exists()
+    assert set(discover(tmp_path)) == {"ES", "GC"}                      # the Lab finds them (and ignores its own output as day files)
+    import pytest
+    with pytest.raises(ValueError) as e:
+        build_market(tmp_path, "SI", min_lead_days=3)                    # silver is not in the files
+    assert "plan does not include" in str(e.value)
+    with pytest.raises(ValueError):
+        build_market(tmp_path / "empty", "ES")

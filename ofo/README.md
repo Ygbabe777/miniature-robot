@@ -127,9 +127,10 @@ settimana è alto: il numero è nel fascicolo.
 I file giornalieri di Massive contengono **tutti** i ticker CME: non serve scaricare altro. Costruisci un file continuo per
 ogni mercato (stessa cartella `data/`):
 ```
-python scripts/build_dataset.py data ES data/ES_1min.csv.gz
-python scripts/build_dataset.py data GC data/GC_1min.csv.gz
+python scripts/add_markets.py
 ```
+(costruisce ES e GC; equivale a `build_dataset.py data ES data/ES_1min.csv.gz` e `... GC ...`). MES e MGC non servono: hanno
+lo stesso prezzo di ES e GC, il Lab usa le serie dei mini, più liquide, con il valore del tick del micro.
 Al riavvio il Lab trova i file `ES_1min.csv.gz` e `GC_1min.csv.gz` accanto a quello principale e li aggiunge da solo
 ("Mercati attivi" nel terminale). Ogni strategia (da paper, brainstorm, collegamenti, famiglie classiche) viene messa in coda
 **una volta per mercato** e testata con il suo contratto micro (MNQ, MES, MGC) e le stesse regole del Giudice; le strategie sugli
