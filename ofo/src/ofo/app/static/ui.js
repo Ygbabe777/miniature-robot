@@ -115,7 +115,24 @@
     if (window.LabScene) LabScene.setTrader(s.strategies.filter(x => x.status === 'APPROVED').map(x => x.name), { wait: t('tr_wait'), desk: t('tr_desk'), ready: t('tr_ready'), head: t('tr_head'), none: t('tr_none') });
     trader.symbol = s.symbol; trader.setMarkets(s.markets, s.primary); trader.setStrategies(s.strategies);
   }
-  async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); if (s.autopilot) renderAutopilot(s.autopilot); if (s.obsidian) renderObsidian(s.obsidian); } catch (e) {} }
+  async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); if (s.autopilot) renderAutopilot(s.autopilot); if (s.obsidian) renderObsidian(s.obsidian); renderBudget(s.budget); } catch (e) {} }
+
+  // ---------- token budget ----------
+  let budKey = '';
+  function renderBudget(b) {
+    const box = $('#budget'); if (!b) { box.innerHTML = `<div class="apm">${t('bud_none')}</div>`; return; }
+    if (document.activeElement && document.activeElement.id === 'bud-in') return;
+    const key = JSON.stringify([b, LANG]); if (key === budKey) return; budKey = key;
+    const pctDay = b.autonomous_cap_usd > 0 ? Math.min(100, Math.round(100 * b.spent_today_usd / b.autonomous_cap_usd)) : 100;
+    const cls = b.mode === 'normal' ? 'apon' : b.mode === 'economy' ? 'apm' : 'apoff';
+    box.innerHTML = `<div class="${cls}">${t('bud_mode_' + b.mode)}</div>
+      <div class="apm">${t('bud_left', { r: b.remaining_usd.toFixed(2), w: b.weekly_usd, d: b.days_left })}</div>
+      <div class="apm">${t('bud_today', { s: b.spent_today_usd.toFixed(3), c: b.autonomous_cap_usd.toFixed(2), p: pctDay })} · ${(b.tokens_today / 1000).toFixed(0)}k tok</div>
+      <div class="apm">${t('bud_price', { p: b.usd_per_million.toFixed(2) })} <i>(${esc(b.price_source)})</i></div>
+      <div class="srow"><input id="bud-in" type="number" step="0.01" min="0" placeholder="${t('bud_ph')}" style="width:90px"> <button class="btn small" id="bud-go">${t('bud_set')}</button></div>
+      <div class="apn">${t('bud_note')}</div>`;
+    $('#bud-go').onclick = async () => { const v = parseFloat($('#bud-in').value); if (isNaN(v)) return; await api('/api/budget', { method: 'POST', json: { remaining_usd: v } }); budKey = ''; poll(); };
+  }
 
   // ---------- Obsidian ----------
   let obsKey = '';
@@ -383,13 +400,14 @@
   // ---------- Scout: autonomous literature search ----------
   let scoutKey = '';
   function renderScout(sc) {
-    const key = JSON.stringify([sc.running, sc.auto, sc.last_run, sc.papers.map(p => p.id + p.status), Math.floor((sc.next_run || 0) / 60)]);
+    const key = JSON.stringify([sc.channels, sc.running, sc.auto, sc.last_run, sc.papers.map(p => p.id + p.status), Math.floor((sc.next_run || 0) / 60)]);
     if (key === scoutKey) return; scoutKey = key;
     const mins = sc.next_run ? Math.max(0, Math.round((sc.next_run - Date.now() / 1000) / 60)) : null;
     const st = { downloaded: 'sp_downloaded', skipped: 'sp_skipped', failed: 'sp_failed', 'no open PDF': 'sp_nopdf', manual: 'sp_manual', abstract: 'sp_abstract' };
     $('#scout').innerHTML = `<div class="srow"><button class="btn small" id="scout-go" ${sc.running ? 'disabled' : ''}>${sc.running ? t('scout_running') : t('scout_now')}</button>
       <label>${t('scout_auto')} <select id="scout-auto">${[0, 30, 60, 180, 360].map(m => `<option value="${m}" ${(m === 0 ? !sc.auto.enabled : sc.auto.enabled && sc.auto.minutes === m) ? 'selected' : ''}>${m === 0 ? t('scout_off') : t('scout_every', { m })}</option>`).join('')}</select></label></div>
       <div class="smeta">${t('scout_topics', { a: sc.queries_done, b: sc.queries_total })}${sc.last_run ? ' · ' + t('scout_last', { f: sc.last_run.found, d: sc.last_run.downloaded }) : ''}${mins !== null && sc.auto.enabled ? ' · ' + t('scout_next', { m: mins }) : ''}</div>
+      <div class="smeta">${t('scout_channels')}: ${(sc.channels || []).join(', ')}</div>
       <div class="spapers">${sc.papers.length ? sc.papers.slice(0, 6).map(p => `<div title="${esc(p.why || '')}"><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc((p.title || '').slice(0, 60))}</a><i class="${p.status === 'downloaded' || p.status === 'abstract' ? 'ok' : p.status === 'manual' ? 'man' : ''}">${t(st[p.status] || 'sp_skipped')}</i></div>`).join('') : `<div class="empty">${t('scout_none')}</div>`}</div>
       <div class="smeta">${t('scout_note')}</div>`;
     $('#scout-go').onclick = async () => { await api('/api/scout/run', { method: 'POST', json: { lang: LANG } }); scoutKey = ''; poll(); };

@@ -1,0 +1,10 @@
+{
+  "_README": "Weekly AI budget in DOLLARS (working days only). weekly_usd = what you can spend Monday-Friday. remaining_usd = what you had left when you first started the lab with this file (later, tell the lab your balance from the Budget card: it re-aligns and learns the real price). prices = optional per-model price per 1,000,000 tokens (in = prompt, out = completion): fill them from your provider's page for exact dollars; without them the lab uses a deliberately HIGH blended price and learns the real one from your balance reports. This file is never overwritten by update.py.",
+  "weekly_usd": 15,
+  "remaining_usd": 12,
+  "usd_per_million_default": 3.0,
+  "chat_reserve_pct": 15,
+  "economy_at_pct": 60,
+  "weekend_pause": true,
+  "prices": {}
+}

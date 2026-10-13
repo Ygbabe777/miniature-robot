@@ -60,6 +60,7 @@ class ResearchLoop:
         self.done_specs: set = set(st.get("done_specs", []))
         self.queue: list[tuple[StrategySpec, int]] = []
         self.trials_spent = 0
+        self.max_chunks = 6                 # paper chunks read per document; the Lab lowers it in economy mode
         self.memory = lambda: ""            # set by the Lab: what the lab already learned (knowledge.memory_text)
 
     def _save(self) -> None:
@@ -96,7 +97,7 @@ class ResearchLoop:
                 text = extract_pdf_text(str(p)) if p.suffix.lower() == ".pdf" else p.read_text(errors="replace")
                 info: dict = {}
                 specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=source, language=self.language,
-                                                memory=self.memory(), info=info)
+                                                memory=self.memory(), info=info, max_chunks=self.max_chunks)
             except Exception as e:                       # unreadable file or LLM down: retry later
                 self.events.emit("researcher", "error", f"{p.name}: {e}")
                 self.events.emit("researcher", "idle", "stopped")

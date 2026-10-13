@@ -29,6 +29,7 @@ from ..storage import list_studies, load_study, slugify
 from .. import deploy as dep
 from .. import knowledge, obsidian
 from ..ledger import run_ledger
+from ..budget import BudgetGovernor
 from ..prop_intraday import arrays_from_ledger, describe as describe_intraday, intraday_report
 from ..strategies import flatten_overnight
 from ..dossier import build_dossier
@@ -91,7 +92,8 @@ def spec_summary(sid: str, spec: StrategySpec, origin: str, registry_trials: int
 
 class Lab:
     def __init__(self, bars_path: str, data_dir: str = "data", ideas_dir: str = "ideas", contract=MNQ,
-                 rules=None, contracts: int = 2, llm=None, pool=None, fetch=None, markets: dict | None = None):
+                 rules=None, contracts: int = 2, llm=None, pool=None, fetch=None, markets: dict | None = None,
+                 channels: list | None = None):
         self.bars_path, self.ideas = bars_path, Path(ideas_dir)
         self.data = Path(data_dir)
         self.work = self.data / "loop"
@@ -113,6 +115,7 @@ class Lab:
         self.requests_file = self.data / "template_requests.json"
         self.ideas.mkdir(parents=True, exist_ok=True)
         self._fetch, self._scout, self._scout_running = fetch, None, False
+        self._channels = channels or []              # sources.build_channels(...): web / github / rss / exa / youtube / reddit / x
         self.busy = {"research": 0, "job": 0, "chat": 0}          # real activity, not event timeouts
         self.ap_file = self.data / "autopilot.json"
         first = not self.ap_file.exists()
@@ -242,6 +245,46 @@ class Lab:
             with self.lock:
                 self.busy[kind] -= 1
 
+    # -- token budget ---------------------------------------------------------------------
+    def governor(self):
+        return getattr(self.pool, "governor", None) if self.pool is not None else None
+
+    def llm_allowed(self, role: str) -> bool:
+        """Autonomous AI work asks here first. False = today's allowance is gone (or weekend / weekly reserve)."""
+        g = self.governor()
+        if g is None:
+            return True
+        ok, why = g.allow(role)
+        if not ok and getattr(self, "_budget_msg", None) != why:
+            self._budget_msg = why
+            self.events.emit("lab", "budget", f"AI work paused: {why}")
+        if ok:
+            self._budget_msg = None
+        return ok
+
+    def economy(self) -> bool:
+        g = self.governor()
+        return bool(g and g.economy())
+
+    def budget_state(self) -> dict | None:
+        g = self.governor()
+        return g.state() if g else None
+
+    def set_budget(self, remaining_usd: float | None = None, weekly_usd: float | None = None,
+                   usd_per_million: float | None = None) -> dict | None:
+        g = self.governor()
+        if g is None:
+            return None
+        if weekly_usd is not None:
+            g.configure(weekly_usd=float(weekly_usd))
+        if usd_per_million is not None:
+            g.configure(usd_per_million_default=float(usd_per_million))
+        if remaining_usd is not None:
+            learned = g.set_remaining(float(remaining_usd))
+            self.events.emit("lab", "budget", f"balance set to ${float(remaining_usd):.2f}" + (
+                f"; learned price ${learned['learned_usd_per_million']:.2f} per million tokens" if learned["learned_usd_per_million"] else ""))
+        return g.state()
+
     # -- chat ---------------------------------------------------------------------------
     def chat(self, message: str, history: list | None = None, lang: str | None = None) -> dict:
         self.set_lang(lang)
@@ -309,8 +352,11 @@ class Lab:
                     self.events.emit(agent, "idle", "stopped")
 
     def _ingest_now(self) -> None:
+        if not self.llm_allowed("researcher"):
+            return                                                      # the files stay unread until the budget allows
         with self.working("research"):
             lp = self.loop()
+            lp.max_chunks = 2 if self.economy() else 6                  # economy: read less of each paper
             lp.ingest_ideas(self.ideas)
             vi = self._vault_ideas()
             if vi is not None:
@@ -333,12 +379,15 @@ class Lab:
         if self._scout is None:
             llm = self.llm.get("scout", self.llm.get("researcher")) if isinstance(self.llm, dict) else \
                 (None if isinstance(self.llm, NoLLM) else self.llm)
-            self._scout = Scout(self.data / "scout", self.ideas, llm, self.events, fetch=self._fetch, language=self.language)
+            self._scout = Scout(self.data / "scout", self.ideas, llm, self.events, fetch=self._fetch, language=self.language,
+                                channels=self._channels)
         self._scout.language = self.language
         return self._scout
 
     def scout_run(self, lang: str | None = None, sync: bool = False) -> dict:
         self.set_lang(lang)
+        if not self.llm_allowed("scout"):
+            return {"started": False, "reason": "budget"}
         with self.lock:
             if self._scout_running:
                 return {"started": False, "reason": "already running"}
@@ -368,10 +417,12 @@ class Lab:
         last = sc.state["last_run"]
         if not self.ap["enabled"] or last is None:
             return sc.state["auto"]["minutes"] * 60
-        return 45 if (last.get("found") or last.get("downloaded")) else 240
+        gap = 45 if (last.get("found") or last.get("downloaded")) else 240
+        return gap * 4 if self.economy() else gap                      # saving tokens: search a quarter as often
 
     def scout_state(self) -> dict:
         st = self.scout().public_state(self._scout_running)
+        st["channels"] = ["arxiv", "ssrn"] + [c.name for c in self.scout().channels]
         last = st["last_run"]
         if st["auto"]["enabled"] and last:
             st["next_run"] = last["at"] + self.scout_gap()
@@ -487,6 +538,8 @@ class Lab:
         now = now or time.time()
         if now - getattr(self, "_last_brainstorm", 0) < 20 * 60 or isinstance(self.llm, NoLLM):
             return 0
+        if self.economy() or not self.llm_allowed("researcher"):
+            return 0                                                    # brainstorming is the first thing to go when saving tokens
         self._last_brainstorm = now
         lp = self.loop()
         llm = self.llm["researcher"] if isinstance(self.llm, dict) else self.llm
@@ -514,6 +567,8 @@ class Lab:
         from ..papers import propose_specs
         now = now or time.time()
         if now - getattr(self, "_last_connect", 0) < 15 * 60 or isinstance(self.llm, NoLLM):
+            return 0
+        if self.economy() or not self.llm_allowed("researcher"):
             return 0
         notes = self._vault_notes()
         g = self.knowledge_graph(notes)
@@ -573,13 +628,15 @@ class Lab:
         self._ap_budget(0)
         enabled = self.ap["enabled"] and not isinstance(self.llm, NoLLM)
         running = any(j["status"] in ("queued", "running") for j in self.jobs.values())
+        bm = self.governor().mode() if self.governor() else "normal"
         phase = ("off" if not enabled else "paused" if self.ap.get("paused") else "testing" if running
+                 else "budget" if bm in ("paused_day", "paused_weekend", "blocked") and not self.pending
                  else "researching" if self.busy["research"] > 0 else "waiting")
         return {"enabled": enabled, "phase": phase, "paused": self.ap.get("paused"),
                 "trials_today": self.ap["trials_today"], "max_trials_per_day": self.ap["max_trials_per_day"],
                 "max_trials_total": self.ap["max_trials_total"], "queue": len(self.pending),
                 "next_search": nxt, "searching": self._scout_running, "working": sorted(self.working_agents()),
-                "ready": len(self.dossiers()),
+                "ready": len(self.dossiers()), "budget_mode": (self.governor().mode() if self.governor() else None),
                 "markets": [{"sym": k, "name": MARKETS[k]["name"], "micro": c.contract.symbol, "mini": MARKETS[k]["mini"].symbol,
                              "enabled": k in self.enabled_markets()} for k, c in self.mk.items()],
                 "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed"))}
@@ -892,7 +949,7 @@ class Lab:
                 "templates": {k: t.doc for k, t in TEMPLATES.items() if not t.control}, "symbol": self.contract.symbol,
                 "primary": self.primary, "markets": [{"sym": k, "name": MARKETS[k]["name"], "micro": c.contract.symbol} for k, c in self.mk.items()],
                 "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state(),
-                "autopilot": self.autopilot_state(), "obsidian": self.obsidian_state(),
+                "autopilot": self.autopilot_state(), "budget": self.budget_state(), "obsidian": self.obsidian_state(),
                 "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed"))}
 
     def events_after(self, after: int) -> dict:

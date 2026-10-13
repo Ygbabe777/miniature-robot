@@ -31,8 +31,9 @@ class ModelPool:
                  cooldown_base: float = 30.0, now=time.time, sleep=time.sleep, max_wait: float = 120.0,
                  calls_per_hour: int | None = None, role_calls_per_hour: dict[str, int] | None = None,
                  call_wait_max: float = 0.0, calls_per_minute: int | None = None,
-                 role_calls_per_minute: dict[str, int] | None = None):
+                 role_calls_per_minute: dict[str, int] | None = None, governor=None):
         self.client, self.roles = client, roles
+        self.governor = governor                 # budget.BudgetGovernor: dollars per working week, split over the days
         self.ledger_path = Path(ledger_path)
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.budget = daily_token_budget or {}
@@ -101,6 +102,8 @@ class ModelPool:
         else:
             m["calls"] += 1
             m["prompt"] += r["prompt_tokens"]; m["completion"] += r["completion_tokens"]; m["seconds"] += r["seconds"]
+            if self.governor is not None:
+                self.governor.record(role, model, r["prompt_tokens"], r["completion_tokens"])
             self.ledger["roles"][role] = self.ledger["roles"].get(role, 0) + r["prompt_tokens"] + r["completion_tokens"]
         self._save()
 
@@ -122,6 +125,8 @@ class ModelPool:
         cap = self.budget.get(role)
         if cap is not None and self.tokens_today(role) >= cap:
             raise BudgetExceeded(f"role {role!r} used its daily budget of {cap} tokens")
+        if self.governor is not None:
+            self.governor.check(role)               # raises BudgetBlocked (an LLMError) when today's allowance is gone
         models = self.roles[role]
         waited = 0.0
         while True:
@@ -173,11 +178,18 @@ class RoleLLM:
         return self.pool.chat(self.role, messages, temperature, **kw)
 
 
-def build_pool(config_path: str | Path, ledger_path="data/llm_usage.json", cache_dir="data/llm_cache"):
+def build_pool(config_path: str | Path, ledger_path="data/llm_usage.json", cache_dir="data/llm_cache",
+               budget_state="data/budget.json"):
     """config/llm.json: {"roles": {"researcher": [models], "planner": [...], "auditor": [...]},
     "daily_token_budget": {"researcher": 300000}, "cooldown_seconds": 30}. Keys stay in env vars."""
     cfg = json.loads(Path(config_path).read_text())
-    pool = ModelPool(LLMClient(), cfg["roles"], ledger_path, cache_dir, cfg.get("daily_token_budget"),
+    bcfg = cfg.get("budget")
+    bfile = Path(config_path).with_name("budget.json")          # config/budget.json: weekly dollars, prices, remaining balance
+    if bcfg is None and bfile.exists():
+        bcfg = json.loads(bfile.read_text())
+    from ..budget import BudgetGovernor
+    governor = BudgetGovernor(budget_state, bcfg) if bcfg is not None else None
+    pool = ModelPool(LLMClient(), cfg["roles"], ledger_path, cache_dir, cfg.get("daily_token_budget"), governor=governor,
                      cooldown_base=cfg.get("cooldown_seconds", 30.0),
                      calls_per_hour=cfg.get("calls_per_hour"), role_calls_per_hour=cfg.get("role_calls_per_hour"),
                      calls_per_minute=cfg.get("calls_per_minute"), role_calls_per_minute=cfg.get("role_calls_per_minute"),

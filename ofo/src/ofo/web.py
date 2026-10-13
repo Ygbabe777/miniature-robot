@@ -4,7 +4,8 @@
    request every 3 seconds.
  - Semantic Scholar as an optional second source (metadata only; it rate-limits anonymous use).
  - PDFs are downloaded ONLY from allow-listed hosts and must really be PDFs.
-No scraping of blogs or forums: fragile, and often against their terms."""
+Blogs, repositories and social platforms are NOT handled here: they go through sources.py (Agent Reach bridge), where each
+channel is explicit, allow-listed and, when it needs your account, off by default."""
 from __future__ import annotations
 
 import json

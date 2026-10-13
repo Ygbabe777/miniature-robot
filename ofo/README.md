@@ -166,3 +166,30 @@ Cosa è stato verificato e cambiato, punto per punto:
 ## Filtro dei mercati
 Nel pannello Autopilota, "Mercati su cui testare": solo Nasdaq (NQ/MNQ) oppure anche S&P 500 (ES/MES) e oro (GC/MGC).
 Le voci già in coda per un mercato disattivato restano ferme finché non lo riattivi.
+
+## Budget dei token (dollari a settimana lavorativa)
+`config/budget.json` (creato una volta, poi tuo: `update.py` non lo sovrascrive): `weekly_usd` 15, `remaining_usd` quanto ti resta
+quando avvii il Lab, `chat_reserve_pct` 15, `prices` (opzionale, prezzo per milione di token in/out di ogni modello).
+- **Tetto giornaliero** = saldo / giorni di lavoro rimasti (lun-ven, oggi compreso). Esempio: 12$ il martedì → 4 giorni → 3$ al
+  giorno, di cui 15% riservato alla chat con lo Strategist.
+- **Risparmio** a 60% del tetto: leggo 2 blocchi per paper invece di 6, ricerche 4 volte più rare, niente brainstorm né collegamenti.
+- **Pausa** a 100%: Scout, Researcher, Planner, Auditor si fermano (i test deterministici no: non usano token). La chat resta fino al tetto
+  totale. Nel weekend il lavoro autonomo è fermo. Sotto il 5% del budget settimanale si ferma tutto.
+- **Dollari**: senza prezzi per modello il Lab usa un prezzo medio volutamente ALTO (3$ per milione di token) e **impara quello vero**
+  ogni volta che scrivi il saldo dalla dashboard del provider (card "Budget AI": confronta i dollari scomparsi con i token contati).
+  Il saldo del provider resta la verità: riscrivilo ogni tanto.
+- Le chiamate in cache e quelle rifiutate non costano.
+
+## Fonti (ponte con Agent Reach)
+[Agent Reach](https://github.com/Panniantong/Agent-Reach) installa e controlla strumenti per agenti che eseguono comandi di shell.
+Il Researcher di OFO non è un agente così (non esegue comandi: trasforma testo in JSON validato), e **non gli si dà accesso
+libero a internet o alla shell**: un testo ostile letto sul web potrebbe fargli eseguire comandi o rubare chiavi. Il ponte sta nello
+Scout (codice normale, `src/ofo/sources.py`): comandi in lista bianca, solo argomenti (niente shell), query ripulite, ambiente
+minimo (le tue chiavi non arrivano mai al processo figlio), timeout, tetto sull'output, testo salvato come NON FIDATO.
+- Attivi di default: **github** (progetti open source) e **rss** (blog quant, lista modificabile in `config/sources.json`).
+- Opzionali (spenti): **exa** (ricerca web, `mcporter`), **youtube** (trascrizioni, `yt-dlp`, molti token), **reddit** e **twitter**
+  (richiedono il TUO login tramite gli strumenti di Agent Reach; testo di bassa qualità; rispetta i termini dei siti).
+- L'installazione di Agent Reach è facoltativa: `pipx install https://github.com/Panniantong/agent-reach/archive/main.zip` poi
+  `agent-reach install --env=auto`. I comandi seguono la sua documentazione ma NON sono stati provati sugli strumenti veri.
+- Focus futures/Nasdaq: 10 argomenti dedicati (NQ, MNQ, opening range, VWAP, gap, prop firm) vengono cercati prima di quelli generici
+  e i risultati con parole come NQ/Nasdaq/futures salgono in cima.

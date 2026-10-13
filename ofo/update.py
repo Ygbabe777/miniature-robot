@@ -11,6 +11,7 @@ from pathlib import Path
 URL = "https://github.com/ygbabe777/miniature-robot/archive/refs/heads/claude/ofo-trading-strategy-platform-o5efpn.zip"
 KEEP = {"data", "reports", "ideas", ".env"}          # top-level names that are yours
 KEEP_FILES = {"config/llm.json"}
+KEEP_IF_EXISTS = {"config/budget.json", "config/sources.json"}        # shipped once with sensible numbers, then yours: never overwritten
 here = Path(__file__).resolve().parent
 
 if not (here / "pyproject.toml").exists():
@@ -29,6 +30,8 @@ for name in zf.namelist():
     if rel.split("/")[0] in KEEP or rel in KEEP_FILES or "__pycache__" in rel or ".egg-info" in rel:
         continue
     dest = here / rel
+    if rel in KEEP_IF_EXISTS and dest.exists():
+        continue
     data = zf.read(name)
     if dest.exists() and dest.read_bytes() == data:
         continue

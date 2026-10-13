@@ -1,0 +1,10 @@
+{
+  "_README": "Extra places the Scout reads (Agent Reach bridge, see src/ofo/sources.py). Default ON: github (open-source strategy projects) and rss (quant blogs in rss_feeds: edit the list). OFF by default: exa (web search, needs mcporter from Agent Reach), youtube (transcripts, needs yt-dlp, uses many tokens), reddit and twitter (need YOUR login through Agent Reach's tools; low-quality text; check each site's terms). Every text is untrusted data; nothing here runs commands chosen by an AI. This file is never overwritten by update.py.",
+  "channels": {"github": true, "rss": true, "exa": false, "youtube": false, "reddit": false, "twitter": false},
+  "rss_feeds": [
+    {"name": "Quantocracy", "url": "https://quantocracy.com/feed/"},
+    {"name": "Robot Wealth", "url": "https://robotwealth.com/feed/"},
+    {"name": "Alpha Architect", "url": "https://alphaarchitect.com/feed/"}
+  ],
+  "max_doc_chars": 40000
+}
