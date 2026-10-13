@@ -18,6 +18,7 @@ import pandas as pd
 from .backtest import Contract, daily_pnl
 from .data import resample
 from .exits import exit_grid, summarize_info
+from .trades import extract_trades
 from .judge import REJECTED, judge
 from .ledger import AccountingError, reconcile, run_ledger, run_ledger_next_open
 from .prop import PRESETS, PropRules
@@ -31,9 +32,11 @@ from .lifecycle import pool_from_ledger
 from .rulesets import load_farming_config, load_rulesets
 from .sizing import size_study
 from .timing import timing_report
-from .strategies import DIRECTIONS, TEMPLATES, TIMEFRAMES, directional, flatten_overnight
+from .roles import classify_roles
+from .schedule import schedule_study
+from .strategies import DIRECTIONS, TEMPLATES, TIMEFRAMES, directional, flatten_overnight, scheduled, version_fn
 
-ENGINE_VERSION = "2"      # bump when the study methodology changes: old experiments stay in the history, re-tests are allowed
+ENGINE_VERSION = "3"      # bump when the study methodology changes: old experiments stay in the history, re-tests are allowed
 
 
 @dataclass
@@ -202,15 +205,17 @@ def dataset_fingerprint(bars: pd.DataFrame) -> str:
 
 
 def spec_fingerprint(spec: StrategySpec, contract: Contract, contracts: int, slippage_ticks: float, oos_fraction: float,
-                     train_days: int, test_days: int, cost_model: str = "") -> str:
+                     train_days: int, test_days: int, cost_model: str = "", retest_no: int = 0) -> str:
     """Identity of an experiment: strategy + search design + execution/cost model + validation geometry + engine version. A new
     cost model, other execution rules or another holdout is a NEW experiment (the old one is never overwritten)."""
     payload = json.dumps([spec.template, spec.ranges, sorted(spec.timeframes), spec.max_configs, contract.symbol, contracts, slippage_ticks,
-                          oos_fraction, train_days, test_days, ENGINE_VERSION, cost_model], sort_keys=True, default=str)
+                          oos_fraction, train_days, test_days, ENGINE_VERSION, cost_model] + ([f"retest{retest_no}"] if retest_no else []),
+                         sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
-def _exit_study(dev_bars_tf, cand, base_series, contract, contracts, slippage_ticks, dev_days, registry, name, experiment_id, meta=None):
+def _exit_study(dev_bars_tf, cand, base_series, contract, contracts, slippage_ticks, dev_days, registry, name, experiment_id, meta=None,
+                informational=False):
     """Which stop distance and reward:risk fit the best candidate? Judged on DEVELOPMENT data only (the bars handed in
     contain nothing else, trade statistics included) and counted in the trial registry (every cell is a trial)."""
     grid = exit_grid()
@@ -221,13 +226,45 @@ def _exit_study(dev_bars_tf, cand, base_series, contract, contracts, slippage_ti
         s, info = daily_series(dev_bars_tf, cand, contract, contracts, slippage_ticks, exit=g, with_info=True)
         d = s.reindex(dev_days).fillna(0.0)
         cells.append({**g, "sharpe": sharpe(d), "pnl": float(d.sum()), **summarize_info(info)})
-    registry.add_trials(len(grid), f"exits:{name}", experiment_id=experiment_id, kind="exits", stage="validation", **(meta or {}))
+    if informational:                      # shown for every study, but nothing is selected from it: evaluations, not trials
+        registry.add_trials(0, f"exits_info:{name}", experiment_id=experiment_id, kind="compute", stage="screening", n_evals=len(grid), **(meta or {}))
+    else:
+        registry.add_trials(len(grid), f"exits:{name}", experiment_id=experiment_id, kind="exits", stage="validation", **(meta or {}))
     best = max(cells, key=lambda c: c["sharpe"])
-    chosen = best["sharpe"] >= base["sharpe"] + MIN_EXIT_GAIN and best["pnl"] > 0
+    chosen = (not informational) and best["sharpe"] >= base["sharpe"] + MIN_EXIT_GAIN and best["pnl"] > 0
     better = float(np.mean([c["sharpe"] >= base["sharpe"] for c in cells]))
     return {"baseline": base, "grid": cells, "best": {k: best[k] for k in ("stop_atr", "rr")},
             "best_stats": best, "chosen": bool(chosen), "frac_better_than_baseline": better,
-            "n_trials": len(grid), "atr_n": 14}
+            "n_trials": len(grid), "atr_n": 14, "informational": bool(informational)}
+
+
+MIN_SCHEDULE_GAIN = 0.05        # the scheduled version must beat the unscheduled one by this much Sharpe in the real development backtest
+
+
+def _schedule_study(dev_bars, fcand, exit_, base_dev, tfs_dev, contract, contracts, slippage_ticks, dev_days, registry, name, eid, meta,
+                    informational=False):
+    """Best entry window and trades-per-day cap, development trades only. Applied only if the real backtest of the scheduled version beats
+    the unscheduled one; always reported (in-sample), also for a study that never got past the screening (informational, nothing applied)."""
+    trades = extract_trades(dev_bars, fcand["fn"], fcand["params"], fcand["tf"], contract, contracts, slippage_ticks, exit_)
+    st = schedule_study(trades)
+    sched = {"window": [st["window"]["from"], st["window"]["to"]] if st["window"] else None, "max_per_day": st["max_per_day"]}
+    out = {**st, "chosen": False, "applied": None, "informational": bool(informational), "in_sample": True, "baseline": None, "with": None}
+    if not trades or not (sched["window"] or sched["max_per_day"]):
+        out["note"] = "nessuna finestra o limite batte l'intera sessione sui dati di sviluppo" if trades else "nessun trade sui dati di sviluppo"
+    else:
+        s_new = daily_series({fcand["tf"]: tfs_dev[fcand["tf"]]}, {**fcand, "fn": scheduled(fcand["fn"], sched)}, contract, contracts, slippage_ticks,
+                             exit=exit_).reindex(dev_days).fillna(0.0)
+        out["baseline"] = {"sharpe": sharpe(base_dev), "pnl": float(base_dev.sum())}
+        out["with"] = {"sharpe": sharpe(s_new), "pnl": float(s_new.sum())}
+        out["chosen"] = bool((not informational) and out["with"]["sharpe"] >= out["baseline"]["sharpe"] + MIN_SCHEDULE_GAIN and out["with"]["pnl"] > 0)
+        out["applied"] = sched if out["chosen"] else None
+    n_try = int(st.get("n_scanned", 0)) + int(st.get("n_caps", 0))
+    if informational:
+        registry.add_trials(0, f"schedule_info:{name}", experiment_id=eid, kind="compute", stage="screening", n_evals=max(1, n_try), **meta)
+    else:
+        registry.add_trials(n_try, f"schedule:{name}", experiment_id=eid, kind="schedule", stage="validation", **meta)
+    out["n_trials"] = 0 if informational else n_try
+    return out
 
 
 def nested_walk_forward(bars_by_tf, cands, series, dev_days, contract, contracts, slippage_ticks,
@@ -472,7 +509,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                oos_fraction: float | None = None, train_days: int | None = None, test_days: int | None = None,
                surface_th: SurfaceThresholds | None = None, progress=None, dedupe: bool = False,
                market: str | None = None, judge_th=None, all_timeframes: bool = False, farming: dict | None = None,
-               research: dict | None = None, _holder: dict | None = None, on_stage=None) -> dict:
+               research: dict | None = None, _holder: dict | None = None, on_stage=None, retest_no: int = 0) -> dict:
     """The five-stage protocol of one study.
 
       1 HYPOTHESIS  the spec is already validated (whitelisted template, bounded parameters, hypothesis card)
@@ -505,7 +542,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
     family = spec.family
     hyp_fp = hashlib.sha256(json.dumps([spec.template, sorted(spec.timeframes)]).encode()).hexdigest()[:12]
     eid = registry.begin_experiment(f"study:{spec.name}", spec.n_candidates, spec_fp=spec_fingerprint(
-        spec, contract, contracts, slippage_ticks, oos_fraction, train_days, test_days, cost_model), dataset_fp=dfp,
+        spec, contract, contracts, slippage_ticks, oos_fraction, train_days, test_days, cost_model, retest_no), dataset_fp=dfp,
         market=market, dedupe=dedupe, stage="screening", family=family, hyp_fp=hyp_fp, config_version=cfg_v, code_version=code_v, cost_model=cost_model,
         details={"template": spec.template, "oos_start": str(cut)[:10], "ranges": spec.ranges, "timeframes": spec.timeframes,
                  "max_configs": spec.max_configs, "hypothesis": spec.hypothesis, "wf_plan": plan, "holdout_fraction": oos_fraction})
@@ -541,8 +578,8 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                    "hypothesis_missing": list(spec.hypothesis_missing), "rationale": spec.rationale,
                    "source": spec.source, "n_candidates": len(cands), "surface": surf, "base_contracts": contracts, "search": slog, "trials": trial_block,
                    "wf_plan": plan, "n_locked_days": len(sessions) - len(dev_days), "experiment_id": eid, "dataset_fp": dfp,
-                   "engine_version": ENGINE_VERSION, "config_version": cfg_v, "code_version": code_v,
-                   "surface_detrended": None, "quality": None, "timing": None, "sizing": None, "by_timeframe": None, "exits": None,
+                   "engine_version": ENGINE_VERSION, "config_version": cfg_v, "code_version": code_v, "retest_no": int(retest_no),
+                   "spec": dataclasses.asdict(spec), "surface_detrended": None, "quality": None, "timing": None, "sizing": None, "by_timeframe": None, "exits": None,
                    "wf_kind": "entry_only", "wf_oos_days": len(wf0), "wf_oos_pnl": float(wf0.sum()) if len(wf0) else 0.0,
                    "wf_oos_sharpe_daily": sharpe(wf0) if len(wf0) > 2 else 0.0, "wf_oos_series": wf0}
 
@@ -550,6 +587,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         report["stages"] = stages.rows
         lk = report["locked"]
         report["evidence"] = evidence_ladder(report)
+        report["roles"] = classify_roles(report)
         results = {"survived_screening": bool(surf["robust"]), "validated": bool(report.get("validated")), "locked_status": lk.get("status"),
                    "approved": lk.get("status") == "APPROVED",
                    "false_positive": bool(report.get("validated")) and lk.get("status") not in ("APPROVED", None) and "checks" in lk,
@@ -569,6 +607,17 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                                               goal_days, goal_rate, "development")      # every study reports days-to-pass (screening candidate, entry-only)
         base_report["series"] = {"cut": str(cut)[:10], "wf_oos": pair(wf0), "dev_best": [], "locked": None,
                                  "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}, "direction": "both", "exit": None}
+        try:                                                  # the R:R table and the schedule are shown for EVERY study; here nothing is selected from them
+            cand0, tf0 = cands[best_i], cands[best_i]["tf"]
+            tfd0 = {tf0: resample(dev_bars, tf0)}
+            base_dev0 = series[best_i].reindex(dev_days).fillna(0.0)
+            base_report["exits"] = _exit_study(tfd0, cand0, series[best_i], contract, contracts, slippage_ticks, dev_days, registry, spec.name, eid, meta,
+                                               informational=True)
+            base_report["schedule"] = _schedule_study(dev_bars, cand0, None, base_dev0, tfd0, contract, contracts, slippage_ticks, dev_days, registry,
+                                                      spec.name, eid, meta, informational=True)
+        except Exception as e:                                # a diagnostic must never turn a clean rejection into a failed study
+            base_report["exits"] = base_report["schedule"] = None
+            say("optimizer", "idle", f"tabelle informative non calcolate: {type(e).__name__}")
         base_report["locked"] = {"status": REJECTED, "reason": f"failed {why}; locked block not touched"}
         say("validator", "done", "screening gate failed")
         return finish(base_report)
@@ -590,6 +639,11 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
     exits_rep = _exit_study({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, base_ser, contract, contracts, slippage_ticks, dev_days, registry,
                             spec.name, eid, meta)
     best_exit = exits_rep["best"] if exits_rep["chosen"] else None
+    base_dev_s = daily_series({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, contract, contracts, slippage_ticks, exit=best_exit).reindex(dev_days).fillna(0.0)
+    sched_rep = _schedule_study(dev_bars, fcand, best_exit, base_dev_s, tfs_dev, contract, contracts, slippage_ticks, dev_days, registry, spec.name, eid, meta)
+    schedule = sched_rep["applied"]
+    if schedule:
+        fcand = {**fcand, "fn": scheduled(fcand["fn"], schedule), "schedule": schedule}        # the version that goes on trades only then and this often
     say("optimizer", "done", "best version chosen")
     say("validator", "working", "nested walk-forward and quality checks")
     wf, picks = nested_walk_forward(tfs_dev, cands, series, dev_days, contract, contracts, slippage_ticks, train_days, test_days)
@@ -604,14 +658,15 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
     quality = quality_checks(tfs_dev, fcand, best_exit, contract, contracts, slippage_ticks, dev_days, th)
     ablation = ablation_study(fcand, spec.template, tfs_dev, best_exit, contract, contracts, slippage_ticks, dev_days, registry, eid, spec.name, meta)
     val_ok = bool(surf["robust"] and wf_pnl > 0 and quality["ok"] and plan["target_met"])
-    stages.end(28 + by_tf["n_extra_trials"] + len(wf), "walk-forward annidato positivo, qualità, finestre OOS pianificate", val_ok,
+    stages.end(28 + by_tf["n_extra_trials"] + sched_rep["n_trials"] + len(wf), "walk-forward annidato positivo, qualità, finestre OOS pianificate", val_ok,
                wf_windows=plan["windows"], wf_target_met=plan["target_met"])
     report = {**base_report, "quality": quality, "timing": timing, "by_timeframe": by_tf, "sizing": sizing, "ablation": ablation, "validated": val_ok,
               "wf_kind": wf_kind, "wf_oos_days": len(wf), "wf_oos_pnl": wf_pnl, "wf_oos_sharpe_daily": sharpe(wf) if len(wf) > 2 else 0.0,
               "surface": surf, "wf_oos_series": wf,
               "series": {"cut": str(cut)[:10], "wf_oos": pair(wf), "dev_best": pair(final_dev), "locked": None,
-                         "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}, "direction": direction, "exit": best_exit},
-              "exits": exits_rep}
+                         "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}, "direction": direction, "exit": best_exit,
+                         "schedule": schedule},
+              "exits": exits_rep, "schedule": sched_rep}
     say("validator", "done", "validation finished")
 
     # ---------------- stage 4: robustness ----------------
@@ -638,7 +693,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         report["ledger_check"] = rc
         locked_days = [d for d in sessions if d >= cut]
         locked = s_full.reindex(locked_days).fillna(0.0)
-        meta_c = {"template": spec.template, "params": dict(cand["params"]), "tf": tf, "direction": direction, "exit": best_exit, "contracts": contracts,
+        meta_c = {"template": spec.template, "params": dict(cand["params"]), "tf": tf, "direction": direction, "schedule": schedule, "exit": best_exit, "contracts": contracts,
                   "slippage_ticks": slippage_ticks, "contract": {"symbol": contract.symbol, "tick_size": contract.tick_size, "tick_value": contract.tick_value,
                                                                   "commission_per_side": contract.commission_per_side}}
         report["repro"] = {"meta": meta_c, "dataset_fp": dfp, "code_version": code_v, "config_version": cfg_v, "cost_model": cost_model,
@@ -653,7 +708,9 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         except Exception as e:
             report["repro"]["verified"] = False; report["repro"]["error"] = f"{type(e).__name__}: {str(e)[:160]}"
         var_sr = float(np.var([r["sharpe"] for r in rows], ddof=1))
-        v = judge(locked.values, rules, registry.n_trials + 1, var_sr, judge_th)
+        led_full = run_ledger(b_full, pos_full, contract, contracts, slippage_ticks, best_exit)
+        n_locked_trades = sum(1 for t_ in led_full.trades if str(t_.get("entry_session"))[:10] >= str(cut)[:10])
+        v = judge(locked.values, rules, registry.n_trials + 1, var_sr, judge_th, n_trades=n_locked_trades)
         registry.add_locked_look(f"{spec.name}:{cand['params']}@{tf}", v.status, experiment_id=eid, dataset_fp=dfp,
                                  oos_start=str(cut)[:10])
         # the human may only see the locked block once the Judge has already used its look
@@ -663,7 +720,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                                                     goal_days, goal_rate, "unseen_block"),
                             "sizing": size_study(locked.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, basis="unseen_block"),
                             "p_pass": v.mc.get("p_pass"), "p_pass_ci95": v.mc.get("p_pass_ci95"),
-                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "params": cand["params"],
+                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "mc_sample": v.mc.get("sample"), "params": cand["params"],
                             "tf": tf, "exit": best_exit, "prop_model": "daily_simplified"}
         # The Judge above is DETERMINISTIC and uses the simplified daily account model. After its look, the same unseen
         # block is replayed bar by bar with unrealised P&L and intraday drawdown rules, for the owner to read.
@@ -764,7 +821,7 @@ def farming_for_study(bars, report: dict, series: dict, contract, contracts: int
     its session data are split at the study's own cut, and the same review used for new studies is applied."""
     farm = farming_context(farm)
     bp = dict(series["best_params"]); tf = bp.pop("tf")
-    fn = directional(TEMPLATES[report["template"]].fn, series.get("direction"))
+    fn = version_fn(TEMPLATES[report["template"]].fn, series.get("direction"), series.get("schedule"))
     b = bars if tf == "1min" else resample(bars, tf)
     pos = flatten_overnight(fn(b, **bp))
     exit_ = series.get("exit")

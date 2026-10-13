@@ -12,7 +12,7 @@ from .backtest import Contract
 from .data import resample
 from .exits import apply_exits
 from .ledger import run_ledger
-from .strategies import directional, flatten_overnight
+from .strategies import directional, flatten_overnight, scheduled
 
 EPOCH = pd.Timestamp("1970-01-01")
 
@@ -22,11 +22,11 @@ def _seconds(ts: pd.Timestamp) -> int:
 
 
 def extract_trades(bars: pd.DataFrame, fn, params: dict, tf: str, contract: Contract,
-                   contracts: int = 2, slippage_ticks: float = 1.0, exit: dict | None = None, direction: str = "both") -> list[dict]:
+                   contracts: int = 2, slippage_ticks: float = 1.0, exit: dict | None = None, direction: str = "both", schedule: dict | None = None) -> list[dict]:
     """Entries and exits of a strategy, taken from the execution ledger (ledger.py): the single record of what the
     simulated account did. A trade still open on the very last bar is closed there for display."""
     b = bars if tf == "1min" else resample(bars, tf)
-    pos = flatten_overnight(directional(fn, direction)(b, **params))
+    pos = flatten_overnight(scheduled(directional(fn, direction), schedule)(b, **params))
     led = run_ledger(b, pos, contract, contracts, slippage_ticks, exit)
     trades = list(led.trades)
     ot = led.open_trade

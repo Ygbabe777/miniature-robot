@@ -46,7 +46,7 @@ def make_deployment(dossier: dict, last_session: str, now: str) -> dict | None:
         return None
     acct, rec = pick
     return {"slug": dossier["slug"], "name": dossier["name"], "market": dossier.get("market"), "template": dossier["template"], "tf": dossier["tf"],
-            "params": dossier["params"], "direction": dossier.get("direction") or "both", "exit": (dossier.get("exits") or {}).get("chosen"),
+            "params": dossier["params"], "direction": dossier.get("direction") or "both", "schedule": dossier.get("schedule"), "exit": (dossier.get("exits") or {}).get("chosen"),
             "account": acct, "micro": rec["micro_equiv"], "cut": last_session, "deployed_at": now,
             "status": "live", "reason": "", "oos_mean": dossier.get("oos_mean"), "oos_std": dossier.get("oos_std"),
             "n_signals": 0, "forward": {"days": 0}}
@@ -200,7 +200,7 @@ def new_signals(bars: pd.DataFrame, dep: dict, contract, base_contracts: int) ->
     """Trades entered after the deployment cut, from the execution ledger, sized in the deployed contracts."""
     t = TEMPLATES[dep["template"]]
     tr = extract_trades(bars, t.fn, dep["params"], dep["tf"], contract, dep["micro"] if contract.symbol.startswith("M") else
-                        max(1, round(dep["micro"] / 10)), 1.0, exit=dep.get("exit"), direction=dep.get("direction") or "both")
+                        max(1, round(dep["micro"] / 10)), 1.0, exit=dep.get("exit"), direction=dep.get("direction") or "both", schedule=dep.get("schedule"))
     return [x for x in tr if x["entry_session"] > dep["cut"]]
 
 

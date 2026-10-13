@@ -152,7 +152,7 @@
     $('#jobs').innerHTML = s.jobs.filter(j => j.status === 'queued' || j.status === 'running').map(j => `<div class="card"><span class="spin"></span>${t('job_run', { n: '<b>' + esc(j.name) + '</b>', c: j.n_candidates })}
       <div class="meta">${j.status === 'queued' ? t('job_wait', { why: esc(engineWhy(s.engine)) }) : t('job_stage', { s: t('stg_' + (j.stage || 'starting')), d: esc(j.stage_detail || '') })}</div></div>`).join('')
       + s.jobs.filter(j => j.status === 'error').slice(-1).map(j => `<div class="card" style="border-color:var(--down)">${t('job_err', { n: esc(j.name), e: esc(j.error) })}</div>`).join('');
-    $('#studies').innerHTML = `<h2>${t('studies_title')}</h2>` + (s.strategies.length ? s.strategies.map(x => `<div class="row" data-slug="${esc(x.slug)}"><div><b>${esc(x.name)}</b><small>${esc(x.template)} · ${x.n_candidates} ${t('combos')} · ${t('med_sharpe')} ${num(x.median_sharpe, 3)} · ${x.robust ? t('robust') : t('fragile')}</small></div><span class="badge b-${x.status}">${t('v_' + x.status)}</span></div>`).join('') : `<div class="empty">${t('none_yet')}</div>`);
+    $('#studies').innerHTML = `<h2>${t('studies_title')}</h2>` + (s.strategies.length ? s.strategies.map(x => `<div class="row" data-slug="${esc(x.slug)}"><div><b>${esc(x.name)}</b><small>${esc(x.template)} · ${x.n_candidates} ${t('combos')} · ${t('med_sharpe')} ${num(x.median_sharpe, 3)} · ${x.robust ? t('robust') : t('fragile')}${x.role ? ' · ' + t('ro_' + x.role) : ''}</small></div><span class="badge b-${x.status}">${t('v_' + x.status)}</span></div>`).join('') : `<div class="empty">${t('none_yet')}</div>`);
     $('#studies').querySelectorAll('.row').forEach(r => r.onclick = () => openDetail(r.dataset.slug));
     $('#reqs').innerHTML = s.template_requests.length ? `<h2>${t('reqs_title')}</h2>` + s.template_requests.map(r => `<div class="card"><b>${esc(r.name)}</b><div class="meta">${esc(r.when)}</div>${esc(r.description)}</div>`).join('') : '';
     if (window.LabScene) LabScene.setTrader(s.strategies.filter(x => x.status === 'APPROVED').map(x => x.name), { wait: t('tr_wait'), desk: t('tr_desk'), ready: t('tr_ready'), head: t('tr_head'), none: t('tr_none') });
@@ -289,7 +289,7 @@
         ${(f.avvisi || []).map(a => `<div class="fwarn">⚠ ${esc(a)}</div>`).join('')}
         <h2>${t('fc_logic')}</h2>
         <p>${esc(L.descrizione)}</p>
-        <div class="kvs">${kv(t('fc_tf'), esc(L.timeframe))}${kv(t('fc_dir'), esc(L.direzione))}${kv(t('fc_params'), esc(Object.entries(L.parametri).map(([a, b]) => a + '=' + b).join(', ') || '–'))}${kv(t('fc_exit'), esc(L.uscite))}${kv(t('fc_size'), r.size_micro + ' micro')}${kv(t('fc_policy'), esc(r.policy + ' — ' + r.policy_label))}</div>
+        <div class="kvs">${kv(t('fc_tf'), esc(L.timeframe))}${kv(t('fc_dir'), esc(L.direzione))}${kv(t('fc_params'), esc(Object.entries(L.parametri).map(([a, b]) => a + '=' + b).join(', ') || '–'))}${kv(t('fc_exit'), esc(L.uscite))}${kv(t('fc_role'), esc(L.ruolo || '–'))}${kv(t('fc_window'), esc(L.finestra_oraria || '–'))}${kv(t('fc_cap'), esc(L.max_trade_giorno || '–'))}${kv(t('fc_size'), r.size_micro + ' micro')}${kv(t('fc_policy'), esc(r.policy + ' — ' + r.policy_label))}</div>
         <p><i>${esc(L.ipotesi)}</i></p><p class="fsmall">${esc(L.regole_comuni)}</p>
         <h2>${t('fc_results')}</h2>
         <div class="kvs">${kv('NPFV LCB95', '<span style="color:var(--up)">' + usd(n.lcb95) + '</span>')}${kv('NPFV ' + t('pf_mean'), usd(n.mean))}${kv(t('pf_median'), usd(n.median))}${kv('UCB95', usd(n.ucb95))}
@@ -622,6 +622,35 @@
     }).join('');
     return `<div class="judge"><b>${t('sz_title')}</b><div class="sub">${sz.in_sample ? t('tm_insample') : t('tm_oos')} ${t('sz_sub', { dd: pct(sz.dd_headroom), dy: pct(sz.day_headroom) })}</div>${blocks}</div>`;
   }
+  function rolesBox(ro) {
+    if (!ro) return '';
+    const pa = ro.pass_account || {}, py = ro.payout || {};
+    const prof = Object.entries(pa.profiles || {}).map(([acct, p]) => ['aggressive', 'prudent'].filter(k => p[k]).map(k => { const x = p[k];
+      return `<tr><th>${esc(acct)} · ${t('ro_' + k)}</th><td>${x.n_micro}</td><td>${pct(x.p_pass_window)}</td><td>${pct(x.p_pass_horizon)}</td><td>${x.mean_days == null ? '–' : num(x.mean_days, 1)}</td><td>${x.median_days == null ? '–' : num(x.median_days, 1)}</td><td>${pct(x.p_bust_horizon)}</td></tr>`; }).join('')).join('');
+    const failed = (pa.failed_checks || []).map(k => t('k_' + k)).join(', ');
+    return `<div class="judge rrbox"><b>${t('ro_title')}</b>
+      <div class="sub"><b>${t('ro_' + (ro.label || 'NONE'))}</b></div>
+      <div class="sub">${pa.valid ? '✔' : '✘'} ${t('ro_pass')} ${failed ? '— ' + esc(failed) : ''} · ${py.valid ? '✔' : '✘'} ${t('ro_payout')} ${py.first_failed ? '— ' + esc(py.first_failed.name + ': ' + py.first_failed.reason) : ''}</div>
+      ${prof ? `<div style="overflow-x:auto"><table class="rrt"><tr><th>${t('ro_profile')}</th><th>${t('ro_micro')}</th><th>${t('ro_p_win')}</th><th>${t('ro_p_hor')}</th><th>${t('ro_mean')}</th><th>${t('ro_med')}</th><th>${t('ro_bust')}</th></tr>${prof}</table></div>
+      <div class="sub">${pa.in_sample ? t('tm_insample') : t('tm_oos')} ${t('ro_note')}</div>` : ''}</div>`;
+  }
+  function scheduleBox(sc) {
+    if (!sc || !sc.by_time) return '';
+    if (!sc.n_trades) return `<div class="judge rrbox"><b>${t('sch_title')}</b><div class="sub">${esc(sc.note || t('sch_none'))}</div></div>`;
+    const maxA = Math.max(1, ...sc.by_time.map(r => Math.abs(r.pnl)));
+    const tr = sc.by_time.map(r => { const a = Math.min(1, Math.abs(r.pnl) / maxA), bg = r.pnl >= 0 ? `rgba(80,200,120,${0.12 + 0.5 * a})` : `rgba(240,90,90,${0.12 + 0.5 * a})`;
+      const inW = sc.window && r.from >= sc.window.from && r.to <= sc.window.to;
+      return `<tr style="${inW ? 'outline:2px solid #fff;' : ''}"><th>${r.from}–${r.to}</th><td>${r.n}</td><td>${pct(r.win_rate)}</td><td style="background:${bg}" class="${r.pnl >= 0 ? 'pos' : 'neg'}">${money(r.pnl)}</td><td>${money(r.avg)}</td></tr>`; }).join('');
+    const cr = (sc.by_count || []).map(r => `<tr class="${sc.max_per_day && r.ordinal <= sc.max_per_day ? 'best' : ''}"><th>${r.n_th}</th><td>${r.n}</td><td>${pct(r.win_rate)}</td><td class="${r.pnl >= 0 ? 'pos' : 'neg'}">${money(r.pnl)}</td><td>${money(r.cum_pnl)}</td></tr>`).join('');
+    const win = sc.window ? t('sch_win', { a: sc.window.from, b: sc.window.to, n: sc.window.n, p: money(sc.window.pnl) }) : t('sch_nowin');
+    const cap = sc.max_per_day ? t('sch_cap', { n: sc.max_per_day }) : t('sch_nocap');
+    const ver = sc.with ? t('sch_ver', { a: num(sc.baseline.sharpe, 3), b: num(sc.with.sharpe, 3), p: money(sc.with.pnl) }) : '';
+    return `<div class="judge rrbox"><b>${t('sch_title')}</b><div class="sub">${win} · ${cap} · ${t('sch_avg', { n: num(sc.avg_trades_per_day, 1) })}</div>
+      <div class="sub">${sc.applied ? t('sch_applied') : sc.informational ? t('sch_info') : t('sch_notapplied')} ${ver}</div>
+      <div style="overflow-x:auto"><table class="rrt"><tr><th>${t('sch_slot')}</th><th>${t('sch_n')}</th><th>${t('sch_wr')}</th><th>${t('sch_pnl')}</th><th>${t('sch_avgp')}</th></tr>${tr}</table></div>
+      <div style="overflow-x:auto"><table class="rrt"><tr><th>${t('sch_ord')}</th><th>${t('sch_n')}</th><th>${t('sch_wr')}</th><th>${t('sch_pnl')}</th><th>${t('sch_cum')}</th></tr>${cr}</table></div>
+      <div class="sub">${t('sch_note')}</div></div>`;
+  }
   function rrBox(ex) {
     if (!ex) return '';
     const stops = [...new Set(ex.grid.map(c => c.stop_atr))], rrs = [...new Set(ex.grid.map(c => c.rr))];
@@ -632,7 +661,7 @@
       const bg = c.sharpe >= 0 ? `rgba(80,200,120,${0.12 + 0.5 * a})` : `rgba(240,90,90,${0.12 + 0.5 * a})`;
       const isBest = ex.chosen && best.stop_atr === s && best.rr === r;
       return `<td style="background:${bg};${isBest ? 'outline:2px solid #fff;' : ''}" title="${t('rr_cell', { w: pct(c.win_rate), n: c.n_trades, p: money(c.pnl) })}">${num(c.sharpe, 3)}</td>`; }).join('')}</tr>`).join('');
-    const chosen = ex.chosen ? t('rr_chosen', { s: best.stop_atr, r: best.rr == null ? t('rr_none') : '1:' + best.rr })
+    const chosen = ex.informational ? t('rr_info') : ex.chosen ? t('rr_chosen', { s: best.stop_atr, r: best.rr == null ? t('rr_none') : '1:' + best.rr })
       : t('rr_not_chosen');
     return `<div class="judge rrbox"><b>${t('rr_title')}</b><div class="sub">${chosen}</div>
       <table class="rrt"><tr><th></th>${rrs.map(r => `<th>${r == null ? t('rr_none') : 'R ' + r}</th>`).join('')}</tr>${rows}</table>
@@ -647,18 +676,21 @@
     const title = { wf_oos: t('s_wf'), locked: t('s_locked'), dev_best: t('s_dev') };
     const pl = d.planner && d.planner.reason ? (/failed a deterministic gate/.test(d.planner.reason) ? t('pl_gate') : d.planner.reason) : '';
     $('#detail').innerHTML = `
-      <div class="dtitle"><h1>${esc(rep.name)}</h1><span class="badge b-${L.status}">${t('v_' + L.status)}</span></div>
+      <div class="dtitle"><h1>${esc(rep.name)}</h1><span class="badge b-${L.status}">${t('v_' + L.status)}</span><button class="btn small" id="retest-go" title="${esc(t('retest_tip'))}">↻ ${t('retest')}</button></div>
+      ${rep.retest_no ? `<div class="sub">${t('retest_n', { n: rep.retest_no })}</div>` : ''}
       <div class="sub">${t('d_model')} ${esc(rep.template)} · ${rep.n_candidates} ${t('d_tested')} · ${esc(rep.source || '')}</div>
       <div class="judge"><b>${t('d_judge')}</b> ${L.reason ? '<div style="margin-top:6px">' + esc(itReason(L.reason)) + '</div>' : ''}
         ${L.checks ? '<ul style="padding:0;margin:8px 0">' + Object.entries(L.checks).map(([k, v]) => `<li class="${v ? 'ok' : 'no'}">${esc(t('k_' + k))}</li>`).join('') + '</ul>' : ''}
         ${L.p_pass != null ? `<div>${t('d_pass')}: <b>${pct(L.p_pass)}</b> (${t('d_interval')} ${pct(L.p_pass_ci95[0])}–${pct(L.p_pass_ci95[1])}) · ${t('d_bust')}: <b>${pct(L.p_bust)}</b> · ${t('d_pnl_block')}: <b class="${L.pnl >= 0 ? 'pos' : 'neg'}">${money(L.pnl)}</b></div>` : ''}</div>
       <div class="grid">${kpi(t('kp_med'), num(sur.median_sharpe, 3))}${kpi(t('kp_pos'), pct(sur.frac_positive))}${kpi(t('kp_plat'), num(sur.plateau_ratio, 2))}${kpi(t('kp_rob'), sur.robust ? t('yes') : t('no'), sur.robust ? 'pos' : 'neg')}${kpi(t('kp_wf'), money(rep.wf_oos_pnl), rep.wf_oos_pnl >= 0 ? 'pos' : 'neg')}</div>
       ${d.best_params ? `<div class="sub">${t('d_best', { p: esc(JSON.stringify(d.best_params)), n: rep.n_candidates })}</div>` : ''}
+      ${rolesBox(rep.roles)}
       ${farmBox(rep.farming)}
       ${tfBox(rep.by_timeframe)}
       ${sizingBox(rep.locked && rep.locked.sizing ? rep.locked.sizing : rep.sizing)}
       ${timingBox(rep.locked && rep.locked.timing ? rep.locked.timing : rep.timing)}
       ${rrBox(rep.exits)}
+      ${scheduleBox(rep.schedule)}
       <div class="seg" id="seg">${keys.map(k => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${title[k]}</button>`).join('')}</div>
       <div id="warn"></div><div class="grid" id="kpis"></div>
       <div class="charts">
@@ -670,6 +702,12 @@
       </div>
       ${d.auditor ? `<div class="judge"><b>${t('aud_title')}</b><p>${esc(d.auditor.summary)}</p>${(d.auditor.risk_flags || []).length ? '<ul style="padding:0">' + d.auditor.risk_flags.map(f => `<li class="no">${esc(f)}</li>`).join('') + '</ul>' : ''}<p><b>${t('aud_next')}:</b> ${esc(d.auditor.next_step)}</p></div>` : ''}
       ${pl ? `<div class="judge"><b>${t('planner')}:</b> ${esc(t('pl_' + ({ abandon: 'abandon', extend: 'extend', new_hypothesis: 'new' }[d.planner.decision] || 'abandon')))} — ${esc(pl)}</div>` : ''}`;
+    $('#retest-go').onclick = async () => {
+      if (!confirm(t('retest_confirm'))) return;
+      const r = await api('/api/retest', { method: 'POST', body: JSON.stringify({ slug }) });
+      toast(r.error ? '⚠ ' + esc(r.error) : '↻ ' + esc(t('retest_started', { n: r.retest_no })), 8000);
+      if (!r.error) { $('#modal').hidden = true; try { LabCharts.destroyAll(); } catch (e) {} poll(); }
+    };
     $('#modal').hidden = false;
     function draw() {
       LabCharts.destroyAll();

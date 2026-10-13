@@ -143,7 +143,7 @@ class ResearchLoop:
             rep = run_study(self.bars, spec, self.contract, self.rules, self.registry, contracts=self.contracts,
                             progress=lambda agent, state, msg='': ev.emit(agent, state, msg),
                             dedupe=True, market=self.market, judge_th=self.judge_th, all_timeframes=self.all_timeframes,
-                            on_stage=getattr(self, "on_stage", None))
+                            on_stage=getattr(self, "on_stage", None), retest_no=int(getattr(self, "retest_no", 0) or 0))
         except DuplicateExperiment as e:                  # same strategy, same data, already in the registry: never re-test
             self.done_specs.add(_fingerprint(spec))
             self._save()

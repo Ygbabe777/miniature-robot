@@ -132,6 +132,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.tell_researcher(str(data.get("text", "")), data.get("kind")))
                 if u.path == "/api/directives/remove":
                     return self._json(lab.forget_directive(str(data.get("id", ""))))
+                if u.path == "/api/retest":
+                    return self._json(lab.retest(str(data.get("slug") or "")))
                 if u.path == "/api/autopilot":
                     return self._json(lab.set_autopilot(data.get("enabled"), data.get("max_trials_per_day")))
                 self._json({"error": "not found"}, 404)

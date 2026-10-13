@@ -36,6 +36,14 @@ def entry_logic(report: dict) -> dict:
         out["uscite"] = (f"stop a {ex['stop_atr']} ATR" + (f", target a 1:{r}" if r else ", nessun target fisso (uscita sul segnale)"))
     else:
         out["uscite"] = "uscita sul segnale della strategia (nessuno stop/target fisso)"
+    sc = (report.get("series") or {}).get("schedule") or {}
+    out["finestra_oraria"] = (f"apre trade solo tra le {sc['window'][0]} e le {sc['window'][1]} (ora di New York)" if sc.get("window")
+                              else "nessuna finestra: tutta la sessione")
+    out["max_trade_giorno"] = (f"al massimo {sc['max_per_day']} trade al giorno" if sc.get("max_per_day") else "nessun limite giornaliero di trade")
+    rl = (report.get("roles") or {}).get("label")
+    out["ruolo"] = {"BOTH": "adatta sia a passare l'account sia a incassare payout", "PASS_ACCOUNT": "adatta a PASSARE L'ACCOUNT (non a vivere da funded)",
+                    "PAYOUT": "adatta ai PAYOUT (non è la più veloce a passare l'evaluation)", "UNDECIDED": "campione insufficiente per decidere",
+                    "NONE": "non adatta né a passare l'account né ai payout"}.get(rl, "n/d")
     out["regole_comuni"] = "ingresso alla chiusura della barra che genera il segnale; tutto chiuso prima delle 16:45 ET; nessun ordine reale inviato da OFO"
     return out
 

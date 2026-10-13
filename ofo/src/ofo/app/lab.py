@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import dataclasses
 import hashlib
 import json
@@ -38,7 +39,7 @@ from ..dossier import build_dossier
 from ..economics import load_assumptions, load_goal
 from ..accounts import demo_accounts, load_accounts
 from ..data import resample
-from ..strategies import directional
+from ..strategies import directional, version_fn
 from ..trades import extract_trades, summarize
 from ..directives import Directives
 from .. import farming as FM, fascicolo as FC
@@ -299,10 +300,10 @@ class Lab:
             n += 1
         return n
 
-    def _add_pending(self, spec: StrategySpec, origin: str, market: str | None = None) -> dict:
+    def _add_pending(self, spec: StrategySpec, origin: str, market: str | None = None, retest_no: int = 0) -> dict:
         sid = uuid.uuid4().hex[:8]
         with self.lock:
-            self.pending[sid] = {"spec": spec, "origin": origin, "market": market or self.primary}
+            self.pending[sid] = {"spec": spec, "origin": origin, "market": market or self.primary, "retest_no": retest_no}
         self._persist_queue()
         return spec_summary(sid, spec, origin, self.registry.n_trials, market or self.primary)
 
@@ -409,7 +410,7 @@ class Lab:
                "verdict": None, "error": None, "n_candidates": spec.n_candidates}
         self.jobs[job["id"]] = job
         job["queued_at"] = time.time()
-        self._running_specs[job["id"]] = {"spec": spec, "origin": item.get("origin", "paper"), "market": market}
+        self._running_specs[job["id"]] = {"spec": spec, "origin": item.get("origin", "paper"), "market": market, "retest_no": item.get("retest_no", 0)}
         try:
             self._persist_queue()
             th = threading.Thread(target=self._run_job, args=(job, spec, market), daemon=True, name=f"job-{job['id']}")
@@ -431,10 +432,12 @@ class Lab:
                 lp = self.loop(market)
                 lp.judge_th = self.judge_thresholds()
                 lp.on_stage = lambda name, detail="": job.update(stage=name, stage_detail=detail, stage_at=time.time())
+                lp.retest_no = int((self._running_specs.get(job["id"]) or {}).get("retest_no", 0))
                 try:
                     res = lp.process(spec, 0)
                 finally:
                     lp.on_stage = None
+                    lp.retest_no = 0
                 job.update(slug=slugify(spec.name), verdict=res["verdict"])
                 while lp.queue:                   # planner proposals: the autopilot runs them, otherwise they wait
                     nxt, _ = lp.queue.pop(0)
@@ -462,6 +465,42 @@ class Lab:
         finally:
             self._running_specs.pop(job["id"], None)
             self._persist_queue()
+
+    def retest(self, slug: str) -> dict:
+        """Run an already-tested strategy again from scratch with TODAY's rules (schedule, roles, sample rule, prop criteria) and judge it anew.
+        The old report is kept in reports/_history/. It is a NEW experiment (counted in the trial registry) and it takes a NEW look at the
+        hidden block, which is counted too: a retest is never free, and the Judge's rules do not bend because it is a retest."""
+        d = load_study(self.work, slug)
+        if d is None:
+            return {"error": "strategia non trovata"}
+        rep = d["report"]
+        spec_d = rep.get("spec") or (rep.get("repro") or {}).get("spec")
+        if not spec_d:                                           # older studies: rebuild the spec from what the registry kept
+            for r in self.registry.study_rows(3000):
+                det = r.get("details") or {}
+                if r["label"] == f"study:{rep['name']}" and det.get("ranges") and det.get("template"):
+                    spec_d = {"name": rep["name"], "template": det["template"], "ranges": det["ranges"], "timeframes": det.get("timeframes"),
+                              "rationale": rep.get("rationale", ""), "source": rep.get("source", ""), "hypothesis": det.get("hypothesis") or {}}
+                    break
+        if not spec_d:
+            return {"error": "specifica non disponibile per questo studio vecchio: rilanciala dalla chat o dalla coda"}
+        try:
+            spec = from_dict({k: v for k, v in spec_d.items() if k in ("name", "template", "ranges", "timeframes", "rationale", "source", "hypothesis", "max_configs")},
+                             require_card="lenient")
+        except Exception as e:
+            return {"error": f"specifica non valida: {e}"}
+        hist = self.work / "reports" / "_history"
+        hist.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        for f in (self.work / "reports").glob(f"{slugify(slug)}*.json"):
+            if f.is_file():
+                shutil.copyfile(f, hist / f"{f.stem}.{stamp}.json")
+        n = int(rep.get("retest_no", 0)) + 1
+        market = self.market_of(rep)
+        sid = self._add_pending(spec, "retest", market, retest_no=n)["id"]
+        self.events.emit("lab", "retest", f"ritest n.{n} di «{spec.name}»: nuovo esperimento, nuovo sguardo al blocco bloccato (contato)")
+        job = self.start(sid)
+        return {"job": job, "retest_no": n}
 
     def _ingest_now(self) -> None:
         if not self.llm_allowed("researcher"):
@@ -1319,7 +1358,7 @@ class Lab:
             bp = rep["series"]["best_params"]
             params = {k: v for k, v in bp.items() if k != "tf"}
             b = c.bars() if bp["tf"] == "1min" else resample(c.bars(), bp["tf"])
-            pos = flatten_overnight(directional(TEMPLATES[rep["template"]].fn, rep["series"].get("direction"))(b, **params))
+            pos = flatten_overnight(version_fn(TEMPLATES[rep["template"]].fn, rep["series"].get("direction"), rep["series"].get("schedule"))(b, **params))
             led = run_ledger(b, pos, c.contract, self.contracts, 1.0, rep["series"].get("exit"))
             arr = arrays_from_ledger(b, led, only_from=pd.Timestamp(rep["series"]["cut"]))
             for acct, entry in dos["accounts"].items():
@@ -1658,7 +1697,7 @@ class Lab:
             c = self.ctx(self.market_of(rep))
             self._trades_cache[key] = extract_trades(c.bars(), TEMPLATES[rep["template"]].fn, params, tf,
                                                      c.contract, self.contracts, exit=ser.get("exit"),
-                                                     direction=ser.get("direction") or "both")
+                                                     direction=ser.get("direction") or "both", schedule=ser.get("schedule"))
         allt = self._trades_cache[key]
         looked = "checks" in rep["locked"]
         vis = allt if looked else [t for t in allt if t["session"] < ser["cut"]]

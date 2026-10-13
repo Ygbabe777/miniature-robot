@@ -47,10 +47,10 @@ def candidate_digest(bars: pd.DataFrame, meta: dict, days: list) -> str:
     from .backtest import Contract
     from .data import resample
     from .research import daily_series
-    from .strategies import TEMPLATES, directional
+    from .strategies import TEMPLATES, version_fn
     c = meta["contract"]
     contract = Contract(c["symbol"], c["tick_size"], c["tick_value"], c["commission_per_side"])
-    cand = {"fn": directional(TEMPLATES[meta["template"]].fn, meta.get("direction")), "params": dict(meta["params"]), "tf": meta["tf"]}
+    cand = {"fn": version_fn(TEMPLATES[meta["template"]].fn, meta.get("direction"), meta.get("schedule")), "params": dict(meta["params"]), "tf": meta["tf"]}
     s = daily_series({meta["tf"]: resample(bars, meta["tf"])}, cand, contract, int(meta["contracts"]), float(meta["slippage_ticks"]),
                      exit=meta.get("exit"))
     return digest(s.reindex(days).fillna(0.0))

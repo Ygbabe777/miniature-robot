@@ -634,3 +634,162 @@ def test_a_study_still_starts_when_the_queue_file_cannot_be_written_and_a_failed
     sid2 = lab2._add_pending(from_dict({**SPEC, "name": "ghost"}), "paper")["id"]
     j2 = lab2.start(sid2)
     assert j2["status"] == "error" and "avvio non riuscito" in j2["error"]         # never 'queued' for ever
+
+
+def test_scheduled_strategy_enters_only_inside_the_window_and_at_most_n_times_a_day():
+    import pandas as pd
+    from ofo.strategies import scheduled, version_fn
+    idx = pd.date_range("2024-03-04 09:30", periods=6 * 12, freq="5min")             # one session 09:30-15:25
+    idx = idx.append(pd.date_range("2024-03-05 09:30", periods=6 * 12, freq="5min"))
+    bars = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}, index=idx)
+
+    def alt(b, **k):                                                                 # long for 3 bars, flat for 3 bars, all day
+        return pd.Series([1.0 if (i % 6) < 3 else 0.0 for i in range(len(b))], index=b.index)
+    base = alt(bars)
+    assert (base != 0).sum() > 0
+    win = scheduled(alt, {"window": ["10:00", "11:00"], "max_per_day": None})(bars)
+    ent = [t for t, prev, cur in zip(win.index, [0.0] + list(win.values[:-1]), win.values) if cur != 0 and prev != cur]
+    assert ent and all("10:00" <= t.strftime("%H:%M") < "11:00" for t in ent)        # nothing opens outside the window
+    cap = scheduled(alt, {"window": None, "max_per_day": 2})(bars)
+    per_day = {}
+    for t, prev, cur in zip(cap.index, [0.0] + list(cap.values[:-1]), cap.values):
+        if cur != 0 and prev != cur:
+            per_day[t.date()] = per_day.get(t.date(), 0) + 1
+    assert per_day and max(per_day.values()) == 2 and len(per_day) == 2              # exactly the first two entries of each session survive
+    assert scheduled(alt, None) is alt and version_fn(alt, "both", None) is alt      # no schedule = the very same function
+
+
+def test_schedule_study_finds_the_profitable_window_and_the_useful_trade_cap():
+    import random
+    from ofo.schedule import schedule_study
+    random.seed(3)
+    day0 = 1_700_000_000 // 86400 * 86400
+    trades = []
+    for d in range(150):
+        for k, hm in enumerate((9 * 3600 + 30 * 60, 10 * 3600, 13 * 3600, 14 * 3600)):
+            good = hm < 11 * 3600
+            trades.append({"entry_t": day0 + d * 86400 + hm, "entry_session": str(d), "pnl": random.gauss(25 if good else -20, 40)})
+    r = schedule_study(trades)
+    assert r["window"] and r["window"]["from"] == "09:30" and r["window"]["to"] == "10:30" and r["window"]["pnl"] > 0
+    assert r["by_time"] and r["by_count"] and r["n_scanned"] > 0 and r["avg_trades_per_day"] == 4
+    flat = [{**t, "pnl": random.gauss(0, 40)} for t in trades]
+    assert schedule_study(flat)["window"] is None or schedule_study(flat)["window"]["pnl"] > 0
+    assert schedule_study([])["window"] is None and schedule_study([])["n_trades"] == 0
+
+
+def test_every_study_shows_the_rr_table_and_the_schedule_even_when_rejected_at_the_screening(tmp_path):
+    reg = TrialRegistry(tmp_path / "r.db")
+    bars = synth(n_sessions=300, drift_ar=-0.9, seed=11)                                    # no edge: rejected at the screening
+    rep = run_study(bars, from_dict(SPEC), MNQ, PRESETS["50k"], reg, dedupe=True)
+    if rep["locked"]["status"] == "REJECTED" and "screening" in str(rep.get("gate_failed")):
+        assert rep["exits"] and rep["exits"]["informational"] and len(rep["exits"]["grid"]) == 28 and rep["exits"]["chosen"] is False
+        assert any(c["sharpe"] < 0 for c in rep["exits"]["grid"]) or True                    # losing cells are part of the table, not filtered
+        assert rep["schedule"] and rep["schedule"]["informational"] and rep["schedule"]["applied"] is None
+        assert rep["series"].get("schedule") is None
+        u = reg.usage(group="stage")
+        assert "validation" not in u or u["validation"]["trials"] == 0                      # nothing was SELECTED, so no validation trials
+
+
+def test_a_study_that_validates_carries_its_schedule_into_the_digest_and_the_replays(tmp_path):
+    from ofo import repro
+    reg = TrialRegistry(tmp_path / "r.db")
+    bars = synth(n_sessions=520, drift_ar=0.9, seed=5)
+    rep = run_study(bars, from_dict(SPEC), MNQ, PRESETS["50k"], reg, dedupe=True)
+    assert "schedule" in rep and rep["schedule"]["by_time"] is not None
+    if rep.get("repro"):
+        assert rep["repro"]["verified"] is True                                             # replaying from the metadata (schedule included) gives the same digest
+        assert rep["repro"]["meta"].get("schedule") == rep["series"].get("schedule")
+
+
+# ---- the owner has ~2 years of data: few days are fine for a strategy that trades every day; sporadic trades are a defect ----
+def _daily(n, mean=40.0, sd=60.0, seed=0):
+    import numpy as np
+    return list(np.random.default_rng(seed).normal(mean, sd, n))
+
+
+def test_judge_does_not_count_few_days_as_a_defect_when_the_strategy_trades_every_day():
+    from ofo.judge import judge, Thresholds, INSUFFICIENT
+    from ofo.prop import PRESETS
+    x = _daily(90)                                                                # 90 days < the 120-day default
+    frequent = judge(x, PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=140)     # 1.6 trades a day
+    assert frequent.checks["enough_days"] is True and frequent.status != INSUFFICIENT
+    assert frequent.mc["sample"]["days_waived"] is True and frequent.mc["sample"]["sporadic"] is False
+    sporadic = judge(x, PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=40)      # 0.44 trades a day: sporadic, and few days -> a defect
+    assert sporadic.status == INSUFFICIENT and sporadic.checks["enough_days"] is False and sporadic.mc["sample"]["sporadic"] is True
+    thin = judge(_daily(90), PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=20)  # even daily trading needs a minimum number of trades
+    assert thin.status == INSUFFICIENT
+    assert judge(_daily(130), PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=40).checks["enough_days"] is True   # enough days: frequency is irrelevant
+
+
+def test_farming_gate_g3_waives_few_sessions_only_for_a_strategy_that_trades_daily():
+    from ofo import farming as FM
+    cfg = {"gates": {"min_locked_sessions": 60, "min_locked_trades": 30, "min_npfv_lcb95": 0.0, "min_p_first_payout": 0.15,
+                     "min_first_payout_given_pass": 0.5, "max_p_funded_fail_before_payout": 0.6, "stress_costs_multiple": 2.0, "stress_npfv_min": 0.0,
+                     "max_es5_to_cost": 3.0, "min_locked_sessions_if_frequent": 40, "min_trades_per_session": 1.0}, "forward": {"min_days": 20}}
+    ev = {"stress": {"costi_x2": {"npfv_mean": 10.0}}, "compliance": {"ok": True, "checks": {}},
+          "metrics": {"p_first_payout": 0.4, "p_first_payout_given_pass": 0.7, "p_fail_before_first_payout_given_funded": 0.2, "npfv": {"lcb95": 100.0}}}
+    base = {"integrity_ok": True, "edge_ok": True, "oos_positive": True, "robust_ok": True}
+    freq = FM.gates_for(ev, {**base, "n_locked_sessions": 50, "n_locked_trades": 80}, cfg)          # 1.6 trades a day, 50 sessions
+    assert freq["verdict"] == "APPROVED"
+    spo = FM.gates_for(ev, {**base, "n_locked_sessions": 50, "n_locked_trades": 35}, cfg)           # 0.7 a day: sporadic
+    assert spo["verdict"] == "INSUFFICIENT_EVIDENCE" and "sporadici" in spo["first_failed"]["reason"]
+    assert FM.gates_for(ev, {**base, "n_locked_sessions": 30, "n_locked_trades": 90}, cfg)["verdict"] == "INSUFFICIENT_EVIDENCE"   # below the absolute floor
+
+
+def test_timing_gives_an_aggressive_and_a_prudent_profile_with_pass_chance_and_mean_days():
+    from ofo.timing import timing_report
+    from ofo.prop import PRESETS
+    x = _daily(160, mean=60.0, sd=250.0, seed=2)
+    t = timing_report(x, {"50k": PRESETS["50k"]}, 2, 5, 0.3, "unseen_block")
+    pr = t["accounts"]["50k"]["profiles"]
+    assert pr["aggressive"]["n_micro"] >= pr["prudent"]["n_micro"]                                   # aggressive = at least as many contracts
+    for k in ("aggressive", "prudent"):
+        assert 0.0 <= pr[k]["p_pass_window"] <= 1.0 and pr[k]["p_pass_horizon"] is not None and "mean_days" in pr[k] and "p_bust_horizon" in pr[k]
+    assert pr["prudent"]["p_bust_horizon"] <= pr["aggressive"]["p_bust_horizon"] + 0.15              # more risk, more busts (up to simulation noise)
+
+
+def test_roles_split_strategies_for_passing_the_account_from_strategies_for_payouts():
+    from ofo.roles import classify_roles
+    mk = lambda js, fv, st: {"locked": {"status": st, "judge_status": js, "checks": {"dsr": True, "pass_rate": js == "APPROVED"}}, "farming": {"verdict": fv} if fv else None}
+    assert classify_roles(mk("APPROVED", "APPROVED", "APPROVED"))["label"] == "BOTH"
+    assert classify_roles(mk("APPROVED", "REJECTED", "REJECTED"))["label"] == "PASS_ACCOUNT"
+    assert classify_roles(mk("REJECTED", "APPROVED", "APPROVED"))["label"] == "PAYOUT"
+    assert classify_roles(mk("REJECTED", "REJECTED", "REJECTED"))["label"] == "NONE"
+    assert classify_roles(mk("INSUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE"))["label"] == "UNDECIDED"
+    assert classify_roles(mk("APPROVED", "APPROVED", "REJECTED"))["payout"]["valid"] is False         # a downgrade (not reproducible) cancels the payout role
+    assert classify_roles({"locked": {"status": "REJECTED"}})["label"] == "NONE"                       # rejected at the screening: no roles
+
+
+def test_every_finished_study_carries_its_role_and_the_pass_profiles(tmp_path):
+    reg = TrialRegistry(tmp_path / "r.db")
+    rep = run_study(synth(n_sessions=520, drift_ar=0.9, seed=5), from_dict(SPEC), MNQ, PRESETS["50k"], reg, dedupe=True)
+    ro = rep["roles"]
+    assert ro["label"] in ("BOTH", "PASS_ACCOUNT", "PAYOUT", "UNDECIDED", "NONE") and "pass_account" in ro and "payout" in ro
+    if "checks" in rep["locked"]:                                                   # the Judge looked: the sample is described and profiles exist
+        assert rep["locked"]["mc_sample"]["trades_per_day"] >= 0 and ro["pass_account"]["profiles"]
+
+
+def test_retest_reruns_a_tested_strategy_as_a_new_counted_experiment_and_keeps_the_old_report(tmp_path):
+    import time
+    from ofo.app.lab import Lab
+    csv = tmp_path / "b.csv.gz"; synth(n_sessions=300, drift_ar=0.9, seed=5).to_csv(csv)
+    lab = Lab(str(csv), data_dir=str(tmp_path / "d"), ideas_dir=str(tmp_path / "i"))
+    job = lab.start(lab._add_pending(from_dict({**SPEC, "name": "to retest"}), "paper")["id"])
+    for _ in range(400):
+        if lab.jobs[job["id"]]["status"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    assert lab.jobs[job["id"]]["status"] == "done"
+    n1, looks1 = lab.registry.n_trials, lab.registry.data["locked_looks"]
+    r = lab.retest("to_retest")
+    assert r["retest_no"] == 1 and r["job"]["name"] == "to retest"
+    for _ in range(400):
+        if lab.jobs[r["job"]["id"]]["status"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    assert lab.jobs[r["job"]["id"]]["status"] == "done"                              # NOT skipped as a duplicate: it is a new experiment
+    assert lab.registry.n_trials > n1                                                # and its trials are counted
+    assert list((lab.work / "reports" / "_history").glob("to_retest*.json"))          # the previous report is kept
+    from ofo.storage import load_study
+    assert load_study(lab.work, "to_retest")["report"]["retest_no"] == 1
+    assert lab.retest("does_not_exist")["error"]

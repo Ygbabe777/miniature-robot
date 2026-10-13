@@ -221,9 +221,16 @@ def gates_for(ev: dict, ctx: dict, cfg: dict) -> dict:
     ev_ok = ctx.get("edge_ok")
     add(2, "Edge statistico", "PASS" if ev_ok else "FAIL",
         "Deflated Sharpe sopra soglia dopo il conteggio dei tentativi" if ev_ok else "Deflated Sharpe sotto soglia: l'edge non è distinguibile dalla fortuna dopo i tentativi")
-    if ctx.get("n_locked_sessions", 0) < g["min_locked_sessions"] or ctx.get("n_locked_trades", 0) < g["min_locked_trades"]:
-        add(3, "Fuori campione", "INSUFFICIENT", f"campione insufficiente: {ctx.get('n_locked_sessions', 0)} sessioni e {ctx.get('n_locked_trades', 0)} trade "
-            f"(servono {g['min_locked_sessions']} e {g['min_locked_trades']})")
+    ns, nt = int(ctx.get("n_locked_sessions", 0)), int(ctx.get("n_locked_trades", 0))
+    tps = nt / ns if ns else 0.0
+    # few sessions are NOT a defect when the strategy trades at least `min_trades_per_session` a day on average (the owner has ~2 years of data);
+    # few sessions with sporadic trades ARE one. The number of trades is always required.
+    frequent_ok = ns >= int(g.get("min_locked_sessions_if_frequent", 40)) and tps >= float(g.get("min_trades_per_session", 1.0))
+    sess_ok = ns >= g["min_locked_sessions"] or frequent_ok
+    if not sess_ok or nt < g["min_locked_trades"]:
+        add(3, "Fuori campione", "INSUFFICIENT", (f"trade sporadici: {nt} trade in {ns} sessioni ({tps:.2f} al giorno, serve almeno {float(g.get('min_trades_per_session', 1.0)):g}) "
+            f"e poche sessioni (servono {g['min_locked_sessions']})" if tps < float(g.get("min_trades_per_session", 1.0)) and ns < g["min_locked_sessions"] else
+            f"campione insufficiente: {ns} sessioni e {nt} trade (servono almeno {g['min_locked_trades']} trade)"), sporadic=bool(tps < float(g.get("min_trades_per_session", 1.0))))
     else:
         add(3, "Fuori campione", "PASS" if ctx.get("oos_positive") else "FAIL",
             "profitto netto positivo sul blocco mai visto" if ctx.get("oos_positive") else "il blocco mai visto non è profittevole")

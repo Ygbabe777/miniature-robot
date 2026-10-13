@@ -449,3 +449,50 @@ def directional(fn, direction: str | None):
         return pos.clip(lower=0.0) if direction == "long" else pos.clip(upper=0.0)
     restricted.__name__ = f"{getattr(fn, '__name__', 'strategy')}_{direction}_only"
     return restricted
+
+
+def _hm_minutes(hm: str) -> int:
+    return int(hm[:2]) * 60 + int(hm[3:5])
+
+
+def scheduled(fn, schedule: dict | None):
+    """The same strategy allowed to ENTER only inside a time window (exchange clock, [from, to) ) and at most `max_per_day` times per
+    session. Entries that break a rule are removed together with the whole position they would have opened; exits are untouched.
+    schedule = {"window": ["09:30", "11:00"] | None, "max_per_day": 2 | None}."""
+    if not schedule or not (schedule.get("window") or schedule.get("max_per_day")):
+        return fn
+    w, cap = schedule.get("window"), schedule.get("max_per_day")
+    lo, hi = (_hm_minutes(w[0]), _hm_minutes(w[1])) if w else (None, None)
+
+    def restricted(bars, **params):
+        pos = flatten_overnight(fn(bars, **params))          # a position cut by the daily flat is a new entry the next day: count it as one
+        a = pos.to_numpy(dtype=float).copy()
+        n, mins = len(a), _minutes(bars.index)
+        sess = (bars["session"].astype(str).str[:10].to_numpy() if "session" in bars.columns
+                else bars.index.normalize().strftime("%Y-%m-%d").to_numpy())
+        counts: dict = {}
+        i = 0
+        while i < n:
+            v = a[i]
+            if v != 0 and (i == 0 or a[i - 1] != v):
+                j = i
+                while j + 1 < n and a[j + 1] == v:
+                    j += 1
+                ok = lo is None or lo <= mins[i] < hi
+                if ok and cap is not None and counts.get(sess[i], 0) >= cap:
+                    ok = False
+                if ok:
+                    counts[sess[i]] = counts.get(sess[i], 0) + 1
+                else:
+                    a[i:j + 1] = 0.0
+                i = j + 1
+            else:
+                i += 1
+        return pd.Series(a, index=pos.index)
+    restricted.__name__ = f"{getattr(fn, '__name__', 'strategy')}_scheduled"
+    return restricted
+
+
+def version_fn(fn, direction: str | None, schedule: dict | None = None):
+    """THE final version of a strategy: direction restriction, then the entry schedule. One place, used by every replay of it."""
+    return scheduled(directional(fn, direction), schedule)

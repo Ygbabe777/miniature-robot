@@ -251,7 +251,7 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
         strat += L["src"].format(src=str(report["source"])[:160])
     caveat = L["caveat"].format(n=len(pnl), trials=trials_total, k=len(MICRO_SIZES) + len(MINI_SIZES))
     return {"name": report["name"], "market": market, "micro": micro, "point_value": point_value,
-            "template": report["template"], "tf": tf, "direction": report["series"].get("direction") or "both", "params": params, "headline": head,
+            "template": report["template"], "tf": tf, "direction": report["series"].get("direction") or "both", "schedule": report["series"].get("schedule"), "params": params, "headline": head,
             "strategy_text": strat, "comparison": comparison, "attempts_table": attempts_table, "economics_assumed": True, "fast_ok": fast_ok,
             "goal": {"max_eval_days": days, "min_pass_rate": minp, "strong_pass_rate": strong},
             "exits": {"chosen": report["series"].get("exit"), "grid": ex.get("grid", [])}, "accounts": accounts, "caveat": caveat,
