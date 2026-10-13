@@ -551,3 +551,28 @@ def test_the_state_snapshot_of_jobs_is_a_copy_not_a_live_view(tmp_path):
     snap = lab.state()["jobs"][-1]
     lab.jobs["j"]["status"] = "done"
     assert snap["status"] == "running" and "_stuck_reported" not in snap
+
+
+def test_diag_answers_even_when_the_lab_lock_is_held_and_names_the_threads(tmp_path):
+    import json, threading, urllib.request
+    from ofo.app.server import make_server
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    srv = make_server(lab, port=8795); threading.Thread(target=srv.serve_forever, daemon=True).start()
+    lab.lock.acquire()                                                           # the situation in which /api/state would hang
+    try:
+        d = json.loads(urllib.request.urlopen("http://127.0.0.1:8795/api/diag", timeout=5).read())
+    finally:
+        lab.lock.release(); srv.shutdown()
+    assert d["lab_lock_held"] is True and d["engine_lock_held"] is False and d["build"] and d["threads"]
+
+
+def test_state_answers_while_the_lab_lock_is_held(tmp_path):
+    import threading
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    out = {}
+    lab.lock.acquire()
+    try:
+        t = threading.Thread(target=lambda: out.update(s=lab.state())); t.start(); t.join(8)
+        assert not t.is_alive() and "jobs" in out["s"] and "engine" in out["s"]
+    finally:
+        lab.lock.release()

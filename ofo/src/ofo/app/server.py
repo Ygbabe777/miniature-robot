@@ -44,6 +44,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
         def do_GET(self):
             u = urlparse(self.path)
             try:
+                if u.path == "/api/diag":
+                    return self._send(200, json.dumps(lab.diag(), ensure_ascii=False, indent=1, default=str).encode(), "application/json; charset=utf-8")
                 if u.path == "/api/state":
                     return self._json(lab.state())
                 if u.path == "/api/events":

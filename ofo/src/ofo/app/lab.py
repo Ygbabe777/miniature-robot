@@ -626,6 +626,22 @@ class Lab:
         return {"busy": True, "kind": h["kind"], "name": h["name"], "elapsed_s": int(time.time() - h["since"]), "stage": job.get("stage"),
                 "stage_detail": job.get("stage_detail")}
 
+    def diag(self) -> dict:
+        """Lock-free picture of the engine for when the page looks stuck: version, the two locks, who holds the engine, every job, and
+        where EVERY thread of the Lab is right now. Takes no lock, so it answers even if /api/state hangs."""
+        import sys
+        import threading as th
+        import traceback
+        frames = sys._current_frames()
+        threads = []
+        for t in th.enumerate():
+            fr = frames.get(t.ident)
+            where = [f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in (traceback.extract_stack(fr)[-5:] if fr else [])]
+            threads.append({"name": t.name, "alive": t.is_alive(), "where": list(reversed(where))})
+        return {"build": BUILD, "lab_lock_held": self.lock.locked(), "engine_lock_held": self.run_lock.locked(), "holder": self._holder,
+                "busy": dict(self.busy), "jobs": [{k: v for k, v in j.items() if not k.startswith("_")} for j in list(self.jobs.values())[-10:]],
+                "pending": len(self.pending), "threads": threads}
+
     STUCK_AFTER_S = 20
 
     def _stuck_job(self) -> dict | None:
@@ -905,8 +921,7 @@ class Lab:
         h = rcfg_mod.get()["hypothesis"]
         gap = float(h["min_gap_min"]) * 60 * (float(h["economy_gap_factor"]) if self.economy() else 1.0)
         on = set(self.enabled_markets())
-        with self.lock:
-            queued = sum(1 for v in self.pending.values() if (v.get("market") or self.primary) in on and v.get("origin") != "starter")
+        queued = sum(1 for v in list(self.pending.values()) if (v.get("market") or self.primary) in on and v.get("origin") != "starter")
         used = self.rbudget.used()["hypothesis"]
         why = None
         if isinstance(self.llm, NoLLM):
@@ -1584,8 +1599,8 @@ class Lab:
                 h = hashlib.sha256(p.read_bytes()).hexdigest()
                 ideas.append({"name": str(p.relative_to(self.ideas)), "kb": round(p.stat().st_size / 1024),
                               "read": h in processed})
-        with self.lock:
-            pending = [spec_summary(i, v["spec"], v["origin"], self.registry.n_trials, v.get("market")) for i, v in self.pending.items()]
+        items = list(self.pending.items())             # a plain copy, no lock: the page must answer even if something holds the lab lock
+        pending = [spec_summary(i, v["spec"], v["origin"], self.registry.n_trials, v.get("market")) for i, v in items]
         reqs = json.loads(self.requests_file.read_text()) if self.requests_file.exists() else []
         return {"trials": self.registry.n_trials, "locked_looks": self.registry.data["locked_looks"],
                 "calls_last_hour": self.pool.calls_last_hour() if self.pool else None,
