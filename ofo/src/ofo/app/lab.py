@@ -428,6 +428,13 @@ class Lab:
         gap = 45 if (last.get("found") or last.get("downloaded")) else 240
         return gap * 4 if self.economy() else gap                      # saving tokens: search a quarter as often
 
+    def web_activity(self, after: int = 0, limit: int = 120) -> dict:
+        """Live feed of the Researcher's internet use: every search, result list, page read and save (newest last)."""
+        ev = [e for e in self.events.tail(4000) if e.get("agent") == "scout" and e.get("type") == "web"]
+        items = [{"i": k, **e["data"], "t": e["t"], "msg": e.get("message", "")} for k, e in enumerate(ev)]
+        total = len(items)
+        return {"total": total, "running": self._scout_running, "items": [x for x in items if x["i"] >= after][-limit:]}
+
     def scout_state(self) -> dict:
         st = self.scout().public_state(self._scout_running)
         st["channels"] = ["arxiv", "ssrn"] + [c.name for c in self.scout().channels]

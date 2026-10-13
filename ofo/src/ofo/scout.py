@@ -67,6 +67,14 @@ class Scout:
         if self.events:
             self.events.emit("scout", kind, msg, data)
 
+    def _web(self, phase: str, src: str, msg: str = "", **data) -> None:
+        """One line of the live 'where is the Researcher looking' feed: phase = search | found | read | saved | skip | error."""
+        self._emit("web", msg, {"phase": phase, "src": src, **data})
+
+    @staticmethod
+    def _items(batch: list[dict], k: int = 4) -> list[dict]:
+        return [{"title": (p.get("title") or "")[:90], "url": p.get("url", "")} for p in batch[:k]]
+
     def _save(self) -> None:
         self.file.write_text(json.dumps(self.state, indent=1, ensure_ascii=False))
 
@@ -112,22 +120,32 @@ class Scout:
         self.counts = {"arxiv": 0, "semanticscholar": 0, "ssrn": 0, **{c.name: 0 for c in self.channels}}
         for q in queries:
             self._emit("working", f"searching arXiv: {q}")
+            self._web("search", "arxiv", q, query=q)
             try:
                 batch = search_arxiv(q, self.fetch)
                 self.counts["arxiv"] += len(batch)
+                self._web("found", "arxiv", q, query=q, n=len(batch), items=self._items(batch))
                 if self.use_s2:
+                    self._web("search", "semanticscholar", q, query=q)
                     b2 = search_semantic_scholar(q); self.counts["semanticscholar"] += len(b2); batch += b2
+                    self._web("found", "semanticscholar", q, query=q, n=len(b2), items=self._items(b2))
                 if self.use_ssrn:
+                    self._web("search", "ssrn", q, query=q)
                     b3 = search_ssrn(q, self.fetch); self.counts["ssrn"] += len(b3); batch += b3
+                    self._web("found", "ssrn", q, query=q, n=len(b3), items=self._items(b3))
             except WebError as e:
                 self._emit("error", f"{q}: {e}")
+                self._web("error", "arxiv", f"{q}: {e}", query=q)
                 continue
             for ch in self.channels:                             # the extra channels fail alone: one dead source never stops the search
+                self._web("search", ch.name, q, query=q)
                 try:
                     more = ch.search(q)
                 except (SourceError, WebError) as e:
                     self._emit("error", f"{ch.name}: {e}")
+                    self._web("error", ch.name, str(e)[:160], query=q)
                     continue
+                self._web("found", ch.name, q, query=q, n=len(more), items=self._items(more))
                 self.counts[ch.name] = self.counts.get(ch.name, 0) + len(more)
                 batch += more
             self.state["queries"][q] = self.now()
@@ -158,10 +176,12 @@ class Scout:
 
     def _save_text(self, p: dict, rec: dict) -> bool:
         """Full text of a web / github / rss / video / social candidate, saved for the Researcher as UNTRUSTED data."""
+        self._web("read", p["source"], p["title"][:90], url=p.get("url", ""))
         try:
             text = self.by_channel[p["source"]].read(p)
         except (SourceError, WebError) as e:
             self._emit("error", f"{p['source']}: could not read {p.get('url', '')[:80]}: {e}")
+            self._web("error", p["source"], f"read failed: {e}"[:160], url=p.get("url", ""))
             return False
         if len(text) < 400:                                          # a stub page is not worth the Researcher's tokens
             return False
@@ -173,6 +193,7 @@ class Scout:
         (self.out / f"{name}.meta.json").write_text(json.dumps({**p, "abstract": p["abstract"][:1500], "channel": p["source"]},
                                                               ensure_ascii=False, indent=1))
         rec["status"] = "downloaded"; rec["file"] = f"web/{name}.md"
+        self._web("saved", p["source"], p["title"][:90], url=p.get("url", ""))
         self._emit("download", f"{p['source']}: {p['title'][:80]}", {"url": p.get("url"), "why": p.get("why")})
         return True
 
@@ -190,6 +211,7 @@ class Scout:
             rec = {"title": p["title"], "url": p["url"], "published": p["published"], "why": p["why"],
                    "source": p["source"], "found": self.now(), "status": "skipped", "query": p.get("query", "")}
             if p.get("pdf_url") and pdf_allowed(p["pdf_url"]):
+                self._web("read", p["source"], "PDF: " + p["title"][:80], url=p["pdf_url"])
                 try:
                     data = download_pdf(p["pdf_url"], self.fetch)
                     self.out.mkdir(parents=True, exist_ok=True)
@@ -197,9 +219,11 @@ class Scout:
                     (self.out / f"{name}.pdf").write_bytes(data)
                     (self.out / f"{name}.meta.json").write_text(json.dumps({**p, "abstract": p["abstract"][:1500]}, ensure_ascii=False, indent=1))
                     rec["status"] = "downloaded"; rec["file"] = f"web/{name}.pdf"; got += 1
+                    self._web("saved", p["source"], "PDF: " + p["title"][:80], url=p["pdf_url"])
                     self._emit("download", f"{p['title'][:90]}", {"url": p["url"], "why": p["why"]})
                 except WebError as e:
                     rec["status"] = "failed"; self._emit("error", f"download failed: {e}")
+                    self._web("error", p["source"], f"download failed: {e}"[:160], url=p["pdf_url"])
             elif p["source"] in self.by_channel and self._save_text(p, rec):
                 got += 1
             else:

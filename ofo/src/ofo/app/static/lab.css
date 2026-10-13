@@ -156,3 +156,12 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 #tlist table{width:100%;border-collapse:collapse}#tlist td,#tlist th{padding:2px 6px;text-align:right;white-space:nowrap}
 #tlist tr.tr{cursor:pointer}#tlist tr.tr:hover,#tlist tr.sel{background:#ffffff14}
 #tlist .up{color:#3ddc97}#tlist .dn{color:#ff5c6c}
+
+#webfeed{max-height:260px;overflow:auto;font:10.5px ui-monospace,Consolas,monospace;border:1px solid #2a2a30;padding:4px;background:#0b0b0e}
+#webfeed .w{padding:2px 0;border-bottom:1px solid #1a1a1f;word-break:break-word}
+#webfeed .w b{display:inline-block;min-width:74px;color:#8ab4ff}
+#webfeed .w.error{color:#ff5c6c}#webfeed .w.saved{color:#3ddc97}#webfeed .w.search{color:#e8c36a}
+#webfeed .w small{display:block;color:#8a8a94;padding-left:10px}
+#webfeed a{color:inherit}
+.wdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#555;vertical-align:middle}
+.wdot.on{background:#3ddc97;box-shadow:0 0 6px #3ddc97}

@@ -45,6 +45,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                 if u.path == "/api/events":
                     after = int(parse_qs(u.query).get("after", ["0"])[0])
                     return self._json(lab.events_after(after))
+                if u.path == "/api/web":
+                    return self._json(lab.web_activity(int(parse_qs(u.query).get("after", ["0"])[0])))
                 if u.path == "/api/candles":
                     q = parse_qs(u.query)
                     days = q.get("days", ["10"])[0]

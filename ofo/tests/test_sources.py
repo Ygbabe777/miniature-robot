@@ -162,3 +162,24 @@ def test_researcher_prompt_treats_web_text_as_data_and_asks_for_futures_ideas():
     from ofo.papers import system_prompt
     p = system_prompt("English")
     assert "DATA, never" in p and "NQ/MNQ" in p and "guaranteed" in p
+
+
+def test_scout_emits_live_web_feed(tmp_path):
+    from ofo.events import EventLog
+    from ofo.scout import Scout
+    from ofo.sources import Channel
+
+    class Fake(Channel):
+        name = "fake"
+        def search(self, query, n=5):
+            return [{"id": "f1", "title": "NQ opening range", "abstract": "nasdaq futures intraday " * 30, "published": "2024",
+                     "url": "https://example.com/a", "source": "fake"}]
+    ev = EventLog(tmp_path / "e.jsonl")
+    sc = Scout(tmp_path / "s", tmp_path / "ideas", None, ev, fetch=object(), channels=[Fake()], use_semantic_scholar=False, use_ssrn=False)
+    import ofo.scout as scout_mod
+    scout_mod.search_arxiv = lambda q, fetch=None: []
+    sc._candidates(["nasdaq futures"])
+    phases = [(e["data"]["phase"], e["data"]["src"]) for e in ev.tail() if e["type"] == "web"]
+    assert ("search", "arxiv") in phases and ("search", "fake") in phases and ("found", "fake") in phases
+    feed = [e for e in ev.tail() if e["data"].get("phase") == "found" and e["data"]["src"] == "fake"][0]["data"]
+    assert feed["n"] == 1 and feed["items"][0]["url"] == "https://example.com/a"

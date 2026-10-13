@@ -502,6 +502,26 @@
     $('#scout-auto').onchange = async (e) => { const m = +e.target.value; await api('/api/scout/auto', { method: 'POST', json: { enabled: m > 0, minutes: m || 60 } }); scoutKey = ''; poll(); };
   }
 
+  // ---------- live web feed: where the Researcher is searching / reading right now ----------
+  let webKey = '';
+  async function pollWeb() {
+    let d; try { d = await api('/api/web'); } catch (e) { return; }
+    $('#web-dot').className = 'wdot' + (d.running ? ' on' : '');
+    const key = d.total + '|' + d.running; if (key === webKey) return; webKey = key;
+    const box = $('#webfeed'), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+    const link = (u, txt) => /^https?:\/\//.test(u || '') ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(txt)}</a>` : esc(txt);
+    box.innerHTML = d.items.length ? d.items.map(x => {
+      const when = (x.t || '').slice(11, 19), who = `<b>${esc(x.src)}</b>`;
+      const body = x.phase === 'search' ? `🔎 ${t('web_search')}: ${esc(x.query || x.msg)}`
+        : x.phase === 'found' ? `📄 ${x.n} ${t('web_found')}: ${esc(x.query || '')}` + (x.items || []).map(i => `<small>${link(i.url, i.title || i.url)}</small>`).join('')
+        : x.phase === 'read' ? `📖 ${t('web_read')}: ${link(x.url, x.msg || x.url)}`
+        : x.phase === 'saved' ? `💾 ${t('web_saved')}: ${link(x.url, x.msg || x.url)}` : `⚠ ${esc(x.msg)}`;
+      return `<div class="w ${x.phase}">${when} ${who} ${body}</div>`;
+    }).join('') : `<div class="w">${t('web_empty')}</div>`;
+    if (atEnd) box.scrollTop = box.scrollHeight;
+  }
+  setInterval(pollWeb, 2000); pollWeb();
+
   // ---------- agents at work ----------
   const ROWS = [['research', 'Researcher + Scout'], ['strategist', 'Strategist'], ['optimizer', 'Optimizer + Planner'], ['validator', 'Validator'], ['judge', 'Judge + Auditor']];
   if (window.LabScene) LabScene.setStateLabels({ idle: t('st_idle'), standby: t('st_standby'), working: t('st_working'), done: t('st_done') });
