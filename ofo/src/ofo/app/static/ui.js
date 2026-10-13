@@ -579,9 +579,10 @@
       if (!x) return `<span class="hs na">${esc(n)}: ${t('hl_untested')}</span>`;
       if (x.last_error) return `<span class="hs bad" title="${esc(x.last_error)}">${esc(n)}: ✘ ${esc(x.last_error.slice(0, 60))}</span>`;
       return `<span class="hs ok">${esc(n)}: ✔ ${x.last_n == null ? '' : x.last_n + ' ' + t('web_found')}</span>`; };
+    const cfgErr = d.config_error ? `<div class="hs bad">${esc(d.config_error)}</div>` : '';
     const miss = (d.missing || []).map(m => `<div class="hs bad">${esc(m.name)}: ${t('hl_missing')} — <code>${esc(m.hint)}</code></div>`).join('');
     const arT = ar.installed === null || ar.installed === undefined ? t('hl_ar_check') : ar.installed ? t('hl_ar_yes') : t('hl_ar_no');
-    const html = `<div class="hline">${(d.channels || []).map(row).join('')}</div>${miss}<div class="hs na">Agent Reach: ${arT}</div>`;
+    const html = cfgErr + `<div class="hline">${(d.channels || []).map(row).join('')}</div>${miss}<div class="hs na">Agent Reach: ${arT}</div>`;
     if ($('#webhealth').dataset.k !== html) { $('#webhealth').dataset.k = html; $('#webhealth').innerHTML = html; }
   }
   async function pollWeb() {
@@ -599,8 +600,11 @@
         : x.phase === 'saved' ? `💾 ${t('web_saved')}: ${link(x.url, x.msg || x.url)}` : `⚠ ${esc(x.msg)}`;
       return `<div class="w ${x.phase}">${when} ${who} ${body}</div>`;
     }).join('') : `<div class="w">${t('web_empty')}</div>`;
+    const big = $('#webbig'); if (big && !big.hidden) { $('#webbigbody').innerHTML = box.innerHTML; $('#webbigbody').scrollTop = $('#webbigbody').scrollHeight; $('#webbighealth').innerHTML = $('#webhealth').innerHTML; }
     if (atEnd) box.scrollTop = box.scrollHeight;
   }
+  $('#webexpand').onclick = () => { $('#webbig').hidden = false; webKey = ''; pollWeb(); };
+  $('#webclose').onclick = () => { $('#webbig').hidden = true; };
   setInterval(pollWeb, 2000); pollWeb();
 
   // ---------- agents at work ----------

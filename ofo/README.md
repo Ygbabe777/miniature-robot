@@ -216,3 +216,6 @@ minimo (le tue chiavi non arrivano mai al processo figlio), timeout, tetto sull'
 
 ## SSRN: testo completo
 SSRN non offre un'API e i suoi PDF richiedono login e accettazione dei termini: scaricarli in automatico con un robot li aggira e viola le regole del sito, quindi OFO non lo fa. Per ogni articolo SSRN che sceglie, lo Scout cerca invece una **copia gratuita legale** dello stesso lavoro (Semantic Scholar `openAccessPdf`, e Unpaywall se imposti `OFO_UNPAYWALL_EMAIL` con la TUA email: non viene mai presa da altrove) e la scarica da qualsiasi indirizzo https pubblico (niente IP/localhost, solo PDF veri, tetto di dimensione). Se non esiste, salva l'abstract e mette l'articolo nell'elenco "da scaricare a mano": scaricalo con il tuo account SSRN e mettilo in `ideas/` — l'autopilota lo legge da solo (anche senza Obsidian).
+
+## Diagnosi delle fonti web
+`python scripts/check_sources.py` prova ogni canale da questo PC e stampa l'errore esatto (nessuna chiave nell'output): controlla `config/sources.json` (un `True` maiuscolo o una virgola in più lo rende JSON non valido: ora lo segnala invece di bloccarsi), quali programmi sono installati (`yt-dlp`, `mcporter`...) e una ricerca di prova per canale. Il pannello "Internet in tempo reale" ha il tasto ⤢ per una vista grande.

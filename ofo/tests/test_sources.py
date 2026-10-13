@@ -257,3 +257,23 @@ def test_open_pdf_download_refuses_unsafe_addresses():
             download_open_pdf(bad, fetch=lambda u, **k: b"%PDF-1")
     with pytest.raises(WebError):
         download_open_pdf("https://example.org/a.pdf", fetch=lambda u, **k: b"<html>")
+
+
+def test_bad_sources_json_is_reported_not_fatal(tmp_path):
+    from ofo.sources import build_channels, config_problem
+    f = tmp_path / "s.json"
+    f.write_text('{"channels": {"youtube": True}}')
+    assert "not valid JSON" in config_problem(f)
+    assert [c.name for c in build_channels(f, runner=lambda a: "")] and True       # falls back to the defaults, no exception
+    f.write_text('{"channels": {"youtube": true}}')
+    assert config_problem(f) == ""
+
+
+def test_child_environment_never_carries_api_keys(monkeypatch):
+    import ofo.sources as src
+    seen = {}
+    monkeypatch.setenv("OFO_LLM_API_KEY", "secret"); monkeypatch.setenv("APPDATA", "C:\\x")
+    monkeypatch.setattr(src.shutil, "which", lambda x: "/bin/echo")
+    monkeypatch.setattr(src.subprocess, "run", lambda argv, **kw: (seen.update(kw["env"]) or type("P", (), {"stdout": b"ok", "stderr": b"", "returncode": 0})()))
+    src.run_cli(["yt-dlp", "--version"])
+    assert "OFO_LLM_API_KEY" not in seen and seen.get("APPDATA") == "C:\\x"

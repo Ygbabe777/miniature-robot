@@ -98,7 +98,10 @@ def run_cli(argv: list[str], timeout: int = 60, max_bytes: int = MAX_OUT, runner
         return runner(argv)[:max_bytes]
     if shutil.which(argv[0]) is None:
         raise SourceError(f"{exe} is not installed")
-    env = {k: os.environ[k] for k in ("PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "LANG", "TEMP", "TMP") if k in os.environ}
+    # a short allow-list of variables the tools need to run (Windows needs several more than Linux); never API keys
+    env = {k: os.environ[k] for k in ("PATH", "PATHEXT", "HOME", "USERPROFILE", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC",
+                                      "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "USERNAME", "LANG", "TEMP", "TMP", "TMPDIR",
+                                      "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE") if k in os.environ}
     try:
         p = subprocess.run(argv, capture_output=True, timeout=timeout, env=env, shell=False)
     except subprocess.TimeoutExpired as e:
@@ -308,10 +311,21 @@ class SocialCLI(Channel):
         return cand.get("inline_text", cand.get("abstract", ""))
 
 
+def config_problem(path: str | Path | None) -> str:
+    """'' when config/sources.json is readable; otherwise a plain message (typically a typo such as True instead of true)."""
+    if not path or not Path(path).exists():
+        return ""
+    try:
+        user = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        return "" if isinstance(user, dict) else "the file must contain a JSON object { ... }"
+    except ValueError as e:
+        return f"config/sources.json is not valid JSON ({e}). Use lowercase true/false, double quotes, no trailing commas."
+
+
 def load_config(path: str | Path | None) -> dict:
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    if path and Path(path).exists():
-        user = json.loads(Path(path).read_text())
+    if path and Path(path).exists() and not config_problem(path):
+        user = json.loads(Path(path).read_text(encoding="utf-8-sig"))
         cfg["channels"].update(user.get("channels", {}))
         if user.get("rss_feeds") is not None:
             cfg["rss_feeds"] = user["rss_feeds"]

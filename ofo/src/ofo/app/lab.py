@@ -39,7 +39,7 @@ from ..accounts import demo_accounts, load_accounts
 from ..data import resample
 from ..trades import extract_trades, summarize
 from ..scout import Scout
-from ..sources import agent_reach_status, missing_channels
+from ..sources import agent_reach_status, config_problem, missing_channels
 from ..strategies import INDICATOR_HELP, TEMPLATES
 
 
@@ -458,7 +458,7 @@ class Lab:
         sc = self.scout()
         return {"total": total, "running": self._scout_running, "health": sc.state.get("health", {}),
                 "channels": ["arxiv", "semanticscholar", "ssrn"] + [c.name for c in sc.channels],
-                "missing": self._missing_channels(), "agent_reach": self._agent_reach(), "items": [x for x in items if x["i"] >= after][-limit:]}
+                "missing": self._missing_channels(), "config_error": config_problem("config/sources.json"), "agent_reach": self._agent_reach(), "items": [x for x in items if x["i"] >= after][-limit:]}
 
     def scout_state(self) -> dict:
         st = self.scout().public_state(self._scout_running)
