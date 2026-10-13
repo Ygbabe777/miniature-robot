@@ -278,3 +278,20 @@ def test_blocked_families_have_no_templates_and_effective_trials_are_reported():
     assert effective_trials(s, list(range(120))) < 3
     ind = {i: pd.Series(rng.normal(size=120), index=range(120)) for i in range(10)}
     assert effective_trials(ind, list(range(120))) > 6
+
+
+def test_the_whole_chain_paper_to_queue_works_with_a_model_that_omits_the_card(tmp_path):
+    """file in ideas/ -> Researcher (LLM) -> proposal -> near-duplicate / budget checks -> pending queue, with an incomplete card."""
+    from ofo.app.lab import Lab
+    from test_knowledge import Fake
+    csv = tmp_path / "b.csv.gz"; synth(n_sessions=40, seed=2).to_csv(csv)
+    prop = {"name": "ORB 15-45", "template": "orb", "ranges": {"or_minutes": {"min": 15, "max": 45, "step": 5}}, "timeframes": ["5min", "15min"],
+            "rationale": "MECCANISMO ... EVIDENZA ... QUANDO NON FUNZIONA ..."}
+    lab = Lab(str(csv), data_dir=str(tmp_path / "d"), ideas_dir=str(tmp_path / "i"), llm={"researcher": Fake({"strategies": [prop], "concepts": ["opening range"]})})
+    (lab.ideas / "p.txt").write_text("Opening range breakout after the cash open tends to continue. " * 30)
+    assert lab.researcher_status()["unread"] == 1
+    lab._ingest_now()
+    names = [v["spec"].name for v in lab.pending.values()]
+    assert names == ["ORB 15-45"] and next(iter(lab.pending.values()))["spec"].hypothesis_missing
+    st = lab.researcher_status()
+    assert st["unread"] == 0 and st["recent"][-1]["proposals"] == 1 and st["queue"] == 1

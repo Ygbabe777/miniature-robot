@@ -127,7 +127,8 @@ class ResearchLoop:
             for s in specs:
                 if self.enqueue(s):
                     added += 1
-                    self.events.emit("researcher", "proposal", f"{s.name}: {s.template}, {s.n_candidates} candidates",
+                    self.events.emit("researcher", "proposal", f"{s.name}: {s.template}, {s.n_candidates} candidates" +
+                                     (f" (scheda ipotesi incompleta: {len(s.hypothesis_missing)} voci mancanti)" if s.hypothesis_missing else ""),
                                      {"rationale": s.rationale, "source": s.source})
             for r in rejected:
                 self.events.emit("researcher", "rejected", r["reason"][:200])

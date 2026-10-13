@@ -98,8 +98,9 @@ def build(slug: str, report: dict, extra: dict | None = None) -> dict | None:
         "perche": (why_approved(fr, rid) if approved else
                    [f"Respinta alla barriera {gt['first_failed']['id']} ({gt['first_failed']['name']}): {gt['first_failed']['reason']}"] if gt.get("first_failed") else []),
         "condizioni_invalidanti": invalidation(fr, rid),
-        "portafoglio": fr.get("portfolio"), "avvisi": [ev["ruleset"]["warning"]] if ev["ruleset"]["warning"] else [],
-        "limiti": ev["limits"],
+        "portafoglio": fr.get("portfolio"), "avvisi": ([ev["ruleset"]["warning"]] if ev["ruleset"]["warning"] else []) +
+                  ([f"Scheda ipotesi incompleta: il Researcher non ha dichiarato {', '.join(report['hypothesis_missing'])}."] if report.get("hypothesis_missing") else []),
+        "limiti": ev["limits"], "scheda_ipotesi": report.get("hypothesis") or {}, "scheda_mancante": report.get("hypothesis_missing") or [],
         "verbale": board_review(report),
     }
     if extra:

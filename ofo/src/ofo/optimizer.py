@@ -532,7 +532,8 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
     pair = lambda ser: [[str(d)[:10], float(v)] for d, v in ser.items()]
     goal_days = judge_th.eval_days if judge_th is not None else 5
     goal_rate = judge_th.min_pass_rate if judge_th is not None else 0.30
-    base_report = {"name": spec.name, "template": spec.template, "family": family, "hypothesis": spec.hypothesis, "rationale": spec.rationale,
+    base_report = {"name": spec.name, "template": spec.template, "family": family, "hypothesis": spec.hypothesis,
+                   "hypothesis_missing": list(spec.hypothesis_missing), "rationale": spec.rationale,
                    "source": spec.source, "n_candidates": len(cands), "surface": surf, "base_contracts": contracts, "search": slog, "trials": trial_block,
                    "wf_plan": plan, "n_locked_days": len(sessions) - len(dev_days), "experiment_id": eid, "dataset_fp": dfp,
                    "engine_version": ENGINE_VERSION, "config_version": cfg_v, "code_version": code_v,

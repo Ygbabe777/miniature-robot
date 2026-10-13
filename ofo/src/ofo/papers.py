@@ -98,7 +98,9 @@ def propose_specs(llm, text: str, source: str = "", max_chunks: int = 6, languag
             for p in proposals if isinstance(proposals, list) else []:
                 try:
                     p = {**p, "source": p.get("source") or source}
-                    spec = from_dict(p, require_card=True)
+                    # attempt 1 is strict (to get the repair round); attempt 2 accepts an incomplete card and flags it: a refused proposal
+                    # produces nothing, while the statistical gates decide the strategy's fate anyway
+                    spec = from_dict(p, require_card=True if attempt == 1 else "lenient")
                 except (SpecError, TypeError, AttributeError) as e:
                     if attempt == 1 and isinstance(e, SpecError) and "hypothesis" in str(e):
                         fixable.append((p, str(e)))             # the model gets ONE chance to fix what the validator refused

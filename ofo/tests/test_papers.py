@@ -116,6 +116,31 @@ def test_missing_hypothesis_card_gets_one_repair_round():
     specs, rejected = propose_specs(llm, "some paper text", source="Paper X")
     assert len(specs) == 1 and specs[0].hypothesis["previsione_falsificabile"] and rejected == []
     assert len(llm.calls) == 2 and "hypothesis" in llm.calls[1][-1]["content"] and "REJECTED" in llm.calls[1][-1]["content"]
+    # still incomplete after the repair: the strategy is NOT thrown away (that left the lab with no proposals at all); it is accepted,
+    # the card is flagged as incomplete, nothing is invented, and the deterministic gates decide its fate
     llm2 = FakeLLM([json.dumps({"strategies": [incomplete]})] * 2)
     specs2, rej2 = propose_specs(llm2, "some paper text", source="Paper X")
-    assert specs2 == [] and "hypothesis" in rej2[0]["reason"]             # still incomplete after the repair: refused, never executed
+    assert len(specs2) == 1 and rej2 == [] and len(specs2[0].hypothesis_missing) == 10
+    assert all(v == "(non dichiarato dal Researcher)" for v in specs2[0].hypothesis.values())
+    partial = {**GOOD, "hypothesis": {**CARD, "segnale": "x", "criterio_rigetto": ""}}
+    specs3, _ = propose_specs(FakeLLM([json.dumps({"strategies": [partial]})] * 2), "some paper text", source="Paper X")
+    assert specs3[0].hypothesis_missing == ["segnale", "criterio_rigetto"] and specs3[0].hypothesis["regola_ingresso"] == CARD["regola_ingresso"]
+
+
+def test_a_weak_model_that_ignores_the_card_still_gives_the_lab_strategies_to_test(tmp_path):
+    """The reported regression: after the hypothesis card became mandatory the Researcher proposed nothing."""
+    from ofo.agents.loop import ResearchLoop
+    from ofo.backtest import MNQ
+    from ofo.events import EventLog
+    from ofo.prop import PRESETS
+    from ofo.registry import TrialRegistry
+    from test_research import synth
+    no_card = {k: v for k, v in GOOD.items() if k != "hypothesis"}
+    ideas = tmp_path / "ideas"; ideas.mkdir()
+    (ideas / "p.txt").write_text("Opening range breakout after the cash open tends to continue " * 20)
+    ev = EventLog(tmp_path / "e.jsonl")
+    loop = ResearchLoop(synth(n_sessions=40, seed=1), MNQ, PRESETS["50k"], TrialRegistry(tmp_path / "r.json"),
+                        FakeLLM([json.dumps({"strategies": [no_card]})] * 2), ev, tmp_path / "w")
+    assert loop.ingest_ideas(ideas) == 1
+    assert any(e["type"] == "proposal" and "incompleta" in e["message"] for e in ev.tail())
+    assert loop.ingest_log[-1]["proposals"] == 1

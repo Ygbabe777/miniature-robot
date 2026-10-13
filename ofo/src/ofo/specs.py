@@ -35,6 +35,7 @@ class StrategySpec:
     source: str = ""
     hypothesis: dict = field(default_factory=dict)      # the hypothesis card (CARD_FIELDS)
     max_configs: int | None = None                      # cap on distinct parameter combinations tested (None: the template's cap)
+    hypothesis_missing: list = field(default_factory=list)   # card fields the proposer left out (flagged to the owner, never invented)
 
     @property
     def family(self) -> str:
@@ -94,7 +95,15 @@ def check_card(card) -> dict:
     return {k: str(card[k]).strip()[:600] for k in CARD_FIELDS}
 
 
-def from_dict(d: dict, allow_control: bool = False, require_card: bool = False) -> StrategySpec:
+def lenient_card(card) -> tuple[dict, list]:
+    """A card with what the proposer wrote; every missing or too-short field becomes an explicit placeholder and is listed. Nothing is invented."""
+    card = card if isinstance(card, dict) else {}
+    missing = [k for k in CARD_FIELDS if len(str(card.get(k, "")).strip()) < 12]
+    return {k: (str(card[k]).strip()[:600] if k not in missing else (str(card.get(k, "")).strip() or "(non dichiarato dal Researcher)")) for k in CARD_FIELDS}, missing
+
+
+def from_dict(d: dict, allow_control: bool = False, require_card=False) -> StrategySpec:
+    """require_card: False (optional), True/"strict" (all 10 fields or SpecError), "lenient" (incomplete cards are accepted and flagged)."""
     if not isinstance(d, dict):
         raise SpecError("spec must be an object")
     tname = d.get("template")
@@ -112,10 +121,14 @@ def from_dict(d: dict, allow_control: bool = False, require_card: bool = False) 
     bad = [x for x in tfs if x not in TIMEFRAMES]
     if bad:
         raise SpecError(f"timeframes {bad} not allowed; use {list(TIMEFRAMES)}")
-    card = check_card(d.get("hypothesis")) if (require_card or d.get("hypothesis")) else {}
+    missing: list = []
+    if require_card == "lenient":
+        card, missing = lenient_card(d.get("hypothesis"))
+    else:
+        card = check_card(d.get("hypothesis")) if (require_card or d.get("hypothesis")) else {}
     mc = d.get("max_configs")
     spec = StrategySpec(str(d.get("name") or tname), tname, ranges, list(tfs),
-                        str(d.get("rationale", "")), str(d.get("source", "")), card, int(mc) if mc else None)
+                        str(d.get("rationale", "")), str(d.get("source", "")), card, int(mc) if mc else None, missing)
     n = len(spec.combos()) * len(spec.timeframes)
     if n == 0:
         raise SpecError("no valid parameter combination")
