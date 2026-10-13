@@ -463,6 +463,18 @@
       <table class="rrt"><tr><th></th><th>${t('tm_size')}</th><th>${t('tm_min')}</th><th>${t('tm_med')}</th><th>${t('tm_range')}</th><th>${t('tm_hist')}</th><th>${t('tm_within', { d: tm.window_days })}</th></tr>${rows}</table>
       <div class="sub">${t('tm_note')}</div></div>`;
   }
+  function tfBox(bt) {
+    if (!bt || !bt.timeframes) return '';
+    const names = Object.keys(bt.timeframes), accts = [...new Set(names.flatMap(k => Object.keys(bt.timeframes[k].pass_rate || {})))];
+    const rows = names.map(k => {
+      const v = bt.timeframes[k], best = k === bt.best_tf;
+      return `<tr class="${best ? 'best' : ''}"><th>${esc(k)}${best ? ' ★' : ''}</th><td>${v.sharpe.toFixed(3)}</td><td>${v.median_sharpe.toFixed(3)}</td><td class="${v.net_pnl >= 0 ? 'pos' : 'neg'}">${money(v.net_pnl)}</td>
+        <td>${pct(v.positive_days)}</td>${accts.map(a => `<td>${v.pass_rate[a] == null ? '–' : pct(v.pass_rate[a])}</td>`).join('')}<td>${esc(Object.entries(v.best_params).map(([a, b]) => a + '=' + b).join(' '))}</td></tr>`;
+    }).join('');
+    return `<div class="judge"><b>${t('tfs_title')}</b><div class="sub">${t('tfs_sub', { tf: esc(bt.best_tf || '–') })}</div>
+      <table class="rrt"><tr><th></th><th>Sharpe</th><th>${t('tfs_med')}</th><th>P&L</th><th>${t('tfs_pos')}</th>${accts.map(a => `<th>${t('tfs_pass', { a, d: bt.window_days })}</th>`).join('')}<th>${t('tfs_params')}</th></tr>${rows}</table>
+      <div class="sub">${t('tfs_note')}</div></div>`;
+  }
   function rrBox(ex) {
     if (!ex) return '';
     const stops = [...new Set(ex.grid.map(c => c.stop_atr))], rrs = [...new Set(ex.grid.map(c => c.rr))];
@@ -495,6 +507,7 @@
         ${L.p_pass != null ? `<div>${t('d_pass')}: <b>${pct(L.p_pass)}</b> (${t('d_interval')} ${pct(L.p_pass_ci95[0])}–${pct(L.p_pass_ci95[1])}) · ${t('d_bust')}: <b>${pct(L.p_bust)}</b> · ${t('d_pnl_block')}: <b class="${L.pnl >= 0 ? 'pos' : 'neg'}">${money(L.pnl)}</b></div>` : ''}</div>
       <div class="grid">${kpi(t('kp_med'), num(sur.median_sharpe, 3))}${kpi(t('kp_pos'), pct(sur.frac_positive))}${kpi(t('kp_plat'), num(sur.plateau_ratio, 2))}${kpi(t('kp_rob'), sur.robust ? t('yes') : t('no'), sur.robust ? 'pos' : 'neg')}${kpi(t('kp_wf'), money(rep.wf_oos_pnl), rep.wf_oos_pnl >= 0 ? 'pos' : 'neg')}</div>
       ${d.best_params ? `<div class="sub">${t('d_best', { p: esc(JSON.stringify(d.best_params)), n: rep.n_candidates })}</div>` : ''}
+      ${tfBox(rep.by_timeframe)}
       ${timingBox(rep.locked && rep.locked.timing ? rep.locked.timing : rep.timing)}
       ${rrBox(rep.exits)}
       <div class="seg" id="seg">${keys.map(k => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${title[k]}</button>`).join('')}</div>
@@ -543,9 +556,21 @@
 
   // ---------- live web feed: where the Researcher is searching / reading right now ----------
   let webKey = '';
+  function renderHealth(d) {
+    const h = d.health || {}, ar = d.agent_reach || {};
+    const row = n => { const x = h[n];
+      if (!x) return `<span class="hs na">${esc(n)}: ${t('hl_untested')}</span>`;
+      if (x.last_error) return `<span class="hs bad" title="${esc(x.last_error)}">${esc(n)}: ✘ ${esc(x.last_error.slice(0, 60))}</span>`;
+      return `<span class="hs ok">${esc(n)}: ✔ ${x.last_n == null ? '' : x.last_n + ' ' + t('web_found')}</span>`; };
+    const miss = (d.missing || []).map(m => `<div class="hs bad">${esc(m.name)}: ${t('hl_missing')} — <code>${esc(m.hint)}</code></div>`).join('');
+    const arT = ar.installed === null || ar.installed === undefined ? t('hl_ar_check') : ar.installed ? t('hl_ar_yes') : t('hl_ar_no');
+    const html = `<div class="hline">${(d.channels || []).map(row).join('')}</div>${miss}<div class="hs na">Agent Reach: ${arT}</div>`;
+    if ($('#webhealth').dataset.k !== html) { $('#webhealth').dataset.k = html; $('#webhealth').innerHTML = html; }
+  }
   async function pollWeb() {
     let d; try { d = await api('/api/web'); } catch (e) { return; }
     $('#web-dot').className = 'wdot' + (d.running ? ' on' : '');
+    renderHealth(d);
     const key = d.total + '|' + d.running; if (key === webKey) return; webKey = key;
     const box = $('#webfeed'), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
     const link = (u, txt) => /^https?:\/\//.test(u || '') ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(txt)}</a>` : esc(txt);

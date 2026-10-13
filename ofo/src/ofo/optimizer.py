@@ -248,11 +248,32 @@ def guarded_full_series(bars, cand, exit, contract, contracts, slippage_ticks, d
     return s_full, rc, pos_full, full_tf[tf]
 
 
+def timeframe_study(cands, series, rows, dev_days, contract_accounts, contracts, goal_days, goal_rate) -> dict:
+    """Best version of the strategy on EACH timeframe (development data, entry-only exits), the days-to-pass of that
+    version, and which timeframe wins. The winner is the one with the highest development Sharpe: the same rule that picks
+    the final candidate, so the table and the study can never disagree."""
+    out = {}
+    for tf in TIMEFRAMES:
+        idx = [i for i, c in enumerate(cands) if c["tf"] == tf]
+        if not idx:
+            continue
+        bi = max(idx, key=lambda i: rows[i]["sharpe"])
+        pnl = series[bi].reindex(dev_days).fillna(0.0).to_numpy()
+        tm = timing_report(pnl, contract_accounts, contracts, goal_days, goal_rate, "development")
+        out[tf] = {"best_params": {k: v for k, v in cands[bi]["params"].items()}, "sharpe": float(rows[bi]["sharpe"]),
+                   "net_pnl": float(pnl.sum()), "positive_days": float((pnl > 0).mean()), "n_combos": len(idx),
+                   "median_sharpe": float(np.median([rows[i]["sharpe"] for i in idx])),
+                   "pass_rate": {a: r["p_pass_within"].get(str(goal_days)) for a, r in tm["accounts"].items()},
+                   "min_days": {a: r["min_days_seen"] for a, r in tm["accounts"].items()}}
+    best = max(out, key=lambda k: out[k]["sharpe"]) if out else None
+    return {"timeframes": out, "best_tf": best, "window_days": goal_days, "in_sample": True}
+
+
 def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules: PropRules,
               registry: TrialRegistry, contracts: int = 2, slippage_ticks: float = 1.0,
               oos_fraction: float = 0.25, train_days: int = 120, test_days: int = 20,
               surface_th: SurfaceThresholds | None = None, progress=None, dedupe: bool = False,
-              market: str | None = None, judge_th=None) -> dict:
+              market: str | None = None, judge_th=None, all_timeframes: bool = False) -> dict:
     """Sweep every combination of `spec`, judge the surface, walk-forward the whole procedure, and only if everything
     survives take ONE look at the locked block.
 
@@ -260,6 +281,8 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     the exit study, the nested walk-forward, the quality checks and the beta check receive development bars only. The
     locked block is first touched, for the single final candidate, inside the Judge's look."""
     th = surface_th or SurfaceThresholds()
+    if all_timeframes and list(spec.timeframes) != list(TIMEFRAMES):        # the Optimizer always tries EVERY timeframe
+        spec = dataclasses.replace(spec, timeframes=list(TIMEFRAMES))
     say = progress or (lambda agent, state, msg="": None)
     key = _session_key(bars)
     sessions = sorted(key.unique())
@@ -298,12 +321,13 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     goal_days = judge_th.eval_days if judge_th is not None else 5
     goal_rate = judge_th.min_pass_rate if judge_th is not None else 0.30
     timing = timing_report(final_dev.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, goal_rate, "development")
+    by_tf = timeframe_study(cands, series, rows, dev_days, {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, goal_rate)
     quality = None
     if surf["robust"]:
         quality = quality_checks(tfs_dev, cands[best_i], best_exit, contract, contracts, slippage_ticks, dev_days, th)
     pair = lambda ser: [[str(d)[:10], float(v)] for d, v in ser.items()]
     report = {"name": spec.name, "template": spec.template, "rationale": spec.rationale,
-              "source": spec.source, "n_candidates": len(cands), "surface": surf, "quality": quality, "timing": timing,
+              "source": spec.source, "n_candidates": len(cands), "surface": surf, "quality": quality, "timing": timing, "by_timeframe": by_tf,
               "wf_kind": wf_kind, "wf_oos_days": len(wf), "wf_oos_pnl": wf_pnl,
               "wf_oos_sharpe_daily": sharpe(wf) if len(wf) > 2 else 0.0,
               "n_locked_days": len(sessions) - len(dev_days), "wf_oos_series": wf,

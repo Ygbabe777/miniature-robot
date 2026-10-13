@@ -180,3 +180,8 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 @keyframes rpulse{50%{transform:scale(1.18)}}
 .tabs button{position:relative}
 .tabs button .rdot{top:3px;right:3px}
+
+#webhealth{font:10.5px ui-monospace,Consolas,monospace;margin-bottom:4px}
+#webhealth .hs{display:inline-block;margin:1px 8px 1px 0}#webhealth .ok{color:#3ddc97}#webhealth .bad{color:#ff5c6c}#webhealth .na{color:#8a8a94}
+#webhealth div.hs{display:block}
+.rrt tr.best th,.rrt tr.best td{background:#c8ff3a1a}

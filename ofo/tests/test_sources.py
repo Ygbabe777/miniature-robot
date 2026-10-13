@@ -183,3 +183,37 @@ def test_scout_emits_live_web_feed(tmp_path):
     assert ("search", "arxiv") in phases and ("search", "fake") in phases and ("found", "fake") in phases
     feed = [e for e in ev.tail() if e["data"].get("phase") == "found" and e["data"]["src"] == "fake"][0]["data"]
     assert feed["n"] == 1 and feed["items"][0]["url"] == "https://example.com/a"
+
+
+def test_channel_health_and_missing_tools(tmp_path):
+    from ofo.scout import Scout
+    from ofo.sources import missing_channels, Channel
+    import ofo.scout as scout_mod
+
+    class Boom(Channel):
+        name = "boom"
+        def search(self, query, n=5):
+            from ofo.sources import SourceError
+            raise SourceError("no network")
+    scout_mod.search_arxiv = lambda q, fetch=None: []
+    sc = Scout(tmp_path / "s", tmp_path / "i", None, None, fetch=object(), channels=[Boom()], use_semantic_scholar=False, use_ssrn=False)
+    sc._candidates(["nasdaq futures"])
+    h = sc.public_state()["health"]
+    assert h["arxiv"]["last_error"] == "" and h["boom"]["last_error"] == "no network" and h["boom"]["fail"] == 1
+    cfg = tmp_path / "c.json"
+    cfg.write_text('{"channels": {"exa": true, "github": true}}')
+    miss = missing_channels(cfg, runner=None)
+    import shutil
+    assert (not shutil.which("mcporter")) == any(m["name"] == "exa" for m in miss)
+
+
+def test_agent_thinking_message_names_the_topic():
+    from ofo.agents.base import Agent
+    from ofo.events import EventLog
+    import tempfile, pathlib
+    ev = EventLog(pathlib.Path(tempfile.mkdtemp()) / "e.jsonl")
+    class L:
+        def chat(self, m, temperature=0): return '{"name": "VWAP fade"}'
+    Agent("researcher", L(), "sys", lambda d: d, ev).run("Paper: opening range breakout on NQ futures")
+    msgs = [e["message"] for e in ev.tail()]
+    assert any(m.startswith("thinking: Paper: opening range") for m in msgs) and any("VWAP fade" in m for m in msgs)

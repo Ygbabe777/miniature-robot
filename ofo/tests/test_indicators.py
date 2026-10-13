@@ -56,7 +56,8 @@ def test_lab_indicator_endpoint_windowing_and_gaps(tmp_path):
     csv = tmp_path / "b.csv.gz"; synth(n_sessions=40, seed=8).to_csv(csv)
     lab = Lab(str(csv), data_dir=str(tmp_path / "d"), ideas_dir=str(tmp_path / "i"))
     spec = from_dict({"name": "ORB ind", "template": "orb", "ranges": {"or_minutes": [15, 30]}, "timeframes": ["15min"], "rationale": "t"})
-    lab.loop().process(spec)
+    lp = lab.loop(); lp.all_timeframes = False                         # this test is about windowing, not about the timeframe search
+    lp.process(spec)
     out = lab.indicators("ORB_ind")
     assert out["tf"] == "15min" and out["help"]["en"] and len(out["series"]) == 2
     pts = out["series"][0]["points"]

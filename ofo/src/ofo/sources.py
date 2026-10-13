@@ -348,3 +348,21 @@ def agent_reach_status(runner=None) -> dict:
                                                 for k, v in chans.items() if isinstance(v, dict)}}
     except (SourceError, ValueError):
         return {"installed": shutil.which("agent-reach") is not None, "channels": {}}
+
+
+HINTS = {"exa": "install Agent Reach (it provides `mcporter`): pipx install https://github.com/Panniantong/agent-reach/archive/main.zip && agent-reach install --env=auto",
+         "youtube": "install yt-dlp (pip install yt-dlp)", "reddit": "install Agent Reach's rdt-cli and log in", "twitter": "install Agent Reach's twitter-cli and log in"}
+
+
+def missing_channels(config_path: str | Path | None = None, runner=None) -> list[dict]:
+    """Channels the owner switched ON in config/sources.json whose tool is not installed on this computer."""
+    cfg = load_config(config_path)
+    on = cfg["channels"]
+    out = []
+    for k, cls in (("exa", ExaSearch), ("youtube", YouTube)):
+        if on.get(k) and not cls(runner=runner).available():
+            out.append({"name": k, "hint": HINTS[k]})
+    for k in ("reddit", "twitter"):
+        if on.get(k) and not SocialCLI(k, runner=runner).available():
+            out.append({"name": k, "hint": HINTS[k]})
+    return out

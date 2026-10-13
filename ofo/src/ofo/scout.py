@@ -67,6 +67,15 @@ class Scout:
         if self.events:
             self.events.emit("scout", kind, msg, data)
 
+    def _hit(self, name: str, n: int | None = None, err: str | None = None) -> None:
+        """Health of every source, so the owner can see which ones really work from THIS computer."""
+        h = self.state.setdefault("health", {}).setdefault(name, {"ok": 0, "fail": 0, "last_n": None, "last_error": "", "last_at": None})
+        if err is None:
+            h["ok"] += 1; h["last_n"] = n; h["last_error"] = ""
+        else:
+            h["fail"] += 1; h["last_error"] = err[:160]
+        h["last_at"] = self.now()
+
     def _web(self, phase: str, src: str, msg: str = "", **data) -> None:
         """One line of the live 'where is the Researcher looking' feed: phase = search | found | read | saved | skip | error."""
         self._emit("web", msg, {"phase": phase, "src": src, **data})
@@ -124,18 +133,19 @@ class Scout:
             try:
                 batch = search_arxiv(q, self.fetch)
                 self.counts["arxiv"] += len(batch)
+                self._hit("arxiv", len(batch))
                 self._web("found", "arxiv", q, query=q, n=len(batch), items=self._items(batch))
                 if self.use_s2:
                     self._web("search", "semanticscholar", q, query=q)
-                    b2 = search_semantic_scholar(q); self.counts["semanticscholar"] += len(b2); batch += b2
+                    b2 = search_semantic_scholar(q); self.counts["semanticscholar"] += len(b2); batch += b2; self._hit("semanticscholar", len(b2))
                     self._web("found", "semanticscholar", q, query=q, n=len(b2), items=self._items(b2))
                 if self.use_ssrn:
                     self._web("search", "ssrn", q, query=q)
-                    b3 = search_ssrn(q, self.fetch); self.counts["ssrn"] += len(b3); batch += b3
+                    b3 = search_ssrn(q, self.fetch); self.counts["ssrn"] += len(b3); batch += b3; self._hit("ssrn", len(b3))
                     self._web("found", "ssrn", q, query=q, n=len(b3), items=self._items(b3))
             except WebError as e:
                 self._emit("error", f"{q}: {e}")
-                self._web("error", "arxiv", f"{q}: {e}", query=q)
+                self._web("error", "arxiv", f"{q}: {e}", query=q); self._hit("arxiv", err=str(e))
                 continue
             for ch in self.channels:                             # the extra channels fail alone: one dead source never stops the search
                 self._web("search", ch.name, q, query=q)
@@ -143,8 +153,9 @@ class Scout:
                     more = ch.search(q)
                 except (SourceError, WebError) as e:
                     self._emit("error", f"{ch.name}: {e}")
-                    self._web("error", ch.name, str(e)[:160], query=q)
+                    self._web("error", ch.name, str(e)[:160], query=q); self._hit(ch.name, err=str(e))
                     continue
+                self._hit(ch.name, len(more))
                 self._web("found", ch.name, q, query=q, n=len(more), items=self._items(more))
                 self.counts[ch.name] = self.counts.get(ch.name, 0) + len(more)
                 batch += more
@@ -251,7 +262,7 @@ class Scout:
     def public_state(self, running: bool = False) -> dict:
         papers = sorted(self.state["papers"].items(), key=lambda kv: -kv[1].get("found", 0))
         a = self.state["auto"]; last = self.state["last_run"]
-        return {"running": running, "auto": a, "last_run": last,
+        return {"running": running, "auto": a, "health": self.state.get("health", {}), "last_run": last,
                 "next_run": (last["at"] + a["minutes"] * 60) if (a["enabled"] and last) else None,
                 "queries_done": len(self.state["queries"]), "queries_total": len(self.all_topics),
                 "papers": [{"id": k, **{x: v.get(x) for x in ("title", "url", "published", "why", "status")}} for k, v in papers[:10]]}

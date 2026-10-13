@@ -41,7 +41,7 @@ def dev_view(r: dict) -> str:
     keep = {"surface": r["surface"], "quality": r["quality"], "wf": (r["wf_kind"], r["wf_oos_days"], round(r["wf_oos_pnl"], 6)),
             "cut": r["series"]["cut"], "best": r["series"]["best_params"], "exit": r["series"]["exit"], "exits": r["exits"],
             "dev_best": r["series"]["dev_best"], "wf_series": r["series"]["wf_oos"],
-            "detrended": r["surface_detrended"], "timing": r["timing"]}
+            "detrended": r["surface_detrended"], "timing": r["timing"], "by_tf": r["by_timeframe"]}
     return json.dumps(keep, sort_keys=True, default=str)
 
 
@@ -242,3 +242,14 @@ def test_study_dedupe_through_the_loop_skips_a_repeat(tmp_path):
     lp.done_specs.clear()                                                                          # even if the loop forgot
     second = lp.process(spec, 0)
     assert first["verdict"] != "DUPLICATE" and second["verdict"] == "DUPLICATE" and reg.n_trials == n
+
+
+def test_every_timeframe_is_tried_and_the_final_version_is_the_best_timeframe(tmp_path):
+    from ofo.strategies import TIMEFRAMES
+    bars = synth(n_sessions=200, drift_ar=0.9, seed=7)
+    rep = run_study(bars, from_dict(SPEC), MNQ, PRESETS["50k"], TrialRegistry(tmp_path / "r.db"), all_timeframes=True)
+    by = rep["by_timeframe"]
+    assert set(by["timeframes"]) == set(TIMEFRAMES)                         # the spec asked for two: all four were tested
+    assert rep["n_candidates"] == 5 * len(TIMEFRAMES)                        # and every one of them counts as a trial
+    assert by["best_tf"] == rep["series"]["best_params"]["tf"]               # table and final candidate agree
+    assert by["timeframes"][by["best_tf"]]["sharpe"] == max(v["sharpe"] for v in by["timeframes"].values())

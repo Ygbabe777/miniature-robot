@@ -203,3 +203,8 @@ minimo (le tue chiavi non arrivano mai al processo figlio), timeout, tetto sull'
 ## Pannelli, notifiche e vignette
 - I pannelli laterali si nascondono con le linguette ◀ ▶ (o i tasti `[` e `]`); lo stato è ricordato. Un pallino rosso con il conteggio avvisa di novità (verdetti, strategie avviate, download, budget) sulla linguetta e sulla scheda interessata.
 - Sopra ogni agente una vignetta mostra l'ultimo pensiero/ricerca (💭 💡 ⚖ 🔎 📖 💾): luminosa se recente, attenuata dopo 30 s, sparisce dopo 5 min se l'agente è fermo. Il tasto 💬 le nasconde.
+
+## Tutte le timeframe, salute delle fonti web, pensieri degli agenti
+- L'Optimizer prova ogni studio su **tutte** le timeframe (5/15/30/60 min) anche se la proposta ne indicava meno; ogni timeframe conta come tentativi nel Deflated Sharpe. Il dettaglio mostra la tabella "Prova su tutte le timeframe" (miglior versione per timeframe, Sharpe, P&L, pass rate 25k/50k) e la versione finale è quella sulla timeframe migliore (`report["by_timeframe"]`). La 1 min e la giornaliera non sono incluse: i parametri in barre non sono confrontabili e sulla 1 min i costi dominano.
+- Il pannello "Internet in tempo reale" mostra per ogni fonte ✔ (con n. risultati) / ✘ (errore) / non provato, le fonti attivate ma non installate sul PC (con il comando per installarle) e se Agent Reach è installato. github, rss, arXiv, SSRN usano HTTP semplice: Agent Reach serve solo per exa/youtube/reddit/x.
+- Le vignette degli agenti mostrano su cosa stanno ragionando ("thinking: …") e il risultato.

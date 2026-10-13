@@ -36,12 +36,27 @@ class Agent:
         self.name, self.llm, self.system, self.validate = name, llm, system, validate
         self.events, self.max_attempts, self.temperature = events, max_attempts, temperature
 
-    def run(self, payload) -> dict:
+    @staticmethod
+    def _preview(text: str, n: int = 90) -> str:
+        t = " ".join(str(text).replace('"', " ").replace("{", " ").replace("}", " ").split())
+        return t[:n] + ("…" if len(t) > n else "")
+
+    @staticmethod
+    def _brief(out) -> str:
+        if isinstance(out, dict):
+            for k in ("name", "summary", "title", "decision", "verdict", "reply", "text"):
+                if isinstance(out.get(k), str) and out[k]:
+                    return Agent._preview(out[k], 100)
+            if isinstance(out.get("spec"), object) and getattr(out.get("spec"), "name", None):
+                return Agent._preview(out["spec"].name, 100)
+        return ""
+
+    def run(self, payload, topic: str | None = None) -> dict:
         user = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
         messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user}]
         last = None
         if self.events:
-            self.events.emit(self.name, "working", "thinking")
+            self.events.emit(self.name, "working", "thinking: " + (topic or self._preview(user)))
         for attempt in range(1, self.max_attempts + 1):
             try:
                 reply = self.llm.chat(messages, temperature=self.temperature)
@@ -52,7 +67,7 @@ class Agent:
             try:
                 out = self.validate(parse_json(reply))
                 if self.events:
-                    self.events.emit(self.name, "reply", f"valid reply (attempt {attempt})")
+                    self.events.emit(self.name, "reply", f"valid reply (attempt {attempt})" + (": " + self._brief(out) if self._brief(out) else ""))
                     self.events.emit(self.name, "done", "ready")
                 return out
             except Exception as e:                       # weak models: bad JSON, bad values

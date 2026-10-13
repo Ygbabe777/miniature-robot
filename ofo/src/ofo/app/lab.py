@@ -39,6 +39,7 @@ from ..accounts import demo_accounts, load_accounts
 from ..data import resample
 from ..trades import extract_trades, summarize
 from ..scout import Scout
+from ..sources import agent_reach_status, missing_channels
 from ..strategies import INDICATOR_HELP, TEMPLATES
 
 
@@ -428,16 +429,42 @@ class Lab:
         gap = 45 if (last.get("found") or last.get("downloaded")) else 240
         return gap * 4 if self.economy() else gap                      # saving tokens: search a quarter as often
 
+    def _missing_channels(self) -> list[dict]:
+        try:
+            return missing_channels("config/sources.json")
+        except Exception:
+            return []
+
+    def _agent_reach(self) -> dict:
+        """What `agent-reach doctor` says (cached 10 minutes, fetched in the background: it can take a while). Optional."""
+        c = getattr(self, "_ar", None)
+        if c is None:
+            c = self._ar = {"at": 0.0, "data": {"installed": None, "channels": {}}, "busy": False}
+        if not c["busy"] and time.time() - c["at"] > 600:
+            c["busy"] = True
+            def go():
+                try:
+                    c["data"] = agent_reach_status()
+                finally:
+                    c["at"] = time.time(); c["busy"] = False
+            threading.Thread(target=go, daemon=True).start()
+        return c["data"]
+
     def web_activity(self, after: int = 0, limit: int = 120) -> dict:
         """Live feed of the Researcher's internet use: every search, result list, page read and save (newest last)."""
         ev = [e for e in self.events.tail(4000) if e.get("agent") == "scout" and e.get("type") == "web"]
         items = [{"i": k, **e["data"], "t": e["t"], "msg": e.get("message", "")} for k, e in enumerate(ev)]
         total = len(items)
-        return {"total": total, "running": self._scout_running, "items": [x for x in items if x["i"] >= after][-limit:]}
+        sc = self.scout()
+        return {"total": total, "running": self._scout_running, "health": sc.state.get("health", {}),
+                "channels": ["arxiv", "semanticscholar", "ssrn"] + [c.name for c in sc.channels],
+                "missing": self._missing_channels(), "agent_reach": self._agent_reach(), "items": [x for x in items if x["i"] >= after][-limit:]}
 
     def scout_state(self) -> dict:
         st = self.scout().public_state(self._scout_running)
         st["channels"] = ["arxiv", "ssrn"] + [c.name for c in self.scout().channels]
+        st["missing_channels"] = self._missing_channels()
+        st["agent_reach"] = self._agent_reach()
         last = st["last_run"]
         if st["auto"]["enabled"] and last:
             st["next_run"] = last["at"] + self.scout_gap()
