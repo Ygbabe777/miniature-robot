@@ -70,9 +70,10 @@ class MarketCtx:
         self._sess = None
         self.sessions = None
         self._loop = None
+        self._load_lock = threading.Lock()      # loading the 1-minute file takes minutes: it must NOT hold the lab-wide lock (job start, state, queue all need it)
 
     def bars(self) -> pd.DataFrame:
-        with self.lab.lock:
+        with self._load_lock:
             if self._bars is None:
                 self._bars = pd.read_csv(self.path, index_col=0, parse_dates=True)
                 key = pd.to_datetime(self._bars["session"]) if "session" in self._bars.columns \

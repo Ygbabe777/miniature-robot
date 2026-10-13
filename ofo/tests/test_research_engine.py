@@ -442,3 +442,25 @@ def test_only_extremely_important_things_are_said_out_loud_and_not_repeated(tmp_
     assert ev.alert("researcher", "ai_down", "AI non raggiungibile") is False                       # same problem: not shouted again within the cooldown
     assert ev.alert("judge", "approved:x", "approvata", 0.0) and ev.alert("judge", "approved:x", "approvata", 0.0)   # each approval is announced
     assert [e["type"] for e in ev.tail()].count("alert") == 3
+
+
+def test_loading_the_big_price_file_does_not_freeze_the_job_start_or_the_state(tmp_path, monkeypatch):
+    """Reported: 'in attesa che il motore sia libero (sta per partire)' for ever. The first load of the 1-minute file held the lab-wide lock,
+    so the job thread could not even register as running (and /api/state hung) until the file was read."""
+    import threading, time
+    import pandas as pd
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    ctx = lab.ctx(None); ctx.reset(); ctx._bars = None
+    real = pd.read_csv
+
+    def slow(*a, **k):
+        time.sleep(2.0)
+        return real(*a, **k)
+    monkeypatch.setattr(pd, "read_csv", slow)
+    threading.Thread(target=ctx.bars, daemon=True).start()
+    time.sleep(0.3)                                                        # the slow load is in progress
+    t0 = time.time()
+    with lab.working("job"):                                               # what _run_job does first
+        pass
+    lab.state()                                                            # what the page polls every second
+    assert time.time() - t0 < 1.0
