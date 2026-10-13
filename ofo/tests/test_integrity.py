@@ -41,7 +41,7 @@ def dev_view(r: dict) -> str:
     keep = {"surface": r["surface"], "quality": r["quality"], "wf": (r["wf_kind"], r["wf_oos_days"], round(r["wf_oos_pnl"], 6)),
             "cut": r["series"]["cut"], "best": r["series"]["best_params"], "exit": r["series"]["exit"], "exits": r["exits"],
             "dev_best": r["series"]["dev_best"], "wf_series": r["series"]["wf_oos"],
-            "detrended": r["surface_detrended"], "timing": r["timing"], "by_tf": r["by_timeframe"]}
+            "detrended": r["surface_detrended"], "timing": r["timing"], "by_tf": r["by_timeframe"], "sizing": r["sizing"]}
     return json.dumps(keep, sort_keys=True, default=str)
 
 
@@ -252,4 +252,12 @@ def test_every_timeframe_is_tried_and_the_final_version_is_the_best_timeframe(tm
     assert set(by["timeframes"]) == set(TIMEFRAMES)                         # the spec asked for two: all four were tested
     assert rep["n_candidates"] == 5 * len(TIMEFRAMES)                        # and every one of them counts as a trial
     assert by["best_tf"] == rep["series"]["best_params"]["tf"]               # table and final candidate agree
-    assert by["timeframes"][by["best_tf"]]["sharpe"] == max(v["sharpe"] for v in by["timeframes"].values())
+    tfs = by["timeframes"]
+    assert tfs[by["best_tf"]]["score"] == max(v["score"] for v in tfs.values())   # chosen by the blended score, not by profit alone
+    assert all({"max_dd", "n_trades", "days_with_trade", "trade_win_rate", "positive_days", "pass_rate"} <= set(v) for v in tfs.values())
+    assert rep["sizing"]["accounts"]["25k"]["table"] and rep["base_contracts"] == 2
+
+
+def test_timeframe_score_weights_sum_to_one_and_pass_probability_leads(tmp_path):
+    from ofo.optimizer import TF_WEIGHTS
+    assert abs(sum(TF_WEIGHTS.values()) - 1.0) < 1e-9 and TF_WEIGHTS["pass"] > TF_WEIGHTS["profit_dd"]

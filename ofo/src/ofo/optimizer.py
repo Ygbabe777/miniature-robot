@@ -25,6 +25,7 @@ from .registry import DuplicateExperiment, TrialRegistry
 from .research import daily_series, walk_forward
 from .specs import StrategySpec
 from .stats import sharpe
+from .sizing import size_study
 from .timing import timing_report
 from .strategies import TEMPLATES, TIMEFRAMES, flatten_overnight
 
@@ -42,7 +43,7 @@ class SurfaceThresholds:
     max_cost_multiple_sharpe: float = 0.0   # Sharpe must stay above this at twice the costs and with next-open fills
 
 
-def surface_metrics(rows: list[dict], param_names: list[str], th: SurfaceThresholds | None = None) -> dict:
+def surface_metrics(rows: list[dict], param_names: list[str], th: SurfaceThresholds | None = None, pick: int | None = None) -> dict:
     """rows: [{params..., 'tf': str, 'sharpe': float}].
 
     PARAMETER robustness: the neighbours of the best combination are the ones that differ by one grid step on exactly
@@ -53,7 +54,7 @@ def surface_metrics(rows: list[dict], param_names: list[str], th: SurfaceThresho
     tfs = [t for t in TIMEFRAMES if t in {r["tf"] for r in rows}]
     key = lambda r: tuple(axes[n].index(r[n]) for n in param_names)
     sr = np.array([r["sharpe"] for r in rows])
-    best_i = int(np.argmax(sr))
+    best_i = int(np.argmax(sr)) if pick is None else int(pick)      # `pick`: the candidate the Optimizer chose (multi-criteria)
     best_tf = rows[best_i]["tf"]
     by_key = {key(r): r["sharpe"] for r in rows if r["tf"] == best_tf}
     bk = key(rows[best_i])
@@ -248,11 +249,17 @@ def guarded_full_series(bars, cand, exit, contract, contracts, slippage_ticks, d
     return s_full, rc, pos_full, full_tf[tf]
 
 
-def timeframe_study(cands, series, rows, dev_days, contract_accounts, contracts, goal_days, goal_rate) -> dict:
-    """Best version of the strategy on EACH timeframe (development data, entry-only exits), the days-to-pass of that
-    version, and which timeframe wins. The winner is the one with the highest development Sharpe: the same rule that picks
-    the final candidate, so the table and the study can never disagree."""
-    out = {}
+TF_WEIGHTS = {"pass": 0.30, "profit_dd": 0.20, "win_days": 0.20, "frequency": 0.15, "win_rate": 0.10, "speed": 0.05}
+
+
+def timeframe_study(cands, series, rows, dev_days, bars_by_tf, contract, contract_accounts, contracts, slippage_ticks,
+                    goal_days, goal_rate) -> dict:
+    """Best version of the strategy on EACH timeframe (development data, entry-only exits) and the timeframe that fits a
+    prop-firm trader best. NOT profit alone: the score blends the chance to pass a 25k and a 50k challenge inside the goal
+    window (30%), profit / max drawdown (20%), share of winning days (20%), share of sessions with at least one trade (15%),
+    trade win rate (10%) and how fast a challenge is passed (5%). A timeframe that does not make money is never chosen while
+    another one does. Development data only, so the hidden block cannot influence the choice."""
+    out, ds = {}, [str(d)[:10] for d in dev_days]
     for tf in TIMEFRAMES:
         idx = [i for i, c in enumerate(cands) if c["tf"] == tf]
         if not idx:
@@ -260,13 +267,35 @@ def timeframe_study(cands, series, rows, dev_days, contract_accounts, contracts,
         bi = max(idx, key=lambda i: rows[i]["sharpe"])
         pnl = series[bi].reindex(dev_days).fillna(0.0).to_numpy()
         tm = timing_report(pnl, contract_accounts, contracts, goal_days, goal_rate, "development")
-        out[tf] = {"best_params": {k: v for k, v in cands[bi]["params"].items()}, "sharpe": float(rows[bi]["sharpe"]),
-                   "net_pnl": float(pnl.sum()), "positive_days": float((pnl > 0).mean()), "n_combos": len(idx),
-                   "median_sharpe": float(np.median([rows[i]["sharpe"] for i in idx])),
-                   "pass_rate": {a: r["p_pass_within"].get(str(goal_days)) for a, r in tm["accounts"].items()},
-                   "min_days": {a: r["min_days_seen"] for a, r in tm["accounts"].items()}}
-    best = max(out, key=lambda k: out[k]["sharpe"]) if out else None
-    return {"timeframes": out, "best_tf": best, "window_days": goal_days, "in_sample": True}
+        b = bars_by_tf[tf]
+        led = run_ledger(b, flatten_overnight(cands[bi]["fn"](b, **cands[bi]["params"])), contract, contracts, slippage_ticks, None)
+        tr = [t for t in led.trades if t["entry_session"][:10] in set(ds)]
+        n_tr = len(tr)
+        days_with = len({t["entry_session"][:10] for t in tr}) / max(1, len(ds))
+        wr = float(np.mean([t["pnl"] > 0 for t in tr])) if n_tr else 0.0
+        c = np.cumsum(pnl); dd = float(np.max(np.maximum.accumulate(np.concatenate([[0.0], c]))[1:] - c)) if len(c) else 0.0
+        streak = cur = 0
+        for v in pnl:
+            cur = cur + 1 if v < 0 else 0; streak = max(streak, cur)
+        pr = {a: r["p_pass_within"].get(str(goal_days)) for a, r in tm["accounts"].items()}
+        med = {a: r["median_days"] for a, r in tm["accounts"].items()}
+        net = float(pnl.sum()); pos = float((pnl > 0).mean())
+        comp = {"pass": float(np.mean([v or 0.0 for v in pr.values()])) if pr else 0.0,
+                "profit_dd": float(np.clip((net / dd) / 3.0, 0, 1)) if dd > 0 and net > 0 else 0.0,
+                "win_days": min(1.0, pos / 0.6), "frequency": min(1.0, days_with / 0.9), "win_rate": min(1.0, wr / 0.6),
+                "speed": float(np.mean([1 - min(m, 20) / 20 if m is not None else 0.0 for m in med.values()])) if med else 0.0}
+        score = sum(TF_WEIGHTS[k] * comp[k] for k in TF_WEIGHTS) if net > 0 and rows[bi]["sharpe"] > 0 else 0.0
+        out[tf] = {"best_params": dict(cands[bi]["params"]), "cand_index": int(bi), "sharpe": float(rows[bi]["sharpe"]), "net_pnl": net,
+                   "max_dd": dd, "profit_dd": (net / dd) if dd > 0 else None, "positive_days": pos, "losing_streak": int(streak),
+                   "n_trades": n_tr, "trades_per_day": n_tr / max(1, len(ds)), "days_with_trade": days_with, "trade_win_rate": wr,
+                   "n_combos": len(idx), "median_sharpe": float(np.median([rows[i]["sharpe"] for i in idx])),
+                   "pass_rate": pr, "median_days": med, "min_days": {a: r["min_days_seen"] for a, r in tm["accounts"].items()},
+                   "components": comp, "score": float(score)}
+    best = None
+    if out:
+        best = max(out, key=lambda k: (out[k]["score"], out[k]["sharpe"]))
+    return {"timeframes": out, "best_tf": best, "window_days": goal_days, "in_sample": True, "weights": TF_WEIGHTS,
+            "chosen_by": "score" if best and out[best]["score"] > 0 else "sharpe"}
 
 
 def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules: PropRules,
@@ -298,11 +327,15 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     dev = series
     rows = [{**c["params"], "tf": c["tf"],
              "sharpe": sharpe(dev[i].reindex(dev_days).fillna(0.0))} for i, c in enumerate(cands)]
-    surf = surface_metrics(rows, list(spec.ranges), th)
+    tfs_dev = {tf: resample(dev_bars, tf) for tf in spec.timeframes}
+    goal_days = judge_th.eval_days if judge_th is not None else 5
+    goal_rate = judge_th.min_pass_rate if judge_th is not None else 0.30
+    by_tf = timeframe_study(cands, series, rows, dev_days, tfs_dev, contract, {k: PRESETS[k] for k in ("25k", "50k")}, contracts,
+                            slippage_ticks, goal_days, goal_rate)
+    best_i = by_tf["timeframes"][by_tf["best_tf"]]["cand_index"] if by_tf["best_tf"] else max(range(len(cands)), key=lambda i: rows[i]["sharpe"])
+    surf = surface_metrics(rows, list(spec.ranges), th, pick=best_i)
     say("optimizer", "done", "sweep finished")
     say("validator", "working", "walk-forward and market-drift check")
-    best_i = max(range(len(cands)), key=lambda i: rows[i]["sharpe"])
-    tfs_dev = {tf: resample(dev_bars, tf) for tf in spec.timeframes}
     exits_rep = _exit_study({cands[best_i]["tf"]: tfs_dev[cands[best_i]["tf"]]}, cands[best_i], series[best_i], contract,
                             contracts, slippage_ticks, dev_days, registry, spec.name, eid)
     best_exit = exits_rep["best"] if exits_rep["chosen"] else None
@@ -318,16 +351,14 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     final_dev = daily_series({cands[best_i]["tf"]: tfs_dev[cands[best_i]["tf"]]}, cands[best_i], contract, contracts,
                              slippage_ticks, exit=best_exit).reindex(dev_days).fillna(0.0)
     # How fast could this strategy pass a 25k and a 50k challenge? For EVERY study, on development data only (in-sample).
-    goal_days = judge_th.eval_days if judge_th is not None else 5
-    goal_rate = judge_th.min_pass_rate if judge_th is not None else 0.30
     timing = timing_report(final_dev.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, goal_rate, "development")
-    by_tf = timeframe_study(cands, series, rows, dev_days, {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, goal_rate)
+    sizing = size_study(final_dev.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, basis="development")
     quality = None
     if surf["robust"]:
         quality = quality_checks(tfs_dev, cands[best_i], best_exit, contract, contracts, slippage_ticks, dev_days, th)
     pair = lambda ser: [[str(d)[:10], float(v)] for d, v in ser.items()]
     report = {"name": spec.name, "template": spec.template, "rationale": spec.rationale,
-              "source": spec.source, "n_candidates": len(cands), "surface": surf, "quality": quality, "timing": timing, "by_timeframe": by_tf,
+              "source": spec.source, "n_candidates": len(cands), "surface": surf, "quality": quality, "timing": timing, "by_timeframe": by_tf, "sizing": sizing, "base_contracts": contracts,
               "wf_kind": wf_kind, "wf_oos_days": len(wf), "wf_oos_pnl": wf_pnl,
               "wf_oos_sharpe_daily": sharpe(wf) if len(wf) > 2 else 0.0,
               "n_locked_days": len(sessions) - len(dev_days), "wf_oos_series": wf,
@@ -362,6 +393,7 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
         report["locked"] = {"status": v.status, "checks": v.checks, "pnl": float(locked.sum()),
                             "timing": timing_report(locked.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts,
                                                     goal_days, goal_rate, "unseen_block"),
+                            "sizing": size_study(locked.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, basis="unseen_block"),
                             "p_pass": v.mc.get("p_pass"), "p_pass_ci95": v.mc.get("p_pass_ci95"),
                             "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "params": cand["params"],
                             "tf": tf, "exit": best_exit, "prop_model": "daily_simplified"}

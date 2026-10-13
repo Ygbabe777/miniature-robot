@@ -1037,7 +1037,9 @@ class Lab:
             x["r"] = round(x["side"] * (x["exit_px"] - x["entry_px"]) / risk, 2) if risk else None
         return {"trades": vis, "n_hidden": len(allt) - len(vis), "locked_visible": looked, "tf": tf,
                 "params": {k: v for k, v in ser["best_params"].items() if k != "tf"}, "cut": ser["cut"], "exit": ser.get("exit"),
-                "summary": summarize(vis), "name": rep["name"], "market": self.market_of(rep)}
+                "summary": summarize(vis), "name": rep["name"], "market": self.market_of(rep),
+                "base_contracts": rep.get("base_contracts", self.contracts),
+                "sizing": {a: v.get("recommended") for a, v in ((rep.get("locked") or {}).get("sizing") or rep.get("sizing") or {}).get("accounts", {}).items()}}
 
     def indicators(self, slug: str, start: int | None = None, end: int | None = None) -> dict | None:
         """The indicator lines the strategy's best candidate really uses, on its own timeframe."""

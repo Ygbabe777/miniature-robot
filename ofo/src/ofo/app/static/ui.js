@@ -238,7 +238,7 @@
     const TFS = [['1min', '1m'], ['5min', '5m'], ['15min', '15m'], ['30min', '30m'], ['60min', '1h'], ['1D', '1D']];
     const RNG = [['1D', 1, '1min'], ['5D', 5, '5min'], ['1M', 21, '30min'], ['3M', 63, '60min'], ['6M', 126, '1D'], ['1Y', 252, '1D'], ['ALL', 'all', '1D']];
     let tf = '15min', rng = '5D', chart = null, cs = null, vs = null, last = null, symbol = 'NQ', before = null;
-    let tfilter = 'all', focus = -1, ov = null; let trades = null, loaded = [], slug = '', listKey = '', indSeries = [], market = '', markets = [];
+    let tfilter = 'all', focus = -1, ov = null, tsize = 'base'; let trades = null, loaded = [], slug = '', listKey = '', indSeries = [], market = '', markets = [];
     const order = TFS.map(x => x[0]);
     const seg = (el, items, cur, fn) => { el.innerHTML = items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${label}</button>`).join(''); el.querySelectorAll('button').forEach(b => b.onclick = () => fn(b.dataset.k)); };
     function draw() {
@@ -295,6 +295,8 @@
 
     // ---- overlay: entry triangle at the real price, exit circle, connecting line, stop/target levels ----
     const vis = () => (trades ? trades.trades.map((x, i) => Object.assign({ i }, x)).filter(x => tfilter === 'all' || (tfilter === 'win' && x.pnl > 0) || (tfilter === 'loss' && x.pnl <= 0) || (tfilter === 'long' && x.side > 0) || (tfilter === 'short' && x.side < 0)) : []);
+    const nC = () => tsize === 'base' || !trades ? (trades ? trades.base_contracts : 1) : ((trades.sizing || {})[tsize] || trades.base_contracts);
+    const sc = () => nC() / (trades ? trades.base_contracts : 1), pnlOf = x => x.pnl * sc();
     const reasonTxt = x => t('tl_' + (x.reason === 'stop' || x.reason === 'target' ? x.reason : x.reason === 'open' ? 'open' : 'signal'));
     function drawOverlay() {
       const el = $('#tchart'); if (!el) return;
@@ -328,8 +330,8 @@
         g.fillStyle = col; g.beginPath(); g.arc(xx, yx, sel ? 6 : 4.5, 0, 6.3); g.fill(); g.stroke();
         if (few || sel) {
           g.fillStyle = '#e8e8ee';
-          g.fillText((up ? 'L ' : 'S ') + x.entry_px, xe + 9, ye + (up ? 12 : -12));
-          g.fillStyle = col; g.fillText((win ? '+$' : '-$') + Math.abs(Math.round(x.pnl)) + ' · ' + reasonTxt(x) + (x.r != null ? ' · ' + x.r + 'R' : ''), xx + 8, yx + (win === up ? -12 : 12));
+          g.fillText((up ? 'L ' : 'S ') + x.entry_px + ' ×' + nC(), xe + 9, ye + (up ? 12 : -12));
+          g.fillStyle = col; g.fillText((win ? '+$' : '-$') + Math.abs(Math.round(pnlOf(x))) + ' · ' + reasonTxt(x) + (x.r != null ? ' · ' + x.r + 'R' : ''), xx + 8, yx + (win === up ? -12 : 12));
         }
       });
       g.globalAlpha = 1;
@@ -342,13 +344,15 @@
       const fb = (k, label) => `<button data-f="${k}" class="${tfilter === k ? 'on' : ''}">${label}</button>`;
       box.innerHTML = `<div class="bar">${fb('all', t('tl_all'))}${fb('win', t('tl_win'))}${fb('loss', t('tl_loss'))}${fb('long', t('tl_long'))}${fb('short', t('tl_short'))}
         <button data-n="-1">${t('tl_prev')}</button><button data-n="1">${t('tl_next')}</button><span>${t('tl_of', { i: Math.max(0, L.findIndex(x => x.i === focus) + 1), n: L.length })}</span>
+        <select id="tsize">${[['base', t('tl_size_base', { n: trades.base_contracts })]].concat(Object.entries(trades.sizing || {}).filter(([, v]) => v).map(([a, v]) => [a, t('tl_size_rec', { a, n: v })])).map(([k, l]) => `<option value="${k}" ${k === tsize ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <button data-csv="1">${t('tl_csv')}</button></div>
-        <table><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>${L.map((x, k) => `<tr class="tr ${x.i === focus ? 'sel' : ''}" data-i="${x.i}"><td>${k + 1}</td><td>${fmtT(x.entry_t)}</td><td class="${x.side > 0 ? 'up' : 'dn'}">${x.side > 0 ? 'L' : 'S'}</td><td>${x.entry_px}</td><td>${x.exit_px}</td><td>${reasonTxt(x)}</td><td class="${x.pnl >= 0 ? 'up' : 'dn'}">${x.pnl >= 0 ? '+' : '-'}$${Math.abs(Math.round(x.pnl))}</td><td>${x.r == null ? '' : x.r}</td></tr>`).join('')}</table>`;
+        <table><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>${L.map((x, k) => `<tr class="tr ${x.i === focus ? 'sel' : ''}" data-i="${x.i}"><td>${k + 1}</td><td>${fmtT(x.entry_t)}</td><td class="${x.side > 0 ? 'up' : 'dn'}">${x.side > 0 ? 'L' : 'S'}</td><td>${x.entry_px}</td><td><b>${nC()}</b></td><td>${x.exit_px}</td><td>${reasonTxt(x)}</td><td class="${x.pnl >= 0 ? 'up' : 'dn'}">${x.pnl >= 0 ? '+' : '-'}$${Math.abs(Math.round(pnlOf(x)))}</td><td>${x.r == null ? '' : x.r}</td></tr>`).join('')}</table>`;
+      box.querySelector('#tsize').onchange = (e) => { tsize = e.target.value; renderList(); drawOverlay(); };
       box.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { tfilter = b.dataset.f; focus = -1; renderList(); drawOverlay(); });
       box.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { const k = L.findIndex(x => x.i === focus); const n = L[(k + +b.dataset.n + L.length) % L.length]; if (n) focusTrade(n.i); });
       box.querySelectorAll('tr.tr').forEach(r => r.onclick = () => focusTrade(+r.dataset.i));
       box.querySelector('[data-csv]').onclick = () => {
-        const rows = [['entry_time_utc', 'side', 'entry_px', 'exit_px', 'reason', 'pnl', 'r', 'stop', 'target']].concat(L.map(x => [new Date(x.entry_t * 1000).toISOString(), x.side > 0 ? 'long' : 'short', x.entry_px, x.exit_px, x.reason, x.pnl, x.r == null ? '' : x.r, x.stop || '', x.target || '']));
+        const rows = [['entry_time_utc', 'side', 'contracts', 'entry_px', 'exit_px', 'reason', 'pnl', 'r', 'stop', 'target']].concat(L.map(x => [new Date(x.entry_t * 1000).toISOString(), x.side > 0 ? 'long' : 'short', nC(), x.entry_px, x.exit_px, x.reason, Math.round(pnlOf(x) * 100) / 100, x.r == null ? '' : x.r, x.stop || '', x.target || '']));
         const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([rows.map(r => r.join(',')).join('\n')], { type: 'text/csv' })); a.download = (slug || 'trades') + '.csv'; a.click();
       };
       const sel = box.querySelector('tr.sel'); if (sel) sel.scrollIntoView({ block: 'nearest' });
@@ -411,7 +415,7 @@
       if (bumpNote) { $('#tinfo').textContent = last + ' · ' + t('t_bumped', bumpNote); bumpNote = null; }
     }
     async function pick(s) {
-      slug = s; trades = null; focus = -1; tfilter = 'all';
+      slug = s; trades = null; focus = -1; tfilter = 'all'; tsize = 'base';
       if (!s) { applyMarkers(); drawIndicators(); note(); return; }
       const d = await api('/api/trades/' + encodeURIComponent(s));
       if (d.error) { note(); return; }
@@ -467,13 +471,24 @@
     if (!bt || !bt.timeframes) return '';
     const names = Object.keys(bt.timeframes), accts = [...new Set(names.flatMap(k => Object.keys(bt.timeframes[k].pass_rate || {})))];
     const rows = names.map(k => {
-      const v = bt.timeframes[k], best = k === bt.best_tf;
-      return `<tr class="${best ? 'best' : ''}"><th>${esc(k)}${best ? ' ★' : ''}</th><td>${v.sharpe.toFixed(3)}</td><td>${v.median_sharpe.toFixed(3)}</td><td class="${v.net_pnl >= 0 ? 'pos' : 'neg'}">${money(v.net_pnl)}</td>
-        <td>${pct(v.positive_days)}</td>${accts.map(a => `<td>${v.pass_rate[a] == null ? '–' : pct(v.pass_rate[a])}</td>`).join('')}<td>${esc(Object.entries(v.best_params).map(([a, b]) => a + '=' + b).join(' '))}</td></tr>`;
+      const v = bt.timeframes[k], best = k === bt.best_tf, md = a => v.median_days && v.median_days[a] != null ? v.median_days[a].toFixed(0) : '–';
+      return `<tr class="${best ? 'best' : ''}"><th>${esc(k)}${best ? ' ★' : ''}</th><td><b>${(v.score * 100).toFixed(0)}</b></td><td>${v.sharpe.toFixed(3)}</td><td class="${v.net_pnl >= 0 ? 'pos' : 'neg'}">${money(v.net_pnl)}</td>
+        <td>${money(v.max_dd)}</td><td>${v.profit_dd == null ? '–' : v.profit_dd.toFixed(2)}</td><td>${v.trades_per_day.toFixed(1)}</td><td>${pct(v.days_with_trade)}</td><td>${pct(v.trade_win_rate)}</td><td>${pct(v.positive_days)}</td>
+        ${accts.map(a => `<td>${v.pass_rate[a] == null ? '–' : pct(v.pass_rate[a])}</td>`).join('')}${accts.map(a => `<td>${md(a)}</td>`).join('')}<td>${esc(Object.entries(v.best_params).map(([a, b]) => a + '=' + b).join(' '))}</td></tr>`;
     }).join('');
     return `<div class="judge"><b>${t('tfs_title')}</b><div class="sub">${t('tfs_sub', { tf: esc(bt.best_tf || '–') })}</div>
-      <table class="rrt"><tr><th></th><th>Sharpe</th><th>${t('tfs_med')}</th><th>P&L</th><th>${t('tfs_pos')}</th>${accts.map(a => `<th>${t('tfs_pass', { a, d: bt.window_days })}</th>`).join('')}<th>${t('tfs_params')}</th></tr>${rows}</table>
+      <div style="overflow-x:auto"><table class="rrt"><tr><th></th><th>${t('tfs_score')}</th><th>Sharpe</th><th>P&L</th><th>${t('tfs_dd')}</th><th>${t('tfs_pdd')}</th><th>${t('tfs_tpd')}</th><th>${t('tfs_dwt')}</th><th>${t('tfs_wr')}</th><th>${t('tfs_pos')}</th>
+      ${accts.map(a => `<th>${t('tfs_pass', { a, d: bt.window_days })}</th>`).join('')}${accts.map(a => `<th>${t('tfs_med_days')} ${a}</th>`).join('')}<th>${t('tfs_params')}</th></tr>${rows}</table></div>
       <div class="sub">${t('tfs_note')}</div></div>`;
+  }
+  function sizingBox(sz) {
+    if (!sz || !sz.accounts) return '';
+    const cols = t('sz_cols'), blocks = Object.entries(sz.accounts).map(([acct, a]) => {
+      const head = cols.map(c => `<th>${esc(c.replace('{d}', sz.window_days))}</th>`).join('');
+      const rows = a.table.map(r => `<tr class="${r.micro === a.recommended ? 'best' : ''} ${r.within_limits ? '' : 'dim'}"><th>${r.micro}${r.micro === a.recommended ? ' ★' : ''}</th><td class="${r.net_pnl >= 0 ? 'pos' : 'neg'}">${money(r.net_pnl)}</td><td>${money(r.max_dd)}</td><td>${r.profit_dd == null ? '–' : r.profit_dd.toFixed(2)}</td><td>${pct(r.dd_use)}</td><td>${money(r.worst_day)}</td><td>${pct(r.p_pass_window)}</td><td>${pct(r.p_bust_window)}</td></tr>`).join('');
+      return `<div class="sub"><b>${esc(acct)}</b> — ${a.recommended ? t('sz_rec') + ': <b>' + a.recommended + ' micro</b>' : t('sz_none')}</div><div style="overflow-x:auto"><table class="rrt"><tr>${head}</tr>${rows}</table></div>`;
+    }).join('');
+    return `<div class="judge"><b>${t('sz_title')}</b><div class="sub">${sz.in_sample ? t('tm_insample') : t('tm_oos')} ${t('sz_sub', { dd: pct(sz.dd_headroom), dy: pct(sz.day_headroom) })}</div>${blocks}</div>`;
   }
   function rrBox(ex) {
     if (!ex) return '';
@@ -508,6 +523,7 @@
       <div class="grid">${kpi(t('kp_med'), num(sur.median_sharpe, 3))}${kpi(t('kp_pos'), pct(sur.frac_positive))}${kpi(t('kp_plat'), num(sur.plateau_ratio, 2))}${kpi(t('kp_rob'), sur.robust ? t('yes') : t('no'), sur.robust ? 'pos' : 'neg')}${kpi(t('kp_wf'), money(rep.wf_oos_pnl), rep.wf_oos_pnl >= 0 ? 'pos' : 'neg')}</div>
       ${d.best_params ? `<div class="sub">${t('d_best', { p: esc(JSON.stringify(d.best_params)), n: rep.n_candidates })}</div>` : ''}
       ${tfBox(rep.by_timeframe)}
+      ${sizingBox(rep.locked && rep.locked.sizing ? rep.locked.sizing : rep.sizing)}
       ${timingBox(rep.locked && rep.locked.timing ? rep.locked.timing : rep.timing)}
       ${rrBox(rep.exits)}
       <div class="seg" id="seg">${keys.map(k => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${title[k]}</button>`).join('')}</div>
