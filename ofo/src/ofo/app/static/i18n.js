@@ -74,7 +74,8 @@
       tm_within: 'entro {d} gg', tm_note: 'Dimensione scelta = quella che passa più spesso nella finestra senza bruciare il conto troppo spesso. "Giorni minimi" = il tentativo simulato più veloce; "minimo storico" = la finestra reale più veloce (finestre sovrapposte, non indipendenti). Le regole del prop fissano un minimo di giorni.',
       agents_title: 'Agenti al lavoro', st_idle: 'spento', st_working: 'al lavoro', st_done: 'finito',
       t_strat: 'Strategia sul grafico', t_none: '— nessuna —', t_trades: '{n} trade · {w} vincenti · P&L {p}', t_hidden: '{n} trade nel blocco nascosto non mostrati',
-      t_notrades: 'Nessun trade da mostrare', t_legend: 'Frecce = ingressi (↑ long, ↓ short) · cerchi = uscite (valore = P&L del trade). Sono i trade della migliore combinazione (in-campione): non provano un profitto.',
+      t_notrades: 'Nessun trade da mostrare', t_legend: 'Triangolo = ingresso (▲ long, ▼ short) al prezzo reale · cerchio = uscita (+$ / -$ = P&L) con motivo stop/target/segnale · linea tratteggiata rossa = stop, verde = target · clicca un trade nella lista per vederlo. Trade della migliore combinazione (in-campione): non provano un profitto.',
+      tl_all:'Tutti',tl_win:'Vincenti',tl_loss:'Perdenti',tl_long:'Long',tl_short:'Short',tl_csv:'CSV',tl_prev:'◀',tl_next:'▶',tl_cols:['#','Ingresso','Lato','Px in','Px out','Uscita','P&L','R'],tl_stop:'stop',tl_target:'target',tl_signal:'segnale',tl_open:'aperto',tl_of:'{i}/{n} trade',
       acct_title: 'Conti', acct_demo_note: 'DATI DI ESEMPIO. Per i tuoi conti: copia rules/accounts.example.json in data/accounts.json e modificalo.', acct_eval: 'EVAL', acct_funded: 'FUNDED', acct_demo: 'DEMO', acct_sign: ['CONTI', 'DATI ESEMPIO'], acct_sign_real: ['CONTI'],
       as_ok: 'in corso', as_danger: 'vicino al limite', as_passed: 'superato', as_busted: 'saltato', acct_payouts: 'payout: {n}', acct_prog: 'target {p}', acct_buf: 'margine {p}'
     },
@@ -151,7 +152,8 @@
       tm_within: 'within {d} d', tm_note: 'Size = the one that passes most often inside the window without busting too often. "Fastest" = the quickest simulated attempt; "historical fastest" = the quickest real window (overlapping, not independent). The prop rules set a minimum number of days.',
       agents_title: 'Agents at work', st_idle: 'idle', st_working: 'working', st_done: 'done',
       t_strat: 'Strategy on chart', t_none: '— none —', t_trades: '{n} trades · {w} winners · P&L {p}', t_hidden: '{n} trades in the hidden block not shown',
-      t_notrades: 'No trades to show', t_legend: 'Arrows = entries (↑ long, ↓ short) · circles = exits (value = trade P&L). These are the trades of the best combination (in-sample): they do not prove profit.',
+      t_notrades: 'No trades to show', t_legend: 'Triangle = entry (▲ long, ▼ short) at the real price · circle = exit (+$ / -$ = P&L) with reason stop/target/signal · red dashed line = stop, green = target · click a trade in the list to focus it. Trades of the best combination (in-sample): they do not prove profit.',
+      tl_all:'All',tl_win:'Winners',tl_loss:'Losers',tl_long:'Long',tl_short:'Short',tl_csv:'CSV',tl_prev:'◀',tl_next:'▶',tl_cols:['#','Entry','Side','Px in','Px out','Exit','P&L','R'],tl_stop:'stop',tl_target:'target',tl_signal:'signal',tl_open:'open',tl_of:'{i}/{n} trades',
       acct_title: 'Accounts', acct_demo_note: 'DEMO DATA. For your accounts: copy rules/accounts.example.json to data/accounts.json and edit it.', acct_eval: 'EVAL', acct_funded: 'FUNDED', acct_demo: 'DEMO', acct_sign: ['ACCOUNTS', 'DEMO DATA'], acct_sign_real: ['ACCOUNTS'],
       as_ok: 'on track', as_danger: 'near the limit', as_passed: 'passed', as_busted: 'busted', acct_payouts: 'payouts: {n}', acct_prog: 'target {p}', acct_buf: 'buffer {p}'
     }

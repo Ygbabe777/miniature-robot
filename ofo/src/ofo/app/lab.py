@@ -998,6 +998,9 @@ class Lab:
         looked = "checks" in rep["locked"]
         vis = allt if looked else [t for t in allt if t["session"] < ser["cut"]]
         tf = ser["best_params"]["tf"]
+        for x in vis:                                    # R multiple: result over the initial risk (entry-stop distance)
+            risk = abs(x["entry_px"] - x["stop"]) if x.get("stop") else 0
+            x["r"] = round(x["side"] * (x["exit_px"] - x["entry_px"]) / risk, 2) if risk else None
         return {"trades": vis, "n_hidden": len(allt) - len(vis), "locked_visible": looked, "tf": tf,
                 "params": {k: v for k, v in ser["best_params"].items() if k != "tf"}, "cut": ser["cut"], "exit": ser.get("exit"),
                 "summary": summarize(vis), "name": rep["name"], "market": self.market_of(rep)}

@@ -146,3 +146,13 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 .rrt{border-collapse:collapse;margin:6px 0;font-family:var(--mono);font-size:11px} .rrt th{color:var(--dim);font-weight:normal;padding:2px 8px;text-align:right} .rrt td{padding:3px 10px;text-align:right;color:#fff}
 
 .dep-live{color:var(--accent)} .dep-confirmed{color:var(--up)} .dep-retired{color:var(--down)} .dep-not_deployed{color:var(--dim)}
+
+#tchart{position:relative}
+#tov{position:absolute;left:0;top:0;pointer-events:none;z-index:5}
+#tlist{max-height:240px;overflow:auto;border-top:1px solid var(--grid,#2a2a30);font:11px ui-monospace,Consolas,monospace}
+#tlist .bar{display:flex;gap:6px;align-items:center;padding:4px 6px;position:sticky;top:0;background:var(--bg,#0b0b0e)}
+#tlist button{background:none;border:1px solid #3a3a42;color:inherit;padding:1px 7px;border-radius:3px;cursor:pointer}
+#tlist button.on{border-color:var(--accent,#7cf);color:var(--accent,#7cf)}
+#tlist table{width:100%;border-collapse:collapse}#tlist td,#tlist th{padding:2px 6px;text-align:right;white-space:nowrap}
+#tlist tr.tr{cursor:pointer}#tlist tr.tr:hover,#tlist tr.sel{background:#ffffff14}
+#tlist .up{color:#3ddc97}#tlist .dn{color:#ff5c6c}

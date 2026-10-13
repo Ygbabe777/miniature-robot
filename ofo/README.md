@@ -193,3 +193,9 @@ minimo (le tue chiavi non arrivano mai al processo figlio), timeout, tetto sull'
   `agent-reach install --env=auto`. I comandi seguono la sua documentazione ma NON sono stati provati sugli strumenti veri.
 - Focus futures/Nasdaq: 10 argomenti dedicati (NQ, MNQ, opening range, VWAP, gap, prop firm) vengono cercati prima di quelli generici
   e i risultati con parole come NQ/Nasdaq/futures salgono in cima.
+
+## Pass rate, tentativi e giorni minimi (Judge / dossier / Trader)
+- **Regola pass rate**: una strategia con pass rate della challenge ≥ 30% entro 5 sessioni (taglia migliore) è "da considerare", ≥ 35% "forte". Resta obbligatorio il Deflated Sharpe: un pass rate a 5 giorni da solo si può gonfiare aumentando la taglia (varianza).
+- **Tentativi**: il dossier mostra la probabilità cumulata di passare almeno una evaluation al 1°, 2°, 3°… account, per 25k e per 50k, con costo atteso e costo se falliscono tutti.
+- **Giorni minimi** (`timing.py`): per ogni strategia, per 25k e 50k, i giorni minimi/mediani/p10–p90 per passare, la probabilità entro 1/2/3/5/10 giorni e il minimo storico. In studio (in-campione) e sul blocco non visto dopo il Giudice. Gli studi vecchi non hanno `timing`: rilanciali.
+- **Trader**: ingressi (triangolo al prezzo reale), uscite (cerchio con P&L e motivo stop/target/segnale), linee SL/TP, lista trade cliccabile con ◀ ▶, filtri e export CSV, multiplo R.

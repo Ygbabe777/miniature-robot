@@ -199,7 +199,7 @@
     const TFS = [['1min', '1m'], ['5min', '5m'], ['15min', '15m'], ['30min', '30m'], ['60min', '1h'], ['1D', '1D']];
     const RNG = [['1D', 1, '1min'], ['5D', 5, '5min'], ['1M', 21, '30min'], ['3M', 63, '60min'], ['6M', 126, '1D'], ['1Y', 252, '1D'], ['ALL', 'all', '1D']];
     let tf = '15min', rng = '5D', chart = null, cs = null, vs = null, last = null, symbol = 'NQ', before = null;
-    let trades = null, loaded = [], slug = '', listKey = '', indSeries = [], market = '', markets = [];
+    let tfilter = 'all', focus = -1, ov = null; let trades = null, loaded = [], slug = '', listKey = '', indSeries = [], market = '', markets = [];
     const order = TFS.map(x => x[0]);
     const seg = (el, items, cur, fn) => { el.innerHTML = items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${label}</button>`).join(''); el.querySelectorAll('button').forEach(b => b.onclick = () => fn(b.dataset.k)); };
     function draw() {
@@ -224,15 +224,19 @@
         $('#tinfo').innerHTML = `O <b>${c.open}</b> H <b>${c.high}</b> L <b>${c.low}</b> C <b class="${up ? 'up' : 'dn'}">${c.close}</b>${v ? ' ' + t('t_vol') + ' <b>' + v.value + '</b>' : ''}`;
       });
       new ResizeObserver(() => fit()).observe(el);
+      chart.timeScale().subscribeVisibleTimeRangeChange(() => drawOverlay());
+      ['wheel', 'pointermove', 'pointerup', 'touchmove'].forEach(ev => el.addEventListener(ev, () => requestAnimationFrame(drawOverlay), { passive: true }));
     }
-    function fit(refit) { if (!chart) return; const el = $('#tchart'); chart.applyOptions({ width: el.clientWidth, height: el.clientHeight || 320 }); if (refit === true) chart.timeScale().fitContent(); }
+    function fit(refit) { if (!chart) return; const el = $('#tchart'); chart.applyOptions({ width: el.clientWidth, height: el.clientHeight || 320 }); if (refit === true) chart.timeScale().fitContent(); drawOverlay(); }
     function showLast() { if (last) $('#tinfo').textContent = last; }
 
     // entries (arrows) and exits (circles) of the selected strategy, snapped to the candles on screen
     function applyMarkers() {
       if (!cs) return;
-      if (!trades || !trades.trades.length || !loaded.length) { cs.setMarkers([]); return; }
-      const daily = typeof loaded[0][0] === 'string', times = loaded.map(c => c[0]), set = new Set(times);
+      if (!trades || !trades.trades.length || !loaded.length) { cs.setMarkers([]); drawOverlay(); return; }
+      const daily = typeof loaded[0][0] === 'string';
+      if (!daily) { cs.setMarkers([]); drawOverlay(); return; }
+      const times = loaded.map(c => c[0]), set = new Set(times);
       const snap = (epoch, session) => {
         if (daily) return set.has(session) ? session : null;
         if (epoch < times[0] || epoch > times[times.length - 1] + 86400) return null;
@@ -249,6 +253,77 @@
       mk.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
       cs.setMarkers(mk.slice(0, 4000));
     }
+
+    // ---- overlay: entry triangle at the real price, exit circle, connecting line, stop/target levels ----
+    const vis = () => (trades ? trades.trades.map((x, i) => Object.assign({ i }, x)).filter(x => tfilter === 'all' || (tfilter === 'win' && x.pnl > 0) || (tfilter === 'loss' && x.pnl <= 0) || (tfilter === 'long' && x.side > 0) || (tfilter === 'short' && x.side < 0)) : []);
+    const reasonTxt = x => t('tl_' + (x.reason === 'stop' || x.reason === 'target' ? x.reason : x.reason === 'open' ? 'open' : 'signal'));
+    function drawOverlay() {
+      const el = $('#tchart'); if (!el) return;
+      if (!ov) { ov = document.createElement('canvas'); ov.id = 'tov'; el.appendChild(ov); }
+      const w = el.clientWidth, h = el.clientHeight, dpr = window.devicePixelRatio || 1;
+      ov.style.width = w + 'px'; ov.style.height = h + 'px'; ov.width = w * dpr; ov.height = h * dpr;
+      const g = ov.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+      if (!trades || !loaded.length || typeof loaded[0][0] === 'string') return;
+      const ts = chart.timeScale(), t0 = loaded[0][0], t1 = loaded[loaded.length - 1][0] + 86400;
+      const X = tt => ts.timeToCoordinate(tt), Y = p => cs.priceToCoordinate(p);
+      const list = vis().filter(x => x.exit_t >= t0 && x.entry_t <= t1);
+      const few = list.length <= 40;
+      g.font = '10px ui-monospace, Consolas, monospace'; g.textBaseline = 'middle';
+      list.forEach(x => {
+        const sel = x.i === focus, win = x.pnl >= 0, col = win ? THEME.up : THEME.down;
+        let xe = X(x.entry_t), xx = X(x.exit_t); const ye = Y(x.entry_px), yx = Y(x.exit_px);
+        if (xe === null && xx === null) return;
+        if (xe === null) xe = 0; if (xx === null) xx = w;
+        if (ye === null || yx === null) return;
+        g.globalAlpha = focus >= 0 && !sel ? 0.35 : 1;
+        if (sel || few) {                                  // stop / target levels and the trade box
+          const lv = (p, c) => { const y = Y(p); if (y === null) return; g.strokeStyle = c; g.setLineDash([4, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(xe, y); g.lineTo(xx, y); g.stroke(); g.setLineDash([]); g.fillStyle = c; g.fillText(p === x.stop ? 'SL ' + x.stop : 'TP ' + x.target, xx + 3, y); };
+          if (x.stop) lv(x.stop, THEME.down); if (x.target) lv(x.target, THEME.up);
+          g.fillStyle = col + '22'; g.fillRect(Math.min(xe, xx), Math.min(ye, yx), Math.max(2, Math.abs(xx - xe)), Math.max(2, Math.abs(yx - ye)));
+        }
+        g.strokeStyle = col; g.lineWidth = sel ? 2.5 : 1.5; g.setLineDash([2, 2]); g.beginPath(); g.moveTo(xe, ye); g.lineTo(xx, yx); g.stroke(); g.setLineDash([]);
+        const up = x.side > 0, s = sel ? 8 : 6;               // entry triangle: up = long, down = short
+        g.fillStyle = up ? THEME.up : THEME.down; g.strokeStyle = '#fff'; g.lineWidth = 1; g.beginPath();
+        if (up) { g.moveTo(xe, ye - s); g.lineTo(xe - s, ye + s * .7); g.lineTo(xe + s, ye + s * .7); } else { g.moveTo(xe, ye + s); g.lineTo(xe - s, ye - s * .7); g.lineTo(xe + s, ye - s * .7); }
+        g.closePath(); g.fill(); g.stroke();
+        g.fillStyle = col; g.beginPath(); g.arc(xx, yx, sel ? 6 : 4.5, 0, 6.3); g.fill(); g.stroke();
+        if (few || sel) {
+          g.fillStyle = '#e8e8ee';
+          g.fillText((up ? 'L ' : 'S ') + x.entry_px, xe + 9, ye + (up ? 12 : -12));
+          g.fillStyle = col; g.fillText((win ? '+$' : '-$') + Math.abs(Math.round(x.pnl)) + ' · ' + reasonTxt(x) + (x.r != null ? ' · ' + x.r + 'R' : ''), xx + 8, yx + (win === up ? -12 : 12));
+        }
+      });
+      g.globalAlpha = 1;
+    }
+    const fmtT = e => new Date(e * 1000).toISOString().slice(5, 16).replace('T', ' ');
+    function renderList() {
+      const box = $('#tlist'); if (!box) return;
+      if (!trades || !trades.trades.length) { box.innerHTML = ''; return; }
+      const L = vis(), cols = t('tl_cols');
+      const fb = (k, label) => `<button data-f="${k}" class="${tfilter === k ? 'on' : ''}">${label}</button>`;
+      box.innerHTML = `<div class="bar">${fb('all', t('tl_all'))}${fb('win', t('tl_win'))}${fb('loss', t('tl_loss'))}${fb('long', t('tl_long'))}${fb('short', t('tl_short'))}
+        <button data-n="-1">${t('tl_prev')}</button><button data-n="1">${t('tl_next')}</button><span>${t('tl_of', { i: Math.max(0, L.findIndex(x => x.i === focus) + 1), n: L.length })}</span>
+        <button data-csv="1">${t('tl_csv')}</button></div>
+        <table><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>${L.map((x, k) => `<tr class="tr ${x.i === focus ? 'sel' : ''}" data-i="${x.i}"><td>${k + 1}</td><td>${fmtT(x.entry_t)}</td><td class="${x.side > 0 ? 'up' : 'dn'}">${x.side > 0 ? 'L' : 'S'}</td><td>${x.entry_px}</td><td>${x.exit_px}</td><td>${reasonTxt(x)}</td><td class="${x.pnl >= 0 ? 'up' : 'dn'}">${x.pnl >= 0 ? '+' : '-'}$${Math.abs(Math.round(x.pnl))}</td><td>${x.r == null ? '' : x.r}</td></tr>`).join('')}</table>`;
+      box.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { tfilter = b.dataset.f; focus = -1; renderList(); drawOverlay(); });
+      box.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { const k = L.findIndex(x => x.i === focus); const n = L[(k + +b.dataset.n + L.length) % L.length]; if (n) focusTrade(n.i); });
+      box.querySelectorAll('tr.tr').forEach(r => r.onclick = () => focusTrade(+r.dataset.i));
+      box.querySelector('[data-csv]').onclick = () => {
+        const rows = [['entry_time_utc', 'side', 'entry_px', 'exit_px', 'reason', 'pnl', 'r', 'stop', 'target']].concat(L.map(x => [new Date(x.entry_t * 1000).toISOString(), x.side > 0 ? 'long' : 'short', x.entry_px, x.exit_px, x.reason, x.pnl, x.r == null ? '' : x.r, x.stop || '', x.target || '']));
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([rows.map(r => r.join(',')).join('\n')], { type: 'text/csv' })); a.download = (slug || 'trades') + '.csv'; a.click();
+      };
+      const sel = box.querySelector('tr.sel'); if (sel) sel.scrollIntoView({ block: 'nearest' });
+    }
+    async function focusTrade(i) {
+      focus = i; const x = trades.trades[i];
+      const day = new Date(x.entry_t * 1000); day.setUTCDate(day.getUTCDate() + 2);
+      if (!loaded.length || typeof loaded[0][0] === 'string' || x.entry_t < loaded[0][0] || x.exit_t > loaded[loaded.length - 1][0]) {
+        before = day.toISOString().slice(0, 10); rng = '5D'; tf = order.includes(trades.tf) && trades.tf !== '1D' ? trades.tf : '15min'; draw(); await load();
+      }
+      const pad = Math.max(3600 * 3, (x.exit_t - x.entry_t) * 2);
+      try { chart.timeScale().setVisibleRange({ from: x.entry_t - pad, to: x.exit_t + pad }); } catch (e) {}
+      renderList(); drawOverlay();
+    }
     function note() {
       let h = '';
       if (trades) {
@@ -258,7 +333,7 @@
         h += `<div>${t('t_legend')}</div>`;
       }
       h += `<div>${t('t_note', { s: symbol })}</div>`;
-      $('#tnote').innerHTML = h;
+      $('#tnote').innerHTML = h; renderList();
     }
     // the indicator lines the selected strategy really uses (EMAs, channels, bands, opening range, VWAP)
     async function drawIndicators() {
@@ -297,7 +372,7 @@
       if (bumpNote) { $('#tinfo').textContent = last + ' · ' + t('t_bumped', bumpNote); bumpNote = null; }
     }
     async function pick(s) {
-      slug = s; trades = null;
+      slug = s; trades = null; focus = -1; tfilter = 'all';
       if (!s) { applyMarkers(); drawIndicators(); note(); return; }
       const d = await api('/api/trades/' + encodeURIComponent(s));
       if (d.error) { note(); return; }
