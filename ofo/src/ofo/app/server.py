@@ -45,6 +45,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                 if u.path == "/api/events":
                     after = int(parse_qs(u.query).get("after", ["0"])[0])
                     return self._json(lab.events_after(after))
+                if u.path == "/api/directives":
+                    return self._json({"directives": lab.directives.public()})
                 if u.path == "/api/web":
                     return self._json(lab.web_activity(int(parse_qs(u.query).get("after", ["0"])[0])))
                 if u.path == "/api/candles":
@@ -104,6 +106,10 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.set_budget(data.get("remaining_usd"), data.get("weekly_usd"), data.get("usd_per_million")) or {})
                 if u.path == "/api/markets":
                     return self._json(lab.set_markets(list(data.get("markets") or [])))
+                if u.path == "/api/directives":
+                    return self._json(lab.tell_researcher(str(data.get("text", "")), data.get("kind")))
+                if u.path == "/api/directives/remove":
+                    return self._json(lab.forget_directive(str(data.get("id", ""))))
                 if u.path == "/api/autopilot":
                     return self._json(lab.set_autopilot(data.get("enabled"), data.get("max_trials_per_day")))
                 self._json({"error": "not found"}, 404)

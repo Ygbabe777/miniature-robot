@@ -38,6 +38,7 @@ from ..economics import load_assumptions, load_goal
 from ..accounts import demo_accounts, load_accounts
 from ..data import resample
 from ..trades import extract_trades, summarize
+from ..directives import Directives
 from ..scout import Scout
 from ..sources import agent_reach_status, config_problem, missing_channels
 from ..strategies import INDICATOR_HELP, TEMPLATES
@@ -131,6 +132,7 @@ class Lab:
         self.ap_first_run = first
         self.dossier_dir = self.work / "dossiers"
         self.obs_file = self.data / "obsidian.json"
+        self.directives = Directives(self.data / "directives.json")
         self.obs = {"vault": os.environ.get("OFO_OBSIDIAN_VAULT") or "", "last": None, "error": None}
         if self.obs_file.exists() and not self.obs["vault"]:
             self.obs["vault"] = json.loads(self.obs_file.read_text()).get("vault", "")
@@ -389,7 +391,7 @@ class Lab:
             llm = self.llm.get("scout", self.llm.get("researcher")) if isinstance(self.llm, dict) else \
                 (None if isinstance(self.llm, NoLLM) else self.llm)
             self._scout = Scout(self.data / "scout", self.ideas, llm, self.events, fetch=self._fetch, language=self.language,
-                                channels=self._channels)
+                                channels=self._channels, directives=self.directives)
         self._scout.language = self.language
         return self._scout
 
@@ -449,6 +451,24 @@ class Lab:
                     c["at"] = time.time(); c["busy"] = False
             threading.Thread(target=go, daemon=True).start()
         return c["data"]
+
+    def tell_researcher(self, text: str, kind: str | None = None) -> dict:
+        """The owner writes to the Researcher: what to search, keep searching, stop searching, or a general note."""
+        try:
+            item = self.directives.add(text, kind)
+        except ValueError:
+            return {"error": "empty"}
+        msg = {"search": "Ricevuto: cerco subito", "keep": "Ricevuto: continuo a cercare", "stop": "Ricevuto: smetto di cercare",
+               "note": "Ricevuto: ne terrò conto"}[item["kind"]]
+        self.events.emit("researcher", "message", f"📌 {msg}: {item['topic'][:100]}", {"id": item["id"], "kind": item["kind"]})
+        started = False
+        if item["kind"] in ("search", "keep") and not self._scout_running:
+            started = bool(self.scout_run().get("started", True)) if self.llm_allowed("scout") else False
+        return {"item": item, "directives": self.directives.public(), "search_started": started}
+
+    def forget_directive(self, did: str) -> dict:
+        self.directives.remove(did)
+        return {"directives": self.directives.public()}
 
     def web_activity(self, after: int = 0, limit: int = 120) -> dict:
         """Live feed of the Researcher's internet use: every search, result list, page read and save (newest last)."""
@@ -787,9 +807,10 @@ class Lab:
     def memory_text(self) -> str:
         """Facts from past tests, put in the Researcher's and Planner's prompts so they build on what was learned."""
         try:
-            return knowledge.memory_text(self.knowledge_graph())
+            mem = knowledge.memory_text(self.knowledge_graph())
         except Exception:
-            return ""
+            mem = ""
+        return (self.directives.prompt_text() + "\n" + mem).strip()
 
     # -- Obsidian ---------------------------------------------------------------------------
     def _vault_ideas(self) -> Path | None:

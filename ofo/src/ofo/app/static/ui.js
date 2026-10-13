@@ -554,6 +554,20 @@
   $('#close').onclick = () => { $('#modal').hidden = true; LabCharts.destroyAll(); };
   document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#close').click(); });
 
+  // ---------- talk to the Researcher: search / keep searching / stop searching / notes ----------
+  const DKIND = { search: 'dir_search', keep: 'dir_keep', stop: 'dir_stop', note: 'dir_note' };
+  function renderDirectives(list) {
+    $('#directives').innerHTML = `<form id="dirform" class="srow"><input id="dirin" placeholder="${esc(t('dir_ph'))}" autocomplete="off" style="flex:1;min-width:0">
+      <select id="dirkind"><option value="">${t('dir_auto')}</option>${Object.entries(DKIND).map(([k, v]) => `<option value="${k}">${t(v)}</option>`).join('')}</select>
+      <button class="btn small">${t('dir_send')}</button></form>
+      <div class="spapers">${list.length ? list.slice().reverse().map(d => `<div class="dir ${d.active ? '' : 'used'}"><span class="dk ${d.kind}">${t(DKIND[d.kind])}</span> ${esc(d.topic)}${d.kind === 'search' && !d.active ? ' ✓' : ''} <button class="x" data-id="${esc(d.id)}" title="${t('dir_remove')}">✕</button></div>`).join('') : `<div class="smeta">${t('dir_empty')}</div>`}</div>`;
+    $('#dirform').onsubmit = async (e) => { e.preventDefault(); const v = $('#dirin').value.trim(); if (!v) return;
+      const r = await api('/api/directives', { method: 'POST', json: { text: v, kind: $('#dirkind').value || null } });
+      if (r.directives) { renderDirectives(r.directives); toast('📌 ' + esc(r.item.topic.slice(0, 100)) + (r.search_started ? ' — ' + t('dir_started') : ''), 4000); } scoutKey = ''; };
+    $('#directives').querySelectorAll('button.x').forEach(b => b.onclick = async () => { const r = await api('/api/directives/remove', { method: 'POST', json: { id: b.dataset.id } }); renderDirectives(r.directives); });
+  }
+  api('/api/directives').then(d => renderDirectives(d.directives || [])).catch(() => {});
+
   // ---------- PDF the Researcher asked for: notification + upload ----------
   function toast(html, ms) {
     let box = $('#toasts'); if (!box) { box = document.createElement('div'); box.id = 'toasts'; document.body.appendChild(box); }

@@ -1,0 +1,37 @@
+from ofo.directives import Directives, split_kind, words
+
+
+def test_kind_is_read_from_the_first_words_in_italian_and_english(tmp_path):
+    assert split_kind("cerca opening range NQ") == ("search", "opening range NQ")
+    assert split_kind("Continua a cercare gap fill") == ("keep", "gap fill")
+    assert split_kind("smetti di cercare crypto") == ("stop", "crypto")
+    assert split_kind("stop mean reversion")[0] == "stop" and split_kind("evita il forex")[1] == "il forex"
+    assert split_kind("preferisco strategie con stop stretti")[0] == "note"
+    assert split_kind("cerca X", kind="stop")[0] == "stop"                      # an explicit choice in the UI wins
+
+
+def test_search_is_used_once_keep_every_run_and_stop_blocks_papers(tmp_path):
+    d = Directives(tmp_path / "d.json")
+    d.add("cerca gap fill NQ"); d.add("continua opening range"); d.add("smetti di cercare crypto bitcoin")
+    assert d.take_searches() == ["opening range", "gap fill NQ"]
+    assert d.take_searches() == ["opening range"]                              # 'search' consumed, 'keep' stays
+    assert d.blocked("Bitcoin and crypto momentum") and not d.blocked("Bitcoin only")   # all stop words must appear
+    assert Directives(tmp_path / "d.json").active("keep")                      # persisted
+
+
+def test_scout_follows_directives_and_researcher_prompt_carries_them(tmp_path):
+    import ofo.scout as scout_mod
+    from ofo.scout import Scout
+    d = Directives(tmp_path / "d.json")
+    d.add("cerca overnight gap fill"); d.add("smetti di cercare crypto")
+    scout_mod.search_arxiv = lambda q, fetch=None: [{"id": "a:1", "source": "arxiv", "title": "Crypto futures momentum", "abstract": "crypto futures intraday trading strategy " * 10,
+                                                      "url": "u", "pdf_url": "", "published": "2024", "authors": []},
+                                                     {"id": "a:2", "source": "arxiv", "title": "NQ gap fill", "abstract": "nasdaq futures gap trading strategy intraday " * 10,
+                                                      "url": "u2", "pdf_url": "", "published": "2024", "authors": []}]
+    sc = Scout(tmp_path / "s", tmp_path / "i", None, None, fetch=object(), use_semantic_scholar=False, use_ssrn=False, directives=d)
+    qs = sc.next_queries()
+    assert qs[0] == "overnight gap fill"
+    found = sc._candidates(qs)
+    assert [p["id"] for p in found] == ["a:2"]                                   # the crypto paper was dropped
+    txt = d.prompt_text()
+    assert "LOOK FOR: overnight gap fill" in txt and "AVOID: crypto" in txt.replace("DO NOT PROPOSE / AVOID", "AVOID")

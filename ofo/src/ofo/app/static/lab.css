@@ -203,3 +203,9 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 .toast{position:relative;background:var(--panel);border:3px solid var(--accent);box-shadow:5px 5px 0 #000b;padding:10px 30px 10px 12px;font-size:12px;line-height:1.4}
 .toast .x{position:absolute;top:4px;right:6px;background:none;border:0;color:inherit;cursor:pointer;font-size:14px}
 .toast a{color:var(--accent);margin-right:8px}
+
+#directives .srow{display:flex;gap:4px;margin-bottom:6px}#directives input,#directives select{background:#0b0b0e;color:inherit;border:2px solid var(--line);padding:4px;font:inherit;font-size:11.5px}
+#directives .dir{display:flex;gap:6px;align-items:center;padding:2px 0;font-size:11.5px}#directives .dir.used{opacity:.5}
+#directives .dk{font-size:9.5px;text-transform:uppercase;padding:0 4px;border:1px solid #555}
+#directives .dk.search{color:#8ab4ff}#directives .dk.keep{color:#3ddc97}#directives .dk.stop{color:#ff5c6c}#directives .dk.note{color:#e8c36a}
+#directives .x{margin-left:auto;background:none;border:0;color:inherit;cursor:pointer}

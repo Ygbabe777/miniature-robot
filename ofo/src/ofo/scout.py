@@ -45,7 +45,8 @@ def safe_name(pid: str) -> str:
 class Scout:
     def __init__(self, workdir, ideas_dir, llm=None, events=None, fetch=None, now=time.time, language: str = "Italian",
                  topics=None, use_semantic_scholar: bool = True, queries_per_run: int = 3, max_picks: int = 4,
-                 use_ssrn: bool = True, channels: list[Channel] | None = None):
+                 use_ssrn: bool = True, channels: list[Channel] | None = None, directives=None):
+        self.directives = directives
         self.dir = Path(workdir); self.dir.mkdir(parents=True, exist_ok=True)
         self.out = Path(ideas_dir) / "web"
         self.llm, self.events, self.now, self.language = llm, events, now, language
@@ -90,7 +91,10 @@ class Scout:
 
     def next_queries(self) -> list[str]:
         """The topics searched longest ago (never searched = first)."""
-        return sorted(self.all_topics, key=lambda q: self.state["queries"].get(q, 0))[: self.queries_per_run]
+        d = self.directives
+        mine = d.take_searches() if d else []                      # what the owner asked for goes first, then the rotation
+        rest = [q for q in sorted(self.all_topics, key=lambda q: self.state["queries"].get(q, 0)) if not (d and d.blocked(q))]
+        return (mine + rest)[: max(self.queries_per_run, len(mine))]
 
     @property
     def all_topics(self) -> list[str]:
@@ -162,6 +166,8 @@ class Scout:
                 batch += more
             self.state["queries"][q] = self.now()
             for p in batch:
+                if self.directives and self.directives.blocked(p["title"] + " " + p["abstract"]):
+                    continue                                          # the owner said: stop searching this
                 if p["id"] in ids or p["id"] in self.state["papers"] or self.state["seen"].get(p["id"], 0) >= 3:
                     continue
                 if not is_financial(p["title"] + " " + p["abstract"]):
@@ -294,6 +300,7 @@ class Scout:
         a = self.state["auto"]; last = self.state["last_run"]
         return {"running": running, "auto": a, "health": self.state.get("health", {}), "last_run": last,
                 "next_run": (last["at"] + a["minutes"] * 60) if (a["enabled"] and last) else None,
+                "directives": self.directives.public() if self.directives else [],
                 "manual_ssrn": [{"id": k, "title": v.get("title"), "url": v.get("url")} for k, v in self.state["papers"].items()
                                 if v.get("manual") and v.get("status") == "abstract"][:12],
                 "queries_done": len(self.state["queries"]), "queries_total": len(self.all_topics),
