@@ -14,6 +14,11 @@ from .strategies import TEMPLATES, TIMEFRAMES
 
 MAX_COMBOS = 3000
 MAX_VALUES_PER_PARAM = 40
+CARD_FIELDS = {                       # the hypothesis card every NEW strategy needs (written in the owner's language)
+    "fenomeno": "fenomeno di mercato ipotizzato", "persistenza": "perché potrebbe persistere", "condizioni_funziona": "condizioni in cui dovrebbe funzionare",
+    "condizioni_fallisce": "condizioni in cui dovrebbe fallire", "segnale": "segnale osservabile", "regola_ingresso": "regola d'ingresso",
+    "regola_uscita": "regola d'uscita iniziale", "costi_limiti": "costi e limiti di esecuzione", "previsione_falsificabile": "previsione falsificabile",
+    "criterio_rigetto": "criterio di rigetto"}
 
 
 class SpecError(ValueError):
@@ -28,6 +33,18 @@ class StrategySpec:
     timeframes: list = field(default_factory=lambda: list(TIMEFRAMES))
     rationale: str = ""
     source: str = ""
+    hypothesis: dict = field(default_factory=dict)      # the hypothesis card (CARD_FIELDS)
+    max_configs: int | None = None                      # cap on distinct parameter combinations tested (None: the template's cap)
+
+    @property
+    def family(self) -> str:
+        from .research_config import family_of
+        return family_of(self.template)
+
+    def planned_configs(self) -> int:
+        """Parameter combinations the search will test at most: the whole grid if it fits the cap, otherwise the cap (staged search)."""
+        from .research_config import max_configs_for
+        return min(len(self.combos()), self.max_configs or max_configs_for(self.template))
 
     def combos(self) -> list[dict]:
         t = TEMPLATES[self.template]
@@ -41,7 +58,8 @@ class StrategySpec:
 
     @property
     def n_candidates(self) -> int:
-        return len(self.combos()) * len(self.timeframes)
+        """Candidates the sweep will evaluate AT MOST (configurations x timeframes): the number registered as trials up front."""
+        return self.planned_configs() * len(self.timeframes)
 
 
 def _values(name: str, spec, typ, lo, hi) -> list:
@@ -67,7 +85,16 @@ def _values(name: str, spec, typ, lo, hi) -> list:
     return sorted(set(out))
 
 
-def from_dict(d: dict, allow_control: bool = False) -> StrategySpec:
+def check_card(card) -> dict:
+    if not isinstance(card, dict):
+        raise SpecError("hypothesis must be an object with the 10 card fields")
+    missing = [k for k in CARD_FIELDS if len(str(card.get(k, "")).strip()) < 12]
+    if missing:
+        raise SpecError("hypothesis card incomplete: missing or too short " + ", ".join(missing))
+    return {k: str(card[k]).strip()[:600] for k in CARD_FIELDS}
+
+
+def from_dict(d: dict, allow_control: bool = False, require_card: bool = False) -> StrategySpec:
     if not isinstance(d, dict):
         raise SpecError("spec must be an object")
     tname = d.get("template")
@@ -80,13 +107,16 @@ def from_dict(d: dict, allow_control: bool = False) -> StrategySpec:
     if set(raw) != set(t.params):
         raise SpecError(f"{tname} needs exactly the parameters {sorted(t.params)}, got {sorted(raw)}")
     ranges = {n: _values(n, raw[n], *t.params[n]) for n in t.params}
-    tfs = d.get("timeframes") or list(TIMEFRAMES)
+    from .research_config import execution_timeframes
+    tfs = d.get("timeframes") or execution_timeframes()
     bad = [x for x in tfs if x not in TIMEFRAMES]
     if bad:
         raise SpecError(f"timeframes {bad} not allowed; use {list(TIMEFRAMES)}")
+    card = check_card(d.get("hypothesis")) if (require_card or d.get("hypothesis")) else {}
+    mc = d.get("max_configs")
     spec = StrategySpec(str(d.get("name") or tname), tname, ranges, list(tfs),
-                        str(d.get("rationale", "")), str(d.get("source", "")))
-    n = spec.n_candidates
+                        str(d.get("rationale", "")), str(d.get("source", "")), card, int(mc) if mc else None)
+    n = len(spec.combos()) * len(spec.timeframes)
     if n == 0:
         raise SpecError("no valid parameter combination")
     if n > MAX_COMBOS:

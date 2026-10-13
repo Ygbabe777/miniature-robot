@@ -49,7 +49,8 @@ def test_hidden_block_cannot_influence_anything_the_optimizer_or_the_agents_see(
     """Replace the final 25% of the data with a different random future: every development-side output (surface,
     walk-forward, stop/target table INCLUDING its trade statistics, quality checks, beta check) must be identical."""
     bars = synth(n_sessions=300, drift_ar=0.9, seed=5)
-    alt = alter_future(bars, 0.75)
+    from ofo.research_config import get as research_cfg
+    alt = alter_future(bars, 1 - research_cfg()["holdout_fraction"])
     spec = from_dict(SPEC)
     a = run_study(bars, spec, MNQ, PRESETS["50k"], TrialRegistry(tmp_path / "a.json"))
     b = run_study(alt, spec, MNQ, PRESETS["50k"], TrialRegistry(tmp_path / "b.json"))
@@ -81,7 +82,7 @@ def test_nested_walk_forward_never_uses_the_future_to_choose_earlier_windows():
         key = _session_key(b); days = sorted(key.unique()); cut = days[int(len(days) * 0.75)]
         dev_days = [d for d in days if d < cut]
         dev = b[np.asarray(key < cut)]
-        cands, series = _sweep(dev, spec, MNQ, 2, 1.0)
+        cands, series, _ = _sweep(dev, spec, MNQ, 2, 1.0)
         tfs = {tf: resample(dev, tf) for tf in spec.timeframes}
         wf, picks = nested_walk_forward(tfs, cands, series, dev_days, MNQ, 2, 1.0, 60, 10)
         return wf, dev_days, days[int(len(days) * 0.7)]
@@ -99,7 +100,7 @@ def test_nested_walk_forward_includes_exits_the_final_strategy_uses():
     spec = from_dict(SPEC)
     key = _session_key(bars); days = sorted(key.unique()); cut = days[int(len(days) * 0.75)]
     dev_days = [d for d in days if d < cut]; dev = bars[np.asarray(key < cut)]
-    cands, series = _sweep(dev, spec, MNQ, 2, 1.0)
+    cands, series, _ = _sweep(dev, spec, MNQ, 2, 1.0)
     tfs = {tf: resample(dev, tf) for tf in spec.timeframes}
     nested, picks = nested_walk_forward(tfs, cands, series, dev_days, MNQ, 2, 1.0, 60, 10)
     plain, _ = walk_forward(series, 60, 10)
@@ -245,12 +246,13 @@ def test_study_dedupe_through_the_loop_skips_a_repeat(tmp_path):
 
 
 def test_every_timeframe_is_tried_and_the_final_version_is_the_best_timeframe(tmp_path):
-    from ofo.strategies import TIMEFRAMES
+    from ofo.research_config import execution_timeframes
+    TIMEFRAMES = execution_timeframes()
     bars = synth(n_sessions=200, drift_ar=0.9, seed=7)
     rep = run_study(bars, from_dict(SPEC), MNQ, PRESETS["50k"], TrialRegistry(tmp_path / "r.db"), all_timeframes=True)
     by = rep["by_timeframe"]
     assert set(by["timeframes"]) == set(TIMEFRAMES)                         # the spec asked for two: all four were tested
-    assert rep["n_candidates"] == 5 * len(TIMEFRAMES)                        # and every one of them counts as a trial
+    assert rep["n_candidates"] == 5 * len(TIMEFRAMES) and rep["trials"]["executed"] == rep["n_candidates"]      # and every one of them counts as a trial
     assert by["best_tf"] == rep["series"]["best_params"]["tf"]               # table and final candidate agree
     tfs = by["timeframes"]
     assert tfs[by["best_tf"]]["score"] == max(v["score"] for v in tfs.values())   # chosen by development NPFV

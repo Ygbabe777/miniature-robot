@@ -1,0 +1,502 @@
+{
+ "_README": "Configurazione VERSIONATA del motore di ricerca. I valori sono una baseline iniziale da validare, non requisiti universali: cambia 'version' quando li modifichi (la versione e l'hash entrano nel registro degli esperimenti). I tetti giornalieri sono massimali: il motore non deve consumarli.",
+ "version": "1.0",
+ "markets": {
+  "priority": [
+   "NQ"
+  ],
+  "later": [
+   "ES"
+  ],
+  "note": "ES/MES dopo aver validato il processo su NQ/MNQ"
+ },
+ "timeframes": {
+  "execution": [
+   "1min",
+   "5min"
+  ],
+  "context": [
+   "15min"
+  ],
+  "note": "1 e 5 minuti valutati separatamente; il contesto a 15 minuti solo point-in-time (barre chiuse)"
+ },
+ "budget": {
+  "screen_per_day": 1000,
+  "deep_per_day": 100,
+  "stage_split": {
+   "hypothesis": 0.15,
+   "screening": 0.35,
+   "validation": 0.3,
+   "robustness": 0.15,
+   "audit": 0.05
+  },
+  "note": "total_trials NON è qui: resta quello già presente (autopilot max_trials_total). screen_per_day = configurazioni valutate nello screening; deep_per_day = candidati che entrano nella validazione approfondita; gli altri tetti di fase derivano dalle percentuali."
+ },
+ "walk_forward": {
+  "min_windows": 6,
+  "train_days": 120,
+  "test_days": 20,
+  "min_test_days": 10,
+  "note": "se i dati non permettono 6 finestre OOS cronologiche con almeno min_test_days sessioni ciascuna, lo studio lo dichiara e non può essere approvato pienamente"
+ },
+ "sample": {
+  "min_oos_trades": 200,
+  "note": "indicativo: oltre al numero si verificano dipendenza (autocorrelazione), concentrazione dei profitti e intervalli di incertezza"
+ },
+ "holdout_fraction": 0.18,
+ "holdout_note": "15-20% indicativo; con pochi dati un blocco così piccolo può avere troppi pochi trade e lo studio risulta INSUFFICIENT_EVIDENCE",
+ "search": {
+  "coarse_step": 2,
+  "random_extra_fraction": 0.25,
+  "refine_top": 3,
+  "refine_share": 0.25,
+  "seed": 7,
+  "note": "se la griglia completa sta nel massimo per template si testa tutta; altrimenti griglia grossolana + casuale stratificata + ricerca locale attorno alle zone promettenti (punteggio da vicinato, non dal picco)"
+ },
+ "early_stop": {
+  "min_fraction": 0.3,
+  "min_configs": 8,
+  "z": 1.645,
+  "note": "regola sequenziale conservativa: ci si ferma solo se anche il MIGLIORE dei candidati già valutati ha il limite superiore del Sharpe (95%) sotto zero. Le configurazioni non eseguite non contano come trial."
+ },
+ "allocation": {
+  "prior_strength": 20,
+  "prior_rate": 0.05,
+  "novelty_weight": 1.0,
+  "min_family_share": 0.1,
+  "max_family_share": 0.4,
+  "note": "restringimento verso un prior forte: un singolo risultato estremo non sposta il budget"
+ },
+ "cost_model_version": "1",
+ "cost_model_note": "commissioni e slippage del contratto + riempimento alla chiusura della barra del segnale; cambiare questa versione crea esperimenti nuovi senza sovrascrivere i vecchi",
+ "dsr_trials": "raw",
+ "dsr_trials_note": "raw = tutti i trial registrati (prudente); l'effettivo (corretto per la correlazione) è calcolato e mostrato ma non usato per approvare",
+ "families": {
+  "A": {
+   "label": "Opening Range Breakout e Opening Drive",
+   "templates": [
+    "orb",
+    "orb_retest"
+   ],
+   "data": [
+    "ohlcv"
+   ],
+   "status": "active",
+   "note": "Opening Drive puro (direzione dei primi minuti) è coperto solo dall'ORB con range breve"
+  },
+  "B": {
+   "label": "VWAP e value-area mean reversion",
+   "templates": [
+    "vwap_dev",
+    "mean_reversion"
+   ],
+   "data": [
+    "ohlcv"
+   ],
+   "status": "active",
+   "note": "la value area (profilo di volume) non è ricostruita: si usano VWAP e deviazione standard"
+  },
+  "C": {
+   "label": "Sweep e reclaim di livelli strutturali",
+   "templates": [
+    "sweep_reclaim"
+   ],
+   "data": [
+    "ohlcv"
+   ],
+   "status": "active"
+  },
+  "D": {
+   "label": "Order flow, absorption e imbalance",
+   "templates": [],
+   "data": [
+    "trades_with_aggressor",
+    "depth_L2",
+    "synchronised_timestamps"
+   ],
+   "status": "blocked_no_data",
+   "note": "servono tick con lato aggressore e profondità sincronizzati: con sole barre OHLCV l'informazione disponibile al segnale non è ricostruibile, nessuna approvazione statistica piena"
+  },
+  "E": {
+   "label": "Trend continuation e pullback",
+   "templates": [
+    "trend_pullback",
+    "ema_cross",
+    "breakout"
+   ],
+   "data": [
+    "ohlcv"
+   ],
+   "status": "active"
+  },
+  "F": {
+   "label": "Overnight inventory e transizione overnight→RTH",
+   "templates": [
+    "overnight_gap"
+   ],
+   "data": [
+    "ohlcv"
+   ],
+   "status": "active"
+  },
+  "G": {
+   "label": "Strategie regime-adaptive",
+   "templates": [
+    "regime_adaptive"
+   ],
+   "data": [
+    "ohlcv"
+   ],
+   "status": "active"
+  },
+  "GEX/options": {
+   "label": "GEX e options flow",
+   "templates": [],
+   "data": [
+    "options_chain_history",
+    "gamma_by_strike",
+    "timestamps_point_in_time"
+   ],
+   "status": "blocked_no_data",
+   "note": "nessun dato storico di opzioni disponibile: bloccata"
+  }
+ },
+ "search_space": {
+  "orb": {
+   "max_configs": 16,
+   "params": {
+    "or_minutes": {
+     "init": 30,
+     "range": [
+      10,
+      60
+     ],
+     "step": 5,
+     "scale": "linear",
+     "why": "i primi 10-60 minuti concentrano l'afflusso istituzionale: oltre un'ora il range non è più 'di apertura'",
+     "depends_on": ""
+    }
+   }
+  },
+  "orb_retest": {
+   "max_configs": 60,
+   "params": {
+    "or_minutes": {
+     "init": 30,
+     "range": [
+      10,
+      60
+     ],
+     "step": 10,
+     "scale": "linear",
+     "why": "come l'ORB",
+     "depends_on": ""
+    },
+    "retest_bars": {
+     "init": 6,
+     "range": [
+      2,
+      12
+     ],
+     "step": 2,
+     "scale": "linear",
+     "why": "il retest deve avvenire a breve o il setup scade",
+     "depends_on": ""
+    },
+    "tol": {
+     "init": 0.15,
+     "range": [
+      0.0,
+      0.5
+     ],
+     "step": 0.1,
+     "scale": "linear",
+     "why": "tolleranza del ritorno sul livello, in frazioni del range",
+     "depends_on": "or_minutes"
+    }
+   }
+  },
+  "vwap_dev": {
+   "max_configs": 48,
+   "params": {
+    "window": {
+     "init": 60,
+     "range": [
+      20,
+      200
+     ],
+     "step": 20,
+     "scale": "linear",
+     "why": "finestra della deviazione standard: sessione intera o ore",
+     "depends_on": ""
+    },
+    "z": {
+     "init": 2.0,
+     "range": [
+      1.0,
+      3.0
+     ],
+     "step": 0.25,
+     "scale": "linear",
+     "why": "sotto 1 ci sono troppi segnali, sopra 3 troppo pochi",
+     "depends_on": ""
+    }
+   }
+  },
+  "mean_reversion": {
+   "max_configs": 48,
+   "params": {
+    "window": {
+     "init": 50,
+     "range": [
+      20,
+      200
+     ],
+     "step": 20,
+     "scale": "linear",
+     "why": "scala del ritorno alla media",
+     "depends_on": ""
+    },
+    "z": {
+     "init": 2.0,
+     "range": [
+      1.0,
+      3.0
+     ],
+     "step": 0.25,
+     "scale": "linear",
+     "why": "stiramento minimo prima di opporsi al prezzo",
+     "depends_on": ""
+    }
+   }
+  },
+  "sweep_reclaim": {
+   "max_configs": 72,
+   "params": {
+    "sweep_atr": {
+     "init": 0.25,
+     "range": [
+      0.1,
+      0.8
+     ],
+     "step": 0.1,
+     "scale": "linear",
+     "why": "il prezzo deve davvero superare il livello (stop presi) ma non crollare oltre",
+     "depends_on": ""
+    },
+    "reclaim_bars": {
+     "init": 3,
+     "range": [
+      1,
+      6
+     ],
+     "step": 1,
+     "scale": "linear",
+     "why": "il ritorno dentro deve essere rapido: altrimenti è una rottura vera",
+     "depends_on": ""
+    },
+    "level_set": {
+     "init": 2,
+     "range": [
+      0,
+      2
+     ],
+     "step": 1,
+     "scale": "linear",
+     "why": "0 giorno precedente, 1 overnight, 2 entrambi: tre ipotesi distinte, non un parametro continuo",
+     "depends_on": ""
+    },
+    "ctx": {
+     "init": 0,
+     "range": [
+      0,
+      1
+     ],
+     "step": 1,
+     "scale": "linear",
+     "why": "filtro opzionale di trend a 15 minuti (point-in-time): l'ablation dice se serve",
+     "depends_on": ""
+    }
+   }
+  },
+  "overnight_gap": {
+   "max_configs": 48,
+   "params": {
+    "gap_atr": {
+     "init": 0.5,
+     "range": [
+      0.2,
+      1.5
+     ],
+     "step": 0.1,
+     "scale": "linear",
+     "why": "gap piccolo = rumore; molto grande = notizia",
+     "depends_on": ""
+    },
+    "mode": {
+     "init": 0,
+     "range": [
+      0,
+      1
+     ],
+     "step": 1,
+     "scale": "linear",
+     "why": "0 fade, 1 continuazione: due ipotesi opposte, entrambe da misurare",
+     "depends_on": ""
+    },
+    "exit_min": {
+     "init": 120,
+     "range": [
+      60,
+      240
+     ],
+     "step": 30,
+     "scale": "linear",
+     "why": "l'effetto dell'inventario si esaurisce nelle prime ore",
+     "depends_on": ""
+    }
+   }
+  },
+  "regime_adaptive": {
+   "max_configs": 72,
+   "params": {
+    "er_window": {
+     "init": 12,
+     "range": [
+      6,
+      24
+     ],
+     "step": 3,
+     "scale": "linear",
+     "why": "in barre da 15 minuti: 1.5-6 ore di contesto",
+     "depends_on": ""
+    },
+    "er_thresh": {
+     "init": 0.3,
+     "range": [
+      0.2,
+      0.5
+     ],
+     "step": 0.05,
+     "scale": "linear",
+     "why": "soglia dell'efficiency ratio tra regime direzionale e bilanciato",
+     "depends_on": ""
+    },
+    "lookback": {
+     "init": 40,
+     "range": [
+      20,
+      120
+     ],
+     "step": 20,
+     "scale": "linear",
+     "why": "scala di breakout e z-score",
+     "depends_on": ""
+    },
+    "z": {
+     "init": 1.5,
+     "range": [
+      1.0,
+      2.5
+     ],
+     "step": 0.25,
+     "scale": "linear",
+     "why": "stiramento per la logica di reversione",
+     "depends_on": ""
+    }
+   }
+  },
+  "trend_pullback": {
+   "max_configs": 72,
+   "params": {
+    "ema_fast": {
+     "init": 13,
+     "range": [
+      8,
+      34
+     ],
+     "step": 5,
+     "scale": "linear",
+     "why": "trend di breve; pullback misurato su questa media",
+     "depends_on": ""
+    },
+    "ema_slow": {
+     "init": 55,
+     "range": [
+      40,
+      150
+     ],
+     "step": 20,
+     "scale": "linear",
+     "why": "trend di fondo",
+     "depends_on": "ema_fast < ema_slow"
+    },
+    "pullback_z": {
+     "init": 1.0,
+     "range": [
+      0.5,
+      2.0
+     ],
+     "step": 0.25,
+     "scale": "linear",
+     "why": "profondità del ritracciamento",
+     "depends_on": ""
+    },
+    "ctx": {
+     "init": 0,
+     "range": [
+      0,
+      1
+     ],
+     "step": 1,
+     "scale": "linear",
+     "why": "filtro opzionale a 15 minuti: l'ablation dice se serve",
+     "depends_on": ""
+    }
+   }
+  },
+  "ema_cross": {
+   "max_configs": 48,
+   "params": {
+    "fast": {
+     "init": 9,
+     "range": [
+      5,
+      21
+     ],
+     "step": 4,
+     "scale": "linear",
+     "why": "baseline",
+     "depends_on": ""
+    },
+    "slow": {
+     "init": 50,
+     "range": [
+      30,
+      150
+     ],
+     "step": 20,
+     "scale": "linear",
+     "why": "baseline",
+     "depends_on": "fast < slow"
+    }
+   }
+  },
+  "breakout": {
+   "max_configs": 24,
+   "params": {
+    "lookback": {
+     "init": 40,
+     "range": [
+      10,
+      120
+     ],
+     "step": 10,
+     "scale": "linear",
+     "why": "baseline",
+     "depends_on": ""
+    }
+   }
+  }
+ }
+}

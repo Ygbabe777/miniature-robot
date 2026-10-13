@@ -10,9 +10,11 @@ from ofo.app.server import serve_background
 from test_agents import Scripted
 from test_research import synth
 
+from cards import CARD  # noqa: E402
 SPEC = {"name": "ORB retest small", "template": "orb_retest",
         "ranges": {"or_minutes": [15, 30], "retest_bars": [3, 6], "tol": [0.0, 0.2]},
-        "timeframes": ["15min", "30min"], "rationale": "MECCANISMO ... EVIDENZA idea dell'utente ... QUANDO NON FUNZIONA ..."}
+        "timeframes": ["15min", "30min"], "rationale": "MECCANISMO ... EVIDENZA idea dell'utente ... QUANDO NON FUNZIONA ...",
+        "hypothesis": CARD}
 
 
 @pytest.fixture(scope="module")
@@ -52,12 +54,14 @@ def test_chat_creates_pending_spec_then_runs_and_exposes_charts(tmp_path, bars_c
         assert code == 200 and job["status"] in ("queued", "running")
         for _ in range(240):                                    # up to ~2 min
             st = call(base, "/api/state")[1]
+            assert "jobs" in st, st                                   # a state call must never fail while a study runs
             if st["jobs"] and st["jobs"][-1]["status"] in ("done", "error"):
                 break
             time.sleep(0.5)
         j = st["jobs"][-1]
         assert j["status"] == "done", j
         assert not st["pending"]                                # started specs leave the pending list
+        assert st["strategies"], (j, lab.events.tail(12), [e for e in lab.registry.experiments(5)])
         assert st["strategies"][0]["name"] == "ORB retest small" and st["trials"] >= 16
         code, d = call(base, f"/api/strategy/{j['slug']}")
         assert code == 200 and "wf_oos" in d["charts"]

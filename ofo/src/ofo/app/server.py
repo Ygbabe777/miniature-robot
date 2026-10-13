@@ -50,6 +50,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                 if u.path.startswith("/api/fascicolo/"):
                     d = lab.fascicolo(unquote(u.path[len("/api/fascicolo/"):]))
                     return self._json(d) if d else self._json({"error": "not found"}, 404)
+                if u.path == "/api/research":
+                    return self._json(lab.research_report())
                 if u.path == "/api/ranking":
                     return self._json(lab.ranking(parse_qs(u.query).get("ruleset", [None])[0]))
                 if u.path == "/api/directives":

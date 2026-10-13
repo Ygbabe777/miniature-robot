@@ -74,9 +74,16 @@ def test_grid_and_study_report_risk_reward_table(tmp_path):
     from ofo.specs import from_dict
     spec = from_dict({"name": "bo", "template": "breakout", "ranges": {"lookback": [10, 20]}, "timeframes": ["15min"],
                       "rationale": "MECCANISMO x EVIDENZA y QUANDO NON FUNZIONA z"})
+    from ofo.data import resample
+    from ofo.optimizer import _exit_study, _session_key, _sweep
+    from ofo.research import daily_series
     reg = TrialRegistry(tmp_path / "r.json")
-    rep = run_study(synth(n_sessions=200, seed=3), spec, MNQ, PRESETS["50k"], reg)
-    ex = rep["exits"]
+    bars = synth(n_sessions=200, seed=3)
+    eid = reg.begin_experiment("study:bo", spec.n_candidates)
+    days = sorted(_session_key(bars).unique())
+    cands, series, _ = _sweep(bars, spec, MNQ, 2, 1.0)
+    tfs = {"15min": resample(bars, "15min")}
+    ex = _exit_study(tfs, cands[0], series[0], MNQ, 2, 1.0, days, reg, "bo", eid, {"family": "E"})
     assert len(ex["grid"]) == 28 and {"stop_atr", "rr", "sharpe", "win_rate", "median_stop_points"} <= set(ex["grid"][0])
-    assert reg.n_trials == spec.n_candidates + 28 + rep["by_timeframe"]["n_extra_trials"]   # every stop/target cell and every direction variant is a counted trial
-    assert rep["series"]["exit"] == (ex["best"] if ex["chosen"] else None)
+    assert reg.n_trials == spec.n_candidates + 28                  # every stop/target cell is a counted trial, in the validation stage
+    assert reg.usage(group="stage")["validation"]["trials"] == 28

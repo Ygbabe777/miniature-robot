@@ -148,6 +148,148 @@ def vwap_dev(bars: pd.DataFrame, window: int, z: float) -> pd.Series:
     return _hold(sig)
 
 
+
+
+# ---------- point-in-time context and new families (sweep/reclaim, overnight inventory, regime, pullback) ----------
+def _atr(bars: pd.DataFrame, n: int = 14) -> pd.Series:
+    c = bars["close"]
+    tr = pd.concat([bars["high"] - bars["low"], (bars["high"] - c.shift(1)).abs(), (bars["low"] - c.shift(1)).abs()], axis=1).max(axis=1)
+    return tr.rolling(n, min_periods=2).mean()
+
+
+def context_15m(bars: pd.DataFrame, fn) -> pd.Series:
+    """A higher-timeframe feature, available POINT-IN-TIME. `fn` is computed on 15-minute bars; each 15-minute bar's value is shifted
+    by one bar (a bar is only known once it has closed) and carried forward to the execution bars. Execution bar t can only see
+    15-minute bars that were complete before t. Causality is covered by the lookahead tests."""
+    b15 = bars.resample("15min", label="left", closed="left").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}).dropna(subset=["close"])
+    s = fn(b15).shift(1)
+    return s.reindex(s.index.union(bars.index)).ffill().reindex(bars.index)
+
+
+def _session_key(bars: pd.DataFrame):
+    return bars["session"] if "session" in bars.columns else bars.index.normalize()
+
+
+def _levels_prior_overnight(bars: pd.DataFrame):
+    """Structural levels known before they are used: prior RTH day high/low (by trading session) and the overnight (Globex) range
+    of the CURRENT session, final only from the 09:30 open. Returns four arrays aligned to the bars (NaN when not yet known)."""
+    tod = _minutes(bars.index)
+    key = _session_key(bars)
+    rth = (tod >= 570) & (tod < 960)
+    onite = (tod < 570) | (tod >= 1080)
+    h, l = bars["high"], bars["low"]
+    d = pd.DataFrame({"h": h.where(rth), "l": l.where(rth)}).groupby(key.values).agg({"h": "max", "l": "min"})
+    prior_h = pd.Series(key.values, index=bars.index).map(d["h"].shift(1)).to_numpy()
+    prior_l = pd.Series(key.values, index=bars.index).map(d["l"].shift(1)).to_numpy()
+    o = pd.DataFrame({"h": h.where(onite), "l": l.where(onite)}).groupby(key.values).agg({"h": "max", "l": "min"})
+    on_h = pd.Series(key.values, index=bars.index).map(o["h"]).to_numpy()
+    on_l = pd.Series(key.values, index=bars.index).map(o["l"]).to_numpy()
+    known = tod >= 570                                          # the overnight range is final only once the cash open starts
+    on_h = np.where(known, on_h, np.nan); on_l = np.where(known, on_l, np.nan)
+    return prior_h, prior_l, on_h, on_l
+
+
+def sweep_reclaim(bars: pd.DataFrame, sweep_atr: float, reclaim_bars: int, level_set: int, ctx: int) -> pd.Series:
+    """Liquidity sweep and reclaim. Price pokes beyond a structural level (prior-day high/low, overnight high/low) by at least
+    `sweep_atr` x ATR (stops are taken), then CLOSES back inside within `reclaim_bars` bars: fade the sweep (short after a swept high,
+    long after a swept low) until the session ends. level_set: 0 prior day, 1 overnight, 2 both. ctx=1 additionally requires the
+    15-minute trend (close vs its EMA20, point-in-time) to agree with the fade."""
+    n = len(bars)
+    tod = _minutes(bars.index)
+    ph, pl, oh, ol = _levels_prior_overnight(bars)
+    hi_levels = ([ph] if level_set in (0, 2) else []) + ([oh] if level_set in (1, 2) else [])
+    lo_levels = ([pl] if level_set in (0, 2) else []) + ([ol] if level_set in (1, 2) else [])
+    atr = _atr(bars).shift(1).to_numpy()
+    c, h, l = bars["close"].to_numpy(), bars["high"].to_numpy(), bars["low"].to_numpy()
+    trend = context_15m(bars, lambda b: np.sign(b["close"] - b["close"].ewm(span=20, adjust=False).mean())).fillna(0.0).to_numpy() if ctx else None
+    codes = pd.factorize(_session_key(bars))[0]
+    post = (tod >= 570) & (tod < 16 * 60 + 45)
+    pos = np.zeros(n)
+    last, cur = -1, 0.0
+    pend = []                                                   # (side, level, bar of the sweep)
+    for i in range(n):
+        if codes[i] != last:
+            last, cur, pend = codes[i], 0.0, []
+        if not post[i] or np.isnan(atr[i]):
+            cur = 0.0 if not post[i] else cur
+            pos[i] = cur
+            continue
+        pend = [p for p in pend if i - p[2] <= reclaim_bars]
+        for lv in hi_levels:
+            if not np.isnan(lv[i]) and h[i] > lv[i] + sweep_atr * atr[i]:
+                pend.append((-1, lv[i], i))
+        for lv in lo_levels:
+            if not np.isnan(lv[i]) and l[i] < lv[i] - sweep_atr * atr[i]:
+                pend.append((1, lv[i], i))
+        for side, lvl, j in pend:
+            back = (c[i] < lvl) if side == -1 else (c[i] > lvl)
+            if back and i > j - 1 and (trend is None or trend[i] == side):
+                cur = float(side)
+                pend = []
+                break
+        pos[i] = cur
+    return pd.Series(pos, index=bars.index)
+
+
+def overnight_gap(bars: pd.DataFrame, gap_atr: float, mode: int, exit_min: int) -> pd.Series:
+    """Overnight inventory into the cash open. The gap between the prior RTH close and today's first RTH price, in units of the
+    average daily range of the previous 14 sessions. mode 0 fades a gap larger than `gap_atr` (inventory imbalance gets unwound),
+    mode 1 follows it. The position is held `exit_min` minutes after 09:30, then flat."""
+    tod = _minutes(bars.index)
+    key = _session_key(bars)
+    rth = (tod >= 570) & (tod < 960)
+    d = pd.DataFrame({"o": bars["open"].where(rth), "c": bars["close"].where(rth), "h": bars["high"].where(rth), "l": bars["low"].where(rth)})
+    g = d.groupby(key.values)
+    first_open = g["o"].first(); last_close = g["c"].last()
+    rng = (g["h"].max() - g["l"].min()).rolling(14, min_periods=5).mean().shift(1)
+    gap = ((first_open - last_close.shift(1)) / rng)
+    gs = pd.Series(key.values, index=bars.index).map(gap).to_numpy()
+    active = (tod >= 570) & (tod < 570 + exit_min) & (tod < 16 * 60 + 45)
+    side = np.where(gs > gap_atr, -1.0, np.where(gs < -gap_atr, 1.0, 0.0))
+    if mode == 1:
+        side = -side
+    return pd.Series(np.where(active & ~np.isnan(gs), side, 0.0), index=bars.index)
+
+
+def regime_adaptive(bars: pd.DataFrame, er_window: int, er_thresh: float, lookback: int, z: float) -> pd.Series:
+    """Trade a different logic in each regime, measured point-in-time on 15-minute bars: when the Kaufman efficiency ratio over
+    `er_window` 15-minute bars is at least `er_thresh` the market is directional (Donchian breakout over `lookback` bars), otherwise
+    it is balanced (fade a `z`-score stretch from the rolling mean over `lookback` bars). Flat outside 09:30-16:45."""
+    def er(b):
+        c = b["close"]
+        return (c - c.shift(er_window)).abs() / c.diff().abs().rolling(er_window).sum()
+    ratio = context_15m(bars, er).to_numpy()
+    trend_pos = breakout(bars, lookback).to_numpy()
+    mr_pos = mean_reversion(bars, lookback, z).to_numpy()
+    tod = _minutes(bars.index)
+    pos = np.where(ratio >= er_thresh, trend_pos, mr_pos)
+    pos = np.where(np.isnan(ratio), 0.0, pos)
+    return pd.Series(np.where((tod >= 570) & (tod < 16 * 60 + 45), pos, 0.0), index=bars.index)
+
+
+def trend_pullback(bars: pd.DataFrame, ema_fast: int, ema_slow: int, pullback_z: float, ctx: int) -> pd.Series:
+    """Trend continuation on a pullback: with the fast EMA above the slow one (uptrend) buy when price stretches BELOW the fast EMA
+    by `pullback_z` standard deviations (a dip inside the trend), exit when it returns to the EMA or the trend breaks; mirrored for
+    downtrends. ctx=1 also requires the 15-minute EMA20 slope (point-in-time) to agree with the trend."""
+    if ema_fast >= ema_slow:
+        return pd.Series(0.0, index=bars.index)
+    c = bars["close"]
+    f, sl = c.ewm(span=ema_fast, adjust=False).mean(), c.ewm(span=ema_slow, adjust=False).mean()
+    trend = np.sign(f - sl)
+    dev = c - f
+    score = dev / dev.rolling(max(10, ema_fast)).std()
+    if ctx:
+        t15 = context_15m(bars, lambda b: np.sign(b["close"].ewm(span=20, adjust=False).mean().diff(3))).fillna(0.0)
+        trend = trend.where(trend == t15, 0.0)
+    sig = pd.Series(np.nan, index=bars.index)
+    sig[(trend > 0) & (score < -pullback_z)] = 1.0
+    sig[(trend < 0) & (score > pullback_z)] = -1.0
+    sig[(trend == 0) | ((trend > 0) & (score > 0)) | ((trend < 0) & (score < 0))] = 0.0
+    sig.iloc[:ema_slow] = 0.0
+    return _hold(sig)
+
+
 # ---------- the indicators each template actually uses (drawn on the Trader chart) ----------
 def _levels(bars: pd.DataFrame, or_minutes: int):
     idx = bars.index
@@ -195,7 +337,43 @@ def ind_vwap_dev(bars, window, z):
     return {"Session VWAP": vwap, f"VWAP +{z} sigma": vwap + z * sd, f"VWAP -{z} sigma": vwap - z * sd}
 
 
+def ind_sweep_reclaim(bars, sweep_atr, reclaim_bars, level_set, ctx):
+    ph, pl, oh, ol = _levels_prior_overnight(bars)
+    out = {}
+    if level_set in (0, 2):
+        out["Prior-day high"] = pd.Series(ph, index=bars.index); out["Prior-day low"] = pd.Series(pl, index=bars.index)
+    if level_set in (1, 2):
+        out["Overnight high"] = pd.Series(oh, index=bars.index); out["Overnight low"] = pd.Series(ol, index=bars.index)
+    return out
+
+
+def ind_overnight_gap(bars, gap_atr, mode, exit_min):
+    tod = _minutes(bars.index)
+    key = _session_key(bars)
+    rth = (tod >= 570) & (tod < 960)
+    last_close = bars["close"].where(rth).groupby(key.values).last().shift(1)
+    return {"Prior RTH close": pd.Series(key.values, index=bars.index).map(last_close)}
+
+
+def ind_regime_adaptive(bars, er_window, er_thresh, lookback, z):
+    return {f"Channel high {lookback}": bars["high"].rolling(lookback).max().shift(1), f"Channel low {lookback}": bars["low"].rolling(lookback).min().shift(1),
+            f"Mean {lookback}": bars["close"].rolling(lookback).mean()}
+
+
+def ind_trend_pullback(bars, ema_fast, ema_slow, pullback_z, ctx):
+    c = bars["close"]
+    return {f"EMA {ema_fast}": c.ewm(span=ema_fast, adjust=False).mean(), f"EMA {ema_slow}": c.ewm(span=ema_slow, adjust=False).mean()}
+
+
 INDICATOR_HELP = {
+    "sweep_reclaim": {"it": "Livelli del giorno precedente e dell'overnight: se il prezzo li supera e richiude dentro, la strategia va contro lo sweep.",
+                      "en": "Prior-day and overnight levels: when price pokes through and closes back inside, the strategy fades the sweep."},
+    "overnight_gap": {"it": "Chiusura RTH precedente: il gap rispetto all'apertura delle 9:30 decide se andare contro (fade) o con il gap.",
+                      "en": "Prior RTH close: the gap to the 09:30 open decides whether to fade or follow it."},
+    "regime_adaptive": {"it": "Canale e media: breakout se il contesto a 15 minuti è direzionale, reversione allo z-score se è bilanciato.",
+                        "en": "Channel and mean: breakout when the 15-minute context is directional, z-score fade when balanced."},
+    "trend_pullback": {"it": "Le due EMA definiscono il trend; si compra il ritracciamento sotto la EMA veloce (vendita nel trend ribassista).",
+                       "en": "The two EMAs define the trend; the dip below the fast EMA is bought (sold in a downtrend)."},
     "ema_cross": {"it": "Long quando l'EMA veloce è sopra quella lenta, short quando è sotto.",
                   "en": "Long when the fast EMA is above the slow one, short when below."},
     "breakout": {"it": "Long se il prezzo chiude sopra il canale alto, short se chiude sotto quello basso (canale di Donchian).",
@@ -219,6 +397,8 @@ class Template:
     control: bool = False   # zero-edge controls are never offered to the LLM
     doc: str = ""
     indicators: Callable | None = None   # params -> {name: Series}: what the strategy looks at
+    family: str = ""       # research family (see rules/research.json)
+    filters: tuple = ()     # parameters that switch an optional filter on (1) / off (0): the ablation study turns them off
 
 
 TEMPLATES = {
@@ -235,6 +415,14 @@ TEMPLATES = {
                            doc="opening-range breakout that enters only after a retest of the broken level", indicators=ind_orb_retest),
     "vwap_dev": Template(vwap_dev, {"window": (int, 10, 300), "z": (float, 0.5, 4.0)},
                          doc="reversion: deviation from session VWAP", indicators=ind_vwap_dev),
+    "sweep_reclaim": Template(sweep_reclaim, {"sweep_atr": (float, 0.05, 1.5), "reclaim_bars": (int, 1, 10), "level_set": (int, 0, 2), "ctx": (int, 0, 1)},
+                              doc="liquidity sweep of the prior-day / overnight high or low, then a close back inside: fade it", family="C", indicators=ind_sweep_reclaim, filters=("ctx",)),
+    "overnight_gap": Template(overnight_gap, {"gap_atr": (float, 0.1, 3.0), "mode": (int, 0, 1), "exit_min": (int, 30, 360)},
+                              doc="overnight inventory: fade (mode 0) or follow (mode 1) the gap between the prior RTH close and the 09:30 open", family="F", indicators=ind_overnight_gap),
+    "regime_adaptive": Template(regime_adaptive, {"er_window": (int, 4, 40), "er_thresh": (float, 0.15, 0.6), "lookback": (int, 10, 200), "z": (float, 0.8, 3.0)},
+                                doc="regime-adaptive: breakout when the 15-minute efficiency ratio is high, z-score fade when it is low", family="G", indicators=ind_regime_adaptive),
+    "trend_pullback": Template(trend_pullback, {"ema_fast": (int, 5, 60), "ema_slow": (int, 30, 300), "pullback_z": (float, 0.3, 2.5), "ctx": (int, 0, 1)},
+                               lambda p: p["ema_fast"] < p["ema_slow"], doc="trend continuation: buy the dip / sell the rally inside an EMA trend", family="E", indicators=ind_trend_pullback, filters=("ctx",)),
     "random_control": Template(random_control, {"seed": (int, 0, 100_000)}, control=True,
                                doc="zero-edge control"),
 }
@@ -245,7 +433,7 @@ GRIDS = {
     "breakout": (breakout, [{"lookback": n} for n in (10, 20, 40, 80)]),
     "mean_reversion": (mean_reversion, [{"window": w, "z": z} for w in (20, 50) for z in (1.5, 2.0, 2.5)]),
 }
-TIMEFRAMES = ("5min", "15min", "30min", "60min")
+TIMEFRAMES = ("1min", "5min", "15min", "30min", "60min")      # every timeframe a spec may name; which ones the Optimizer runs is in rules/research.json
 
 
 DIRECTIONS = ("both", "long", "short")

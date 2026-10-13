@@ -42,6 +42,9 @@ from ..trades import extract_trades, summarize
 from ..directives import Directives
 from .. import farming as FM, fascicolo as FC
 from ..optimizer import farming_context, farming_for_study
+from ..research_budget import ResearchBudget
+from .. import research_config as rcfg_mod
+from ..search import spec_overlap
 from ..storage import update_report
 from ..scout import Scout
 from ..sources import agent_reach_status, config_problem, load_config, missing_channels
@@ -108,7 +111,11 @@ class Lab:
         self.llm, self.pool = llm if llm is not None else NoLLM(), pool
         self.events = EventLog(self.data / "events.jsonl")
         self.registry = TrialRegistry(self.data / "registry.json")
+        self.registry.recover_stale()                  # studies that were running when the process died: failed, re-runnable, trials kept
+        self.rbudget = ResearchBudget(self.registry)
         self.pending: dict[str, dict] = {}
+        self._running_specs: dict[str, dict] = {}
+        self.queue_file = self.data / "queue.json"
         self.jobs: dict[str, dict] = {}
         self.lock, self.run_lock = threading.Lock(), threading.Lock()
         self.primary = root_of(contract.symbol)
@@ -143,6 +150,7 @@ class Lab:
         self.deployments = dep.Store(self.data / "deployments.json")
         self.busy["forward"] = 0
         self._last_forward = 0.0
+        self._load_queue()
 
     # -- engine -------------------------------------------------------------------------
     def ctx(self, market: str | None = None) -> MarketCtx:
@@ -211,8 +219,11 @@ class Lab:
                 "last_available": str(c.sessions[-1])[:10], "symbol": c.contract.symbol, "market": c.sym}
 
     def enabled_markets(self) -> list[str]:
-        """Markets strategies are tested on. None in the saved setting = every market with data. Never empty."""
+        """Markets strategies are tested on. Not chosen yet = the priority markets of the research config (NQ/MNQ first; ES/MES is a later
+        phase, after the process is validated: switch it on in the market filter). Never empty."""
         sel = self.ap.get("markets")
+        if sel is None:
+            sel = rcfg_mod.get()["markets"]["priority"]
         out = [m for m in self.mk if sel is None or m in sel]
         return out or [self.primary]
 
@@ -224,6 +235,45 @@ class Lab:
         self.events.emit("lab", "markets", "testing on: " + ", ".join(self.enabled_markets()))
         return self.autopilot_state()
 
+    # -- the research queue survives a restart ------------------------------------------------
+    def _persist_queue(self) -> None:
+        with self.lock:
+            items = [{"id": i, "origin": v["origin"], "market": v.get("market"), "spec": dataclasses.asdict(v["spec"])} for i, v in self.pending.items()]
+            run = [{"id": i, "origin": v["origin"], "market": v.get("market"), "spec": dataclasses.asdict(v["spec"])} for i, v in self._running_specs.items()]
+        tmp = Path(str(self.queue_file) + ".tmp")
+        tmp.write_text(json.dumps({"pending": items, "running": run}, ensure_ascii=False, default=str))
+        tmp.replace(self.queue_file)
+
+    def _load_queue(self) -> None:
+        """Pending proposals AND the study that was running when the process ended come back (the registry has marked it failed)."""
+        if not self.queue_file.exists():
+            return
+        try:
+            d = json.loads(self.queue_file.read_text())
+        except ValueError:
+            return
+        for it in d.get("pending", []) + d.get("running", []):
+            try:
+                self.pending[it["id"]] = {"spec": from_dict(it["spec"]), "origin": it["origin"], "market": it.get("market")}
+            except Exception:
+                continue
+
+    def near_duplicate(self, spec: StrategySpec, market: str | None = None, threshold: float = 0.8) -> str | None:
+        """An economically almost equivalent hypothesis: same template, same timeframes and parameter ranges overlapping >= threshold
+        with something already tested or queued. Returns what it duplicates (a name) or None."""
+        def same(rng, tfs, tmpl):
+            return tmpl == spec.template and set(tfs or []) == set(spec.timeframes) and spec_overlap(rng, spec.ranges) >= threshold
+        for v in list(self.pending.values()):
+            if (v.get("market") or self.primary) == (market or self.primary) and v["spec"] is not spec and \
+                    same(v["spec"].ranges, v["spec"].timeframes, v["spec"].template):
+                return v["spec"].name
+        for r in self.registry.study_rows(500):
+            d = r.get("details") or {}
+            if r["status"] in ("completed", "early_stopped") and (r.get("market") or self.primary) == (market or self.primary) and \
+                    same(d.get("ranges"), d.get("timeframes"), d.get("template")):
+                return r["label"].removeprefix("study:")
+        return None
+
     def _add_pending_all(self, spec: StrategySpec, origin: str) -> int:
         """Queue a strategy once per market (skipping what that market already tested or has queued): the lab learns
         on which index each idea works. Returns how many queue entries were added."""
@@ -232,6 +282,12 @@ class Lab:
         for m in self.enabled_markets():
             queued = any(v.get("market") == m and _fingerprint(v["spec"]) == fp for v in self.pending.values())
             if fp in self.loop(m).done_specs or queued:
+                self.registry.note_duplicate("duplicates_exact")
+                continue
+            near = self.near_duplicate(spec, m)
+            if near:                                           # same idea, cosmetically different: do not spend budget twice
+                self.registry.note_duplicate("duplicates_near")
+                self.events.emit("lab", "duplicate", f"{spec.name}: quasi equivalente a «{near}», non rieseguita")
                 continue
             self._add_pending(spec, origin, m)
             n += 1
@@ -241,6 +297,7 @@ class Lab:
         sid = uuid.uuid4().hex[:8]
         with self.lock:
             self.pending[sid] = {"spec": spec, "origin": origin, "market": market or self.primary}
+        self._persist_queue()
         return spec_summary(sid, spec, origin, self.registry.n_trials, market or self.primary)
 
     @contextlib.contextmanager
@@ -343,6 +400,8 @@ class Lab:
         job = {"id": uuid.uuid4().hex[:8], "name": spec.name, "market": market, "status": "queued", "slug": None,
                "verdict": None, "error": None, "n_candidates": spec.n_candidates}
         self.jobs[job["id"]] = job
+        self._running_specs[job["id"]] = {"spec": spec, "origin": item.get("origin", "paper"), "market": market}
+        self._persist_queue()
         threading.Thread(target=self._run_job, args=(job, spec, market), daemon=True).start()
         return job
 
@@ -366,6 +425,9 @@ class Lab:
                 self.events.emit("lab", "error", f"{spec.name}: {e}")
                 for agent in ("optimizer", "validator", "judge"):      # nobody stays "working" after a crash
                     self.events.emit(agent, "idle", "stopped")
+            finally:
+                self._running_specs.pop(job["id"], None)
+                self._persist_queue()
 
     def _ingest_now(self) -> None:
         if not self.llm_allowed("researcher"):
@@ -528,6 +590,82 @@ class Lab:
             return True
         return False
 
+    def research_report(self) -> dict:
+        """The research engine in numbers: budget, trials per family, candidates per stage, elimination per gate, cost per test,
+        duplicates avoided, promising hypotheses, recurring negatives. Screening, walk-forward, locked and forward results are
+        kept apart: a screening result is never a statistical confirmation."""
+        from collections import Counter
+        c = getattr(self, "_rr_cache", None)
+        if c and time.time() - c[0] < 15:
+            return c[1]
+        out = self._research_report_uncached()
+        self._rr_cache = (time.time(), out)
+        return out
+
+    def _research_report_uncached(self) -> dict:
+        from collections import Counter
+        rb = self.rbudget.state()
+        rows = self.registry.study_rows(3000)
+        fams = rcfg_mod.get()["families"]
+        fs = self.rbudget.family_stats()
+        usage_f = self.registry.usage(None, "family")
+        usage_s = self.registry.usage(None, "stage")
+        stage_flow = {s: {"entered": 0, "passed": 0} for s in rcfg_mod.STAGES}
+        gates, negs = Counter(), Counter()
+        compute = evals = 0.0
+        promising = []
+        for r in rows:
+            if r["status"] not in ("completed", "early_stopped"):
+                continue
+            res = r.get("results") or {}
+            compute += float(r.get("compute_s") or 0); evals += float(res.get("n_evals") or 0)
+            for st in res.get("stages", []):
+                if st["stage"] in stage_flow:
+                    stage_flow[st["stage"]]["entered"] += 1
+                    stage_flow[st["stage"]]["passed"] += bool(st.get("passed"))
+            if res.get("gate_failed"):
+                gates[str(res["gate_failed"])[:70]] += 1
+            if res.get("reject_reason") and res.get("locked_status") != "APPROVED":
+                negs[str(res["reject_reason"])[:90]] += 1
+            if res.get("validated") or res.get("approved"):
+                promising.append({"name": r["label"].removeprefix("study:"), "family": r.get("family"), "locked_status": res.get("locked_status"),
+                                  "best_tf": res.get("best_tf"), "evidence": "walk-forward" if not res.get("locked_status") or res.get("locked_status") == "REJECTED" else "blocco bloccato"})
+        studies = list_studies(self.work)
+        today = time.strftime("%Y-%m-%d")
+        done_today = [r for r in rows if (r["created"] or "").startswith(today) and r["status"] in ("completed", "early_stopped")]
+        return {"config_version": rb["config_version"], "budget": rb, "total_budget": {"trials_registered": self.registry.n_trials, "cap": self.ap["max_trials_total"],
+                                                                                    "remaining": max(0, self.ap["max_trials_total"] - self.registry.n_trials)},
+                "trials_by_family": {f: {"label": (fams.get(f) or {}).get("label", f), **{k: usage_f.get(f, {}).get(k, 0) for k in ("trials", "evals", "compute_s")},
+                                         **{k: fs.get(f, {}).get(k, 0) for k in ("studies", "survivors", "validated", "approved", "false_positives")},
+                                         "rate": fs.get(f, {}).get("rate"), "status": (fams.get(f) or {}).get("status", "active"), "note": (fams.get(f) or {}).get("note")}
+                                     for f in sorted(set(list(fams) + list(usage_f)))},
+                "stage_usage": usage_s, "stage_flow": stage_flow, "elimination_by_gate": gates.most_common(10),
+                "mean_cost_per_test_s": round(compute / evals, 3) if evals else None, "mean_study_s": round(compute / max(1, len([r for r in rows if r["compute_s"]])), 1),
+                "duplicates_avoided": {"exact": self.registry.counter("duplicates_exact"), "near": self.registry.counter("duplicates_near")},
+                "promising": promising[:10], "recurring_negatives": negs.most_common(8),
+                "in_queue": len(self.pending), "running": len(self._running_specs), "in_paper": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed")),
+                "approved": sum(1 for x in studies if x.get("status") == "APPROVED"),
+                "today": {"studies": len(done_today), "screened": rb["used"]["screening"], "deep": rb["deep_used"],
+                          "approved": sum(1 for r in done_today if (r.get("results") or {}).get("approved")),
+                          "thresholds_changed": False,
+                          "note": "una giornata può chiudersi con zero candidati validi: le soglie non si abbassano mai per raggiungere una quota"},
+                "evidence_note": "screening = dati di sviluppo (non è una conferma); walk-forward = sviluppo con finestre cronologiche; blocco bloccato = un solo sguardo; forward = paper",
+                "blocked_families": {f: v for f, v in fams.items() if v.get("status") == "blocked_no_data"}}
+
+    def researcher_status(self) -> dict:
+        """Is the Researcher really using the AI? What it did with the last files, and why it may be waiting (budget, no AI, nothing to read)."""
+        g = self.governor()
+        ok, why = (g.allow("researcher") if g else (True, ""))
+        done = self._loop_obj.processed_ideas if self._loop_obj else set()
+        dirs = [self.ideas] + ([self._vault_ideas()] if self._vault_ideas() else [])
+        unread = sum(1 for d in dirs for p in d.rglob("*") if p.is_file() and p.suffix.lower() in IDEA_SUFFIXES and not p.name.startswith("_")
+                     and hashlib.sha256(p.read_bytes()).hexdigest() not in done)
+        lp = self._loop_obj
+        return {"ai": not isinstance(self.llm, NoLLM), "allowed": ok, "why": why, "budget_mode": g.mode() if g else None, "unread": unread,
+                "queue": len(self.pending), "autopilot": bool(self.ap["enabled"]),
+                "recent": [{**x, "at": time.strftime("%H:%M:%S", time.localtime(x["at"]))} for x in (lp.ingest_log[-5:] if lp else [])],
+                "last_brainstorm": time.strftime("%H:%M:%S", time.localtime(self._last_brainstorm)) if getattr(self, "_last_brainstorm", 0) else None}
+
     def _unread_ideas(self) -> bool:
         done = self._loop_obj.processed_ideas if self._loop_obj else set()
         if self._loop_obj is None:
@@ -549,15 +687,16 @@ class Lab:
         self._save_ap()
         return self.autopilot_state()
 
-    def _ap_budget(self, need: int) -> str | None:
-        day = time.strftime("%Y-%m-%d")
-        if self.ap["day"] != day:
-            self.ap["day"], self.ap["trials_today"] = day, 0
+    def _ap_budget(self, spec) -> str | None:
+        """Why this study may not start now, or None. Uses the Research Budget Manager (per stage, per day, from the registry) plus the
+        total trial budget and the owner's own daily ceiling (the slider), whichever is lower."""
         if self.registry.n_trials >= self.ap["max_trials_total"]:
             return "total"
-        if self.ap["trials_today"] + need > self.ap["max_trials_per_day"]:
-            return "day"
-        return None
+        ok, stage, detail = self.rbudget.can_start(spec)
+        if ok and self.rbudget.used()["screening"] + spec.n_candidates > self.ap["max_trials_per_day"]:
+            ok, stage = False, "screening"
+        self._budget_detail = detail
+        return None if ok else ("day" if stage in ("screening", "deep_candidates") else f"day:{stage}")
 
     def autopilot_tick(self) -> bool:
         """One step of the autonomous cycle. Deterministic rules still decide every verdict: the
@@ -577,10 +716,12 @@ class Lab:
             queue = waiting()
         if not queue:
             return False
-        # first strategy that FITS the budget: one huge proposal must not block the small ones behind it
+        # first strategy that FITS the budget, in the order of the family allocator: one huge proposal must not block the small ones
         why = "day"
-        for sid, item in queue:
-            why = self._ap_budget(item["spec"].n_candidates)
+        by_id = dict(queue)
+        for item in self.rbudget.rank([{"id": i, **v} for i, v in queue]):
+            sid, item = item["id"], by_id[item["id"]]
+            why = self._ap_budget(item["spec"])
             if not why:
                 break
         else:
@@ -589,12 +730,12 @@ class Lab:
                 self.events.emit("lab", "budget", f"autopilot paused: {why} trial budget reached")
             return False
         self.ap["paused"] = None
-        self.ap["trials_today"] += item["spec"].n_candidates
+        self.ap["trials_today"] = self.rbudget.used()["screening"] + item["spec"].n_candidates      # shown in the UI
         self._save_ap()
         self.events.emit("lab", "autostart", f"autopilot starts: {item['spec'].name}")
         return not self.start(sid).get("error")
 
-    STARTER_FILES = ("starter.json", "two.json")
+    STARTER_FILES = ("starter.json", "two.json", "families.json")
 
     def seed_specs(self) -> int:
         """The classic families (opening range, VWAP, EMA, breakout, z-score) are tested first, so the lab never sits idle
@@ -710,7 +851,8 @@ class Lab:
         sc = self.scout()
         last = sc.state["last_run"]
         nxt = (last["at"] + self.scout_gap()) if (sc.state["auto"]["enabled"] and last) else None
-        self._ap_budget(0)
+        self.ap["day"] = time.strftime("%Y-%m-%d")
+        self.ap["trials_today"] = self.rbudget.used()["screening"]            # from the registry: it cannot disagree with the trial count
         enabled = self.ap["enabled"] and not isinstance(self.llm, NoLLM)
         running = any(j["status"] in ("queued", "running") for j in self.jobs.values())
         bm = self.governor().mode() if self.governor() else "normal"
@@ -725,7 +867,7 @@ class Lab:
                 "markets": [{"sym": k, "name": MARKETS[k]["name"], "micro": c.contract.symbol, "mini": MARKETS[k]["mini"].symbol,
                              "enabled": k in self.enabled_markets()} for k, c in self.mk.items()],
                 "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed")),
-                "fascicoli": self.fascicoli(), "farming_pending": len(self.farming_pending())}
+                "fascicoli": self.fascicoli(), "farming_pending": len(self.farming_pending()), "researcher": self.researcher_status()}
 
     def working_agents(self) -> set[str]:
         """Who is really busy right now. Derived from live activity counters and the agents' own
@@ -803,7 +945,10 @@ class Lab:
     def _farming_pending_uncached(self) -> list[str]:
         out = []
         for r in list_studies(self.work):
-            d = load_study(self.work, r["slug"])
+            try:
+                d = load_study(self.work, r["slug"])
+            except ValueError:                                     # a file being rewritten right now: look again next time
+                continue
             if not d or not d.get("series"):
                 continue
             rep = d["report"]

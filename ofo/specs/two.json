@@ -10,7 +10,19 @@
      "step": 5
     }
    },
-   "rationale": "The first minutes of the US cash open concentrate order flow and information; a break of that range tends to continue (opening-range breakout literature)."
+   "rationale": "The first minutes of the US cash open concentrate order flow and information; a break of that range tends to continue (opening-range breakout literature).",
+   "hypothesis": {
+    "fenomeno": "dopo le 9:30 ET gli ordini istituzionali spingono il prezzo fuori dal range iniziale",
+    "persistenza": "i partecipanti più lenti inseguono la direzione e gli stop vengono presi oltre il range",
+    "condizioni_funziona": "giornate con catalizzatore, volume alto e range iniziale stretto",
+    "condizioni_fallisce": "giornate di range ampio senza notizie: la rottura rientra",
+    "segnale": "chiusura di barra oltre il massimo (o sotto il minimo) del range dei primi N minuti",
+    "regola_ingresso": "ingresso alla chiusura della barra di rottura, nella direzione della rottura",
+    "regola_uscita": "a fine sessione; stop e target sono scelti dallo studio delle uscite sui soli dati di sviluppo",
+    "costi_limiti": "commissioni e 1 tick di slippage per lato, ingresso alla chiusura della barra del segnale, tutto chiuso prima delle 16:45 ET",
+    "previsione_falsificabile": "expectancy netta positiva con N tra 15 e 45 minuti e plateau stabile tra N vicini",
+    "criterio_rigetto": "superficie che crolla tra valori adiacenti di N o expectancy negativa con costi doppi"
+   }
   },
   {
    "name": "Z-score reversion sweep",
@@ -27,7 +39,19 @@
      "step": 0.25
     }
    },
-   "rationale": "Short-horizon overreaction in index futures; baseline benchmark."
+   "rationale": "Short-horizon overreaction in index futures; baseline benchmark.",
+   "hypothesis": {
+    "fenomeno": "estensioni statistiche rispetto alla media recente tendono a ritracciare",
+    "persistenza": "provider di liquidità e vendita di volatilità a breve",
+    "condizioni_funziona": "mercato bilanciato in orari centrali",
+    "condizioni_fallisce": "trend forti e giornate di notizia",
+    "segnale": "z-score del close rispetto alla media mobile oltre la soglia",
+    "regola_ingresso": "ingresso contro l'estensione alla chiusura di barra",
+    "regola_uscita": "ritorno vicino alla media o fine sessione",
+    "costi_limiti": "commissioni e 1 tick di slippage per lato, ingresso alla chiusura della barra del segnale, tutto chiuso prima delle 16:45 ET",
+    "previsione_falsificabile": "expectancy positiva per z tra 1.5 e 2.5",
+    "criterio_rigetto": "perdite di coda grandi in giornate di trend o superficie instabile"
+   }
   }
  ]
 }

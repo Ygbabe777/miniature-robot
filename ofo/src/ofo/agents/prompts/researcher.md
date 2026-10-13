@@ -27,6 +27,8 @@ Reply with ONE JSON object and nothing else: no markdown fences, no commentary o
               /* EVERY parameter of the template must appear, none extra */},
    "timeframes": ["15min", "30min"],
    "rationale": "<see rule 3>",
+   "hypothesis": {"fenomeno": "...", "persistenza": "...", "condizioni_funziona": "...", "condizioni_fallisce": "...", "segnale": "...",
+                  "regola_ingresso": "...", "regola_uscita": "...", "costi_limiti": "...", "previsione_falsificabile": "...", "criterio_rigetto": "..."},
    "source": "title / section / page the idea comes from"}
  ],
  "concepts": ["2 to 6 short lowercase English noun phrases naming the ideas of this text, e.g. \"opening range\", \"volatility regime\", \"overnight gap\""],
@@ -66,6 +68,18 @@ Reply with ONE JSON object and nothing else: no markdown fences, no commentary o
 11. Prefer ideas specific to index futures and the Nasdaq-100 (NQ/MNQ) intraday behaviour. Ideas about other assets are
    welcome only when the mechanism plausibly carries over; say so in the rationale.
 
+12. HYPOTHESIS CARD (mandatory, in {{LANG}}): `hypothesis` has exactly these ten fields, each a concrete sentence, none empty:
+   fenomeno (the market phenomenon you hypothesise), persistenza (why it could persist: who pays for it), condizioni_funziona (when it
+   should work), condizioni_fallisce (when it should fail), segnale (the observable signal), regola_ingresso (entry rule),
+   regola_uscita (initial exit rule), costi_limiti (costs and execution limits), previsione_falsificabile (a prediction a backtest
+   can prove wrong, with a number or a direction), criterio_rigetto (the result that makes you abandon the idea).
+   You state hypotheses and specifications ONLY: never invent results, Sharpe ratios, win rates or statistics. Proposals without a
+   complete card are discarded. Prefer a different ECONOMIC idea to another variant of one already in "WHAT THIS LAB ALREADY LEARNED".
+13. FAMILIES the lab explores: A opening range / opening drive, B VWAP and value-area reversion, C sweep and reclaim of structural
+   levels, E trend continuation and pullback, F overnight inventory into the cash open, G regime-adaptive. Order flow, absorption,
+   imbalance, GEX and options flow need data the lab does not have: do not propose them. Execution timeframes are 1min and 5min;
+   a 15-minute context is available only through templates that include it.
+
 # EXAMPLE OF A GOOD REPLY
 {"strategies": [{"name": "Opening range breakout 15-45 min",
  "template": "orb",
@@ -85,8 +99,8 @@ The lab's main market is Nasdaq-100 index futures: NQ (mini, $20 per index point
 traded on CME Globex. Every strategy is also tested on S&P 500 futures (ES/MES) and gold futures (GC/MGC): the
 tests, not assumptions, decide on which market an idea works, so do not assume a result transfers between markets
 (gold has no 09:30 equity open and reacts to rates, the dollar and risk-off flows). The regular session is 09:30-16:00 New York time; positions must be flat before 16:45 ET.
-The owner trades prop-firm evaluation accounts (25k and 50k) and wants to PASS the evaluation within about ONE WEEK
-(5 trading days), with an acceptable pass probability, and then keep the funded account. That favours strategies
-that trade on most days, have a clear daily expectancy and controlled drawdown, not rare signals that need months
-to pay off. Nasdaq futures are volatile and trend-driven at the open and the close, mean-reverting in the middle of
-the day, and sensitive to US macro releases at 08:30 and 10:00 ET.
+The owner farms PROP-FIRM PAYOUTS: the goal is not passing evaluations but a sustainable sequence of net payouts
+(evaluation -> funded account -> payouts, net of the cost of the accounts). Strategies are selected by the net economic value of
+that whole cycle after strict statistical gates, so favour ideas with a stated mechanism, controlled drawdown and enough trades,
+not rare signals or ones that only pass the evaluation. Nasdaq futures are volatile and trend-driven at the open and the close,
+mean-reverting in the middle of the day, and sensitive to US macro releases at 08:30 and 10:00 ET.

@@ -45,6 +45,8 @@ def wait_all(lab):
 def test_every_strategy_is_tested_on_every_market_and_reports_say_which(tmp_path, bars_csv):
     lab = two_markets(tmp_path, bars_csv)
     assert set(lab.mk) == {"NQ", "ES"} and lab.primary == "NQ"
+    assert lab.enabled_markets() == ["NQ"]                                           # ES/MES is a later phase: not tested until switched on
+    lab.set_markets(["NQ", "ES"])
     assert lab._add_pending_all(from_dict(SPEC), "paper") == 2
     assert lab._add_pending_all(from_dict(SPEC), "paper") == 0                     # no duplicates while queued
     assert sorted(v["market"] for v in lab.pending.values()) == ["ES", "NQ"]
@@ -118,7 +120,9 @@ def test_build_market_makes_a_file_from_the_day_files_and_explains_failures(tmp_
 
 def test_market_filter_decides_where_strategies_are_tested(tmp_path, bars_csv):
     lab = two_markets(tmp_path, bars_csv)
-    assert lab.enabled_markets() == ["NQ", "ES"]                                         # default: every market with data
+    assert lab.enabled_markets() == ["NQ"]                                               # default: the priority market of the research config
+    lab.set_markets(["NQ", "ES"])
+    assert lab.enabled_markets() == ["NQ", "ES"]
     st = lab.set_markets(["NQ"])
     assert lab.enabled_markets() == ["NQ"] and [m["enabled"] for m in st["markets"]] == [True, False]
     assert lab._add_pending_all(from_dict(SPEC), "paper") == 1

@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -25,7 +26,7 @@ from .registry import DuplicateExperiment, TrialRegistry
 from .research import daily_series, walk_forward
 from .specs import StrategySpec
 from .stats import sharpe
-from . import farming as FM
+from . import farming as FM, repro, research_config as rcfg_mod, search as SR
 from .lifecycle import pool_from_ledger
 from .rulesets import load_farming_config, load_rulesets
 from .sizing import size_study
@@ -46,14 +47,15 @@ class SurfaceThresholds:
     max_cost_multiple_sharpe: float = 0.0   # Sharpe must stay above this at twice the costs and with next-open fills
 
 
-def surface_metrics(rows: list[dict], param_names: list[str], th: SurfaceThresholds | None = None, pick: int | None = None) -> dict:
+def surface_metrics(rows: list[dict], param_names: list[str], th: SurfaceThresholds | None = None, pick: int | None = None,
+                    axes: dict | None = None) -> dict:
     """rows: [{params..., 'tf': str, 'sharpe': float}].
 
     PARAMETER robustness: the neighbours of the best combination are the ones that differ by one grid step on exactly
     one parameter AT THE SAME TIMEFRAME. TIMEFRAME robustness is judged separately: the median Sharpe at each
     timeframe, and how many timeframes are positive. Mixing the two hid a strategy that works at one timeframe only."""
     th = th or SurfaceThresholds()
-    axes = {n: sorted({r[n] for r in rows}) for n in param_names}
+    axes = axes or {n: sorted({r[n] for r in rows}) for n in param_names}      # the TRUE grid, so 'neighbour' means one real step
     tfs = [t for t in TIMEFRAMES if t in {r["tf"] for r in rows}]
     key = lambda r: tuple(axes[n].index(r[n]) for n in param_names)
     sr = np.array([r["sharpe"] for r in rows])
@@ -99,14 +101,88 @@ def detrend(bars: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _sweep(bars, spec, contract, contracts, slippage_ticks):
+def _sweep(bars, spec, contract, contracts, slippage_ticks, rcfg: dict | None = None, dev_days=None):
+    """Evaluate the spec's candidates on DEVELOPMENT bars. A grid within the template's cap is tested whole, in random order; a larger
+    one is staged (coarse grid + stratified random, then local refinement around promising NEIGHBOURHOODS). Returns
+    (cands, series, log). With dev_days given, a conservative sequential rule may stop early: only if even the BEST candidate
+    evaluated so far has a 95% upper bound of Sharpe below zero (the unexecuted configurations are then not trials)."""
+    rcfg = rcfg or rcfg_mod.get()
     t = TEMPLATES[spec.template]
-    cands = [{"family": spec.name, "fn": t.fn, "params": p, "tf": tf}
-             for p in spec.combos() for tf in spec.timeframes]
-    bars_by_tf = {tf: resample(bars, tf) for tf in spec.timeframes}
-    series = {i: daily_series(bars_by_tf, c, contract, contracts, slippage_ticks)
-              for i, c in enumerate(cands)}
-    return cands, series
+    tfs = list(spec.timeframes)
+    bars_by_tf = {tf: resample(bars, tf) for tf in tfs}
+    cap = spec.max_configs or rcfg_mod.max_configs_for(spec.template, rcfg)
+    plan = SR.plan_search(spec, cap, rcfg["search"], seed=int(rcfg["search"].get("seed", 7)))
+    axes = plan["axes"]
+    valid = {SR.key_of(c, axes) for c in spec.combos()}
+    cands, series, sharpes = [], {}, {}
+    log = {"mode": plan["mode"], "cap_per_timeframe": cap, "initial": 0, "refined": 0, "early_stopped": False, "rule": None}
+
+    def ev(combo, tf, stage):
+        i = len(cands)
+        c = {"family": spec.name, "fn": t.fn, "params": combo, "tf": tf, "stage": stage}
+        cands.append(c)
+        series[i] = daily_series(bars_by_tf, c, contract, contracts, slippage_ticks)
+        if dev_days is not None:
+            sharpes[(tf, SR.key_of(combo, axes))] = sharpe(series[i].reindex(dev_days).fillna(0.0))
+
+    es = rcfg["early_stop"]
+    n_days = len(dev_days) if dev_days is not None else 0
+    check_at = max(int(es["min_configs"]), int(es["min_fraction"] * len(plan["initial"])))
+    for k, combo in enumerate(plan["initial"], 1):
+        for tf in tfs:
+            ev(combo, tf, "initial")
+        if dev_days is not None and k == check_at and k < len(plan["initial"]):
+            best = max(sharpes.values())
+            if SR.sharpe_upper_bound(best, n_days, float(es["z"])) < 0:
+                log["early_stopped"] = True
+                log["rule"] = f"after {k}/{len(plan['initial'])} configurations the best Sharpe {best:+.3f} has a {es['z']}-sigma upper bound below zero"
+                break
+    log["initial"] = len(cands)
+    if plan["mode"] == "staged" and dev_days is not None and not log["early_stopped"]:
+        budget = plan["refine_budget"] * len(tfs)
+        for tf, key in SR.refine_points(sharpes, axes, valid, int(rcfg["search"].get("refine_top", 3)) * len(tfs), budget):
+            ev(SR.combo_of(key, axes), tf, "refine")
+        log["refined"] = len(cands) - log["initial"]
+    log["executed"] = len(cands)
+    return cands, series, log
+
+
+def effective_trials(series: dict, dev_days) -> float:
+    """Effective number of independent candidates: participation ratio of the eigenvalues of the correlation matrix of their daily
+    P&L. Related variants are NOT independent evidence; this is the estimate shown next to the raw count (informational)."""
+    cols = [series[i].reindex(dev_days).fillna(0.0).to_numpy() for i in series]
+    if len(cols) < 3:
+        return float(len(cols))
+    m = np.corrcoef(np.vstack(cols))
+    m = np.nan_to_num(m, nan=0.0)
+    lam = np.clip(np.linalg.eigvalsh(m), 0, None)
+    return float(lam.sum() ** 2 / max((lam ** 2).sum(), 1e-12))
+
+
+def plateau_pick(cands, rows, axes, idx: list[int]) -> int:
+    """Within one timeframe: the candidate with the best NEIGHBOURHOOD score (half own Sharpe + half the mean of its one-step
+    neighbours), ties by Sharpe. Never the isolated peak."""
+    sh = {(cands[i]["tf"], SR.key_of({n: rows[i][n] for n in axes}, axes)): rows[i]["sharpe"] for i in idx}
+    sc = SR.plateau_scores(sh, axes)
+    return max(idx, key=lambda i: (sc[(cands[i]["tf"], SR.key_of({n: rows[i][n] for n in axes}, axes))], rows[i]["sharpe"]))
+
+
+def wf_plan(n_dev_days: int, rcfg: dict, train_days: int | None, test_days: int | None) -> dict:
+    """Walk-forward geometry. Explicit arguments win. Otherwise aim for at least `min_windows` chronological OOS windows: shorten the
+    test windows (never below min_test_days), then the training window (never below 60 sessions). If the data still cannot give that
+    many windows the plan says so (`target_met` False): a documented limit, not something to hide."""
+    wf = rcfg["walk_forward"]
+    if train_days is not None and test_days is not None:
+        tr, te = train_days, test_days
+        return {"train_days": tr, "test_days": te, "windows": max(0, (n_dev_days - tr) // te), "target_windows": int(wf["min_windows"]),
+                "target_met": max(0, (n_dev_days - tr) // te) >= int(wf["min_windows"]), "explicit": True}
+    tr, te, want = int(wf["train_days"]), int(wf["test_days"]), int(wf["min_windows"])
+    if (n_dev_days - tr) // te < want:
+        te = max(int(wf["min_test_days"]), (n_dev_days - tr) // want)
+        if (n_dev_days - tr) // te < want:
+            tr = max(60, n_dev_days - want * te)
+    w = max(0, (n_dev_days - tr) // te)
+    return {"train_days": tr, "test_days": te, "windows": w, "target_windows": want, "target_met": w >= want, "explicit": False}
 
 
 MIN_EXIT_GAIN = 0.03        # daily-Sharpe improvement needed before a stop/target replaces the strategy's own exit
@@ -126,13 +202,15 @@ def dataset_fingerprint(bars: pd.DataFrame) -> str:
 
 
 def spec_fingerprint(spec: StrategySpec, contract: Contract, contracts: int, slippage_ticks: float, oos_fraction: float,
-                     train_days: int, test_days: int) -> str:
-    payload = json.dumps([spec.template, spec.ranges, sorted(spec.timeframes), contract.symbol, contracts, slippage_ticks,
-                          oos_fraction, train_days, test_days, ENGINE_VERSION], sort_keys=True, default=str)
+                     train_days: int, test_days: int, cost_model: str = "") -> str:
+    """Identity of an experiment: strategy + search design + execution/cost model + validation geometry + engine version. A new
+    cost model, other execution rules or another holdout is a NEW experiment (the old one is never overwritten)."""
+    payload = json.dumps([spec.template, spec.ranges, sorted(spec.timeframes), spec.max_configs, contract.symbol, contracts, slippage_ticks,
+                          oos_fraction, train_days, test_days, ENGINE_VERSION, cost_model], sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
-def _exit_study(dev_bars_tf, cand, base_series, contract, contracts, slippage_ticks, dev_days, registry, name, experiment_id):
+def _exit_study(dev_bars_tf, cand, base_series, contract, contracts, slippage_ticks, dev_days, registry, name, experiment_id, meta=None):
     """Which stop distance and reward:risk fit the best candidate? Judged on DEVELOPMENT data only (the bars handed in
     contain nothing else, trade statistics included) and counted in the trial registry (every cell is a trial)."""
     grid = exit_grid()
@@ -143,7 +221,7 @@ def _exit_study(dev_bars_tf, cand, base_series, contract, contracts, slippage_ti
         s, info = daily_series(dev_bars_tf, cand, contract, contracts, slippage_ticks, exit=g, with_info=True)
         d = s.reindex(dev_days).fillna(0.0)
         cells.append({**g, "sharpe": sharpe(d), "pnl": float(d.sum()), **summarize_info(info)})
-    registry.add_trials(len(grid), f"exits:{name}", experiment_id=experiment_id, kind="exits")
+    registry.add_trials(len(grid), f"exits:{name}", experiment_id=experiment_id, kind="exits", stage="validation", **(meta or {}))
     best = max(cells, key=lambda c: c["sharpe"])
     chosen = best["sharpe"] >= base["sharpe"] + MIN_EXIT_GAIN and best["pnl"] > 0
     better = float(np.mean([c["sharpe"] >= base["sharpe"] for c in cells]))
@@ -310,7 +388,7 @@ def _loses_in_most_slices(pnl) -> bool:
 
 
 def timeframe_study(cands, series, rows, dev_days, bars_by_tf, contract, contract_accounts, contracts, slippage_ticks,
-                    goal_days, goal_rate, farm=None) -> dict:
+                    goal_days, goal_rate, farm=None, axes: dict | None = None) -> dict:
     """Best version of the strategy on EACH timeframe AND each direction (both sides / long only / short only), development
     data only (entry-only exits). The version that goes on is the one with the highest development NPFV: the expected net value of
     a whole prop account life (evaluation, funded, payouts, failures, costs) averaged over the rulesets. No weighted blend of
@@ -324,7 +402,7 @@ def timeframe_study(cands, series, rows, dev_days, bars_by_tf, contract, contrac
         idx = [i for i, c in enumerate(cands) if c["tf"] == tf]
         if not idx:
             continue
-        bi = max(idx, key=lambda i: rows[i]["sharpe"])
+        bi = plateau_pick(cands, rows, axes, idx) if axes else max(idx, key=lambda i: rows[i]["sharpe"])   # a region, never the isolated peak
         b = bars_by_tf[tf]
         variants = {}
         for d in DIRECTIONS:
@@ -352,97 +430,219 @@ def timeframe_study(cands, series, rows, dev_days, bars_by_tf, contract, contrac
             "n_extra_trials": 2 * len(out)}
 
 
-def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules: PropRules,
-              registry: TrialRegistry, contracts: int = 2, slippage_ticks: float = 1.0,
-              oos_fraction: float = 0.25, train_days: int = 120, test_days: int = 20,
-              surface_th: SurfaceThresholds | None = None, progress=None, dedupe: bool = False,
-              market: str | None = None, judge_th=None, all_timeframes: bool = False, farming: dict | None = None) -> dict:
-    """Sweep every combination of `spec`, judge the surface, walk-forward the whole procedure, and only if everything
-    survives take ONE look at the locked block.
+class _Stages:
+    """Per-stage record of one study: seconds, units and the gate each stage applied (the lab's elimination statistics)."""
+    def __init__(self):
+        self.rows, self._t = [], None
 
-    ISOLATION: the final `oos_fraction` of the sessions is cut away before anything is computed. The sweep, the surface,
-    the exit study, the nested walk-forward, the quality checks and the beta check receive development bars only. The
-    locked block is first touched, for the single final candidate, inside the Judge's look."""
+    def start(self, name: str) -> None:
+        self._t = (name, time.time())
+
+    def end(self, units: int, gate: str | None = None, passed: bool | None = None, **kw) -> None:
+        name, t0 = self._t
+        self.rows.append({"stage": name, "seconds": round(time.time() - t0, 2), "units": int(units), "gate": gate, "passed": passed, **kw})
+
+
+def run_study(*args, **kwargs) -> dict:
+    """Run one study (see _run_study). If anything raises, the experiment is closed as 'failed': it keeps its trial count, it is not
+    silently 'already tested', and it can be run again."""
+    holder: dict = {}
+    t0 = time.time()
+    try:
+        return _run_study(*args, _holder=holder, **kwargs)
+    except DuplicateExperiment:
+        raise
+    except BaseException as e:
+        reg = args[4] if len(args) > 4 else kwargs.get("registry")
+        if holder.get("eid") and reg is not None:
+            try:
+                reg.finish_experiment(holder["eid"], "failed", reject_reason=f"{type(e).__name__}: {str(e)[:300]}", compute_s=time.time() - t0)
+            except Exception:
+                pass
+        raise
+
+
+def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules: PropRules,
+               registry: TrialRegistry, contracts: int = 2, slippage_ticks: float = 1.0,
+               oos_fraction: float | None = None, train_days: int | None = None, test_days: int | None = None,
+               surface_th: SurfaceThresholds | None = None, progress=None, dedupe: bool = False,
+               market: str | None = None, judge_th=None, all_timeframes: bool = False, farming: dict | None = None,
+               research: dict | None = None, _holder: dict | None = None) -> dict:
+    """The five-stage protocol of one study.
+
+      1 HYPOTHESIS  the spec is already validated (whitelisted template, bounded parameters, hypothesis card)
+      2 SCREENING   staged search on development data, plateau-aware choice, surface gates (cheap; most studies end here)
+      3 VALIDATION  timeframe/direction by development NPFV, exits, nested walk-forward with the planned windows, quality checks
+      4 ROBUSTNESS  the same candidates on a detrended copy of the data (beta check)
+      5 AUDIT       causality + ledger reconciliation, reproducibility from metadata, then ONE look at the locked block, the Judge
+                    and the prop-farming review. Nothing in stage 5 can change the strategy.
+
+    ISOLATION: the final `oos_fraction` of the sessions is cut away before anything is computed. Stages 2-4 receive development bars
+    only; the locked block is first touched, for the single final candidate, inside stage 5."""
+    t_start = time.time()
+    rcfg = research or rcfg_mod.get()
     th = surface_th or SurfaceThresholds()
-    if all_timeframes and list(spec.timeframes) != list(TIMEFRAMES):        # the Optimizer always tries EVERY timeframe
-        spec = dataclasses.replace(spec, timeframes=list(TIMEFRAMES))
+    if all_timeframes:                                                        # the Optimizer runs the configured execution timeframes
+        spec = dataclasses.replace(spec, timeframes=rcfg_mod.execution_timeframes(rcfg))
+    oos_fraction = rcfg["holdout_fraction"] if oos_fraction is None else oos_fraction
     say = progress or (lambda agent, state, msg="": None)
+    stages = _Stages()
     key = _session_key(bars)
     sessions = sorted(key.unique())
     cut = sessions[int(len(sessions) * (1 - oos_fraction))]
     dev_days = [d for d in sessions if d < cut]
     dev_bars = bars[np.asarray(key < cut)]                        # <- from here on the hidden block does not exist
+    plan = wf_plan(len(dev_days), rcfg, train_days, test_days)
+    train_days, test_days = plan["train_days"], plan["test_days"]
     dfp = dataset_fingerprint(bars)
+    cfg_v, code_v = rcfg["config_version"], repro.code_version()
+    cost_model = repro.cost_model_descriptor(contract, contracts, slippage_ticks, str(rcfg.get("cost_model_version", "1")))
+    family = spec.family
+    hyp_fp = hashlib.sha256(json.dumps([spec.template, sorted(spec.timeframes)]).encode()).hexdigest()[:12]
     eid = registry.begin_experiment(f"study:{spec.name}", spec.n_candidates, spec_fp=spec_fingerprint(
-        spec, contract, contracts, slippage_ticks, oos_fraction, train_days, test_days), dataset_fp=dfp,
-        market=market, dedupe=dedupe, details={"template": spec.template, "oos_start": str(cut)[:10]})
-    say("optimizer", "working", f"sweep of {spec.n_candidates} candidates")
-    cands, series = _sweep(dev_bars, spec, contract, contracts, slippage_ticks)
-    dev = series
-    rows = [{**c["params"], "tf": c["tf"],
-             "sharpe": sharpe(dev[i].reindex(dev_days).fillna(0.0))} for i, c in enumerate(cands)]
-    tfs_dev = {tf: resample(dev_bars, tf) for tf in spec.timeframes}
+        spec, contract, contracts, slippage_ticks, oos_fraction, train_days, test_days, cost_model), dataset_fp=dfp,
+        market=market, dedupe=dedupe, stage="screening", family=family, hyp_fp=hyp_fp, config_version=cfg_v, code_version=code_v, cost_model=cost_model,
+        details={"template": spec.template, "oos_start": str(cut)[:10], "ranges": spec.ranges, "timeframes": spec.timeframes,
+                 "max_configs": spec.max_configs, "hypothesis": spec.hypothesis, "wf_plan": plan, "holdout_fraction": oos_fraction})
+    if _holder is not None:
+        _holder["eid"] = eid
+    meta = {"family": family, "config_version": cfg_v, "code_version": code_v}
+    stages.start("hypothesis"); stages.end(0, "spec validata (template in whitelist, parametri entro i limiti, scheda ipotesi)", True, family=family)
+
+    # ---------------- stage 2: screening ----------------
+    stages.start("screening")
+    say("optimizer", "working", f"screening of up to {spec.n_candidates} candidates")
+    cands, series, slog = _sweep(dev_bars, spec, contract, contracts, slippage_ticks, rcfg, dev_days)
+    registry.set_executed(eid, len(cands))                       # planned trials were registered up front; unexecuted ones are released
+    rows = [{**c["params"], "tf": c["tf"], "sharpe": sharpe(series[i].reindex(dev_days).fillna(0.0))} for i, c in enumerate(cands)]
+    axes = SR.axes_of(spec)
+    n_eff = effective_trials(series, dev_days)
+    keyf = lambda j: (cands[j]["tf"], SR.key_of({n: rows[j][n] for n in axes}, axes))
+    pscore = SR.plateau_scores({keyf(j): rows[j]["sharpe"] for j in range(len(cands))}, axes)
+    best_i = max(range(len(cands)), key=lambda j: (pscore[keyf(j)], rows[j]["sharpe"]))        # the best REGION, not the highest peak
+    surf = surface_metrics(rows, list(spec.ranges), th, pick=best_i, axes=axes)
+    wf0, _ = walk_forward(series, train_days, test_days)          # cheap entry-only walk-forward, shown for rejected surfaces
+    stages.end(len(cands), "superficie robusta (mediana, frazione positiva, plateau, vicini, timeframe)", bool(surf["robust"]),
+               search=slog, effective_trials=round(n_eff, 1))
+    say("optimizer", "done", "screening finished")
+    say("validator", "working", "surface gates")
+    trial_block = {"planned": spec.n_candidates, "executed": len(cands), "released": spec.n_candidates - len(cands),
+                   "effective_independent_estimate": round(n_eff, 1), "raw_registered_after_screening": registry.n_trials,
+                   "note": "i test correlati non sono prove indipendenti: il Giudice usa il conteggio grezzo (prudente); la stima effettiva è informativa"}
+    pair = lambda ser: [[str(d)[:10], float(v)] for d, v in ser.items()]
     goal_days = judge_th.eval_days if judge_th is not None else 5
     goal_rate = judge_th.min_pass_rate if judge_th is not None else 0.30
+    base_report = {"name": spec.name, "template": spec.template, "family": family, "hypothesis": spec.hypothesis, "rationale": spec.rationale,
+                   "source": spec.source, "n_candidates": len(cands), "surface": surf, "base_contracts": contracts, "search": slog, "trials": trial_block,
+                   "wf_plan": plan, "n_locked_days": len(sessions) - len(dev_days), "experiment_id": eid, "dataset_fp": dfp,
+                   "engine_version": ENGINE_VERSION, "config_version": cfg_v, "code_version": code_v,
+                   "surface_detrended": None, "quality": None, "timing": None, "sizing": None, "by_timeframe": None, "exits": None,
+                   "wf_kind": "entry_only", "wf_oos_days": len(wf0), "wf_oos_pnl": float(wf0.sum()) if len(wf0) else 0.0,
+                   "wf_oos_sharpe_daily": sharpe(wf0) if len(wf0) > 2 else 0.0, "wf_oos_series": wf0}
+
+    def finish(report: dict, status: str = "completed") -> dict:
+        report["stages"] = stages.rows
+        lk = report["locked"]
+        report["evidence"] = evidence_ladder(report)
+        results = {"survived_screening": bool(surf["robust"]), "validated": bool(report.get("validated")), "locked_status": lk.get("status"),
+                   "approved": lk.get("status") == "APPROVED",
+                   "false_positive": bool(report.get("validated")) and lk.get("status") not in ("APPROVED", None) and "checks" in lk,
+                   "reject_reason": lk.get("reason") or (lk.get("failed_gate") or {}).get("reason"), "gate_failed": report.get("gate_failed"),
+                   "n_evals": sum(r["units"] for r in stages.rows), "stages": stages.rows, "best_tf": (report.get("by_timeframe") or {}).get("best_tf")}
+        registry.finish_experiment(eid, "early_stopped" if slog["early_stopped"] else status, executed=len(cands), results=results,
+                                   reject_reason=results["reject_reason"], compute_s=time.time() - t_start,
+                                   details={"entered_validation": bool(surf["robust"]), "early_stop_rule": slog["rule"]})
+        report["trials"]["raw_registered_final"] = registry.n_trials
+        report["compute_s"] = round(time.time() - t_start, 1)
+        return report
+
+    if not surf["robust"]:
+        why = [k for k, ok in surf["checks"].items() if not ok]
+        base_report["gate_failed"] = "screening: " + ", ".join(why)
+        base_report["timing"] = timing_report(series[best_i].reindex(dev_days).fillna(0.0).to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts,
+                                              goal_days, goal_rate, "development")      # every study reports days-to-pass (screening candidate, entry-only)
+        base_report["series"] = {"cut": str(cut)[:10], "wf_oos": pair(wf0), "dev_best": [], "locked": None,
+                                 "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}, "direction": "both", "exit": None}
+        base_report["locked"] = {"status": REJECTED, "reason": f"failed {why}; locked block not touched"}
+        say("validator", "done", "screening gate failed")
+        return finish(base_report)
+
+    # ---------------- stage 3: validation ----------------
+    stages.start("validation")
     farm = farming_context(farming)
+    tfs_dev = {tf: resample(dev_bars, tf) for tf in spec.timeframes}
     by_tf = timeframe_study(cands, series, rows, dev_days, tfs_dev, contract, {k: PRESETS[k] for k in ("25k", "50k")}, contracts,
-                            slippage_ticks, goal_days, goal_rate, farm)
-    best_i = by_tf["timeframes"][by_tf["best_tf"]]["cand_index"] if by_tf["best_tf"] else max(range(len(cands)), key=lambda i: rows[i]["sharpe"])
-    surf = surface_metrics(rows, list(spec.ranges), th, pick=best_i)
+                            slippage_ticks, goal_days, goal_rate, farm, axes)
+    best_i = by_tf["timeframes"][by_tf["best_tf"]]["cand_index"] if by_tf["best_tf"] else best_i
+    surf = surface_metrics(rows, list(spec.ranges), th, pick=best_i, axes=axes)           # the surface at the candidate that goes on
     direction = by_tf["best_direction"]
     fcand = {**cands[best_i], "fn": directional(cands[best_i]["fn"], direction), "direction": direction}   # the version that goes on
-    registry.add_trials(by_tf["n_extra_trials"], f"direction:{spec.name}", experiment_id=eid, dataset_fp=dfp, market=market, kind="direction")
+    registry.add_trials(by_tf["n_extra_trials"], f"direction:{spec.name}", experiment_id=eid, dataset_fp=dfp, market=market, kind="direction",
+                        stage="validation", **meta)
     base_ser = series[best_i] if direction == "both" else daily_series({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, contract, contracts, slippage_ticks)
-    say("optimizer", "done", "sweep finished")
-    say("validator", "working", "walk-forward and market-drift check")
-    exits_rep = _exit_study({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, base_ser, contract,
-                            contracts, slippage_ticks, dev_days, registry, spec.name, eid)
+    exits_rep = _exit_study({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, base_ser, contract, contracts, slippage_ticks, dev_days, registry,
+                            spec.name, eid, meta)
     best_exit = exits_rep["best"] if exits_rep["chosen"] else None
-    # Walk-forward. For a surface that already looks robust it is NESTED (parameters, timeframe and stop/target are all
-    # re-chosen on each training window); for the rest the cheap entry-only version is shown, and the study is rejected anyway.
-    if surf["robust"]:
-        wf, picks = nested_walk_forward(tfs_dev, cands, series, dev_days, contract, contracts, slippage_ticks, train_days, test_days)
-        wf_kind = "nested"
-    else:
-        wf, _ = walk_forward(series, train_days, test_days)
-        wf_kind, picks = "entry_only", []
+    wf, picks = nested_walk_forward(tfs_dev, cands, series, dev_days, contract, contracts, slippage_ticks, train_days, test_days)
+    wf_kind = "nested"
+    registry.add_trials(0, f"walk_forward:{spec.name}", experiment_id=eid, kind="compute", stage="validation", n_evals=max(1, len(wf) // max(1, test_days)),
+                        **meta)
     wf_pnl = float(wf.sum()) if len(wf) else 0.0
     final_dev = daily_series({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, contract, contracts,
                              slippage_ticks, exit=best_exit).reindex(dev_days).fillna(0.0)
-    # How fast could this strategy pass a 25k and a 50k challenge? For EVERY study, on development data only (in-sample).
     timing = timing_report(final_dev.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, goal_rate, "development")
     sizing = size_study(final_dev.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, basis="development")
-    quality = None
-    if surf["robust"]:
-        quality = quality_checks(tfs_dev, fcand, best_exit, contract, contracts, slippage_ticks, dev_days, th)
-    pair = lambda ser: [[str(d)[:10], float(v)] for d, v in ser.items()]
-    report = {"name": spec.name, "template": spec.template, "rationale": spec.rationale,
-              "source": spec.source, "n_candidates": len(cands), "surface": surf, "quality": quality, "timing": timing, "by_timeframe": by_tf, "sizing": sizing, "base_contracts": contracts,
-              "wf_kind": wf_kind, "wf_oos_days": len(wf), "wf_oos_pnl": wf_pnl,
-              "wf_oos_sharpe_daily": sharpe(wf) if len(wf) > 2 else 0.0,
-              "n_locked_days": len(sessions) - len(dev_days), "wf_oos_series": wf,
-              "experiment_id": eid, "dataset_fp": dfp, "engine_version": ENGINE_VERSION,
-              # chart data. dev_best is IN-SAMPLE (best of N combinations): the UI labels it so.
-              "series": {"cut": str(cut)[:10], "wf_oos": pair(wf),
-                         "dev_best": pair(final_dev), "locked": None,
+    quality = quality_checks(tfs_dev, fcand, best_exit, contract, contracts, slippage_ticks, dev_days, th)
+    ablation = ablation_study(fcand, spec.template, tfs_dev, best_exit, contract, contracts, slippage_ticks, dev_days, registry, eid, spec.name, meta)
+    val_ok = bool(surf["robust"] and wf_pnl > 0 and quality["ok"] and plan["target_met"])
+    stages.end(28 + by_tf["n_extra_trials"] + len(wf), "walk-forward annidato positivo, qualità, finestre OOS pianificate", val_ok,
+               wf_windows=plan["windows"], wf_target_met=plan["target_met"])
+    report = {**base_report, "quality": quality, "timing": timing, "by_timeframe": by_tf, "sizing": sizing, "ablation": ablation, "validated": val_ok,
+              "wf_kind": wf_kind, "wf_oos_days": len(wf), "wf_oos_pnl": wf_pnl, "wf_oos_sharpe_daily": sharpe(wf) if len(wf) > 2 else 0.0,
+              "surface": surf, "wf_oos_series": wf,
+              "series": {"cut": str(cut)[:10], "wf_oos": pair(wf), "dev_best": pair(final_dev), "locked": None,
                          "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}, "direction": direction, "exit": best_exit},
               "exits": exits_rep}
-    # Beta check: only for surfaces that already look robust (it re-runs the dev sweep on a detrended copy).
-    surf_d = None
-    if surf["robust"] and wf_pnl > 0:
-        _, series_d = _sweep(detrend(dev_bars), spec, contract, contracts, slippage_ticks)
-        rows_d = [{**c["params"], "tf": c["tf"],
-                   "sharpe": sharpe(series_d[i].reindex(dev_days).fillna(0.0))} for i, c in enumerate(cands)]
-        surf_d = surface_metrics(rows_d, list(spec.ranges), th)
-    report["surface_detrended"] = surf_d
     say("validator", "done", "validation finished")
-    if surf["robust"] and wf_pnl > 0 and surf_d["robust"] and quality["ok"]:
-        say("judge", "working", "looking at the hidden block")
+
+    # ---------------- stage 4: robustness ----------------
+    surf_d = None
+    if val_ok:
+        stages.start("robustness")
+        t_b = time.time()
+        cands_d = cands
+        bars_d = {tf: resample(detrend(dev_bars), tf) for tf in spec.timeframes}
+        series_d = {i: daily_series(bars_d, c, contract, contracts, slippage_ticks) for i, c in enumerate(cands_d)}
+        rows_d = [{**c["params"], "tf": c["tf"], "sharpe": sharpe(series_d[i].reindex(dev_days).fillna(0.0))} for i, c in enumerate(cands_d)]
+        surf_d = surface_metrics(rows_d, list(spec.ranges), th, axes=axes)
+        registry.add_trials(0, f"beta_check:{spec.name}", experiment_id=eid, kind="compute", stage="robustness", n_evals=len(cands_d),
+                            compute_s=time.time() - t_b, **meta)
+        stages.end(len(cands_d), "stessa superficie senza deriva di mercato (beta check)", bool(surf_d["robust"]))
+    report["surface_detrended"] = surf_d
+
+    if val_ok and surf_d["robust"]:
+        # ---------------- stage 5: audit + the single look at the locked block ----------------
+        stages.start("audit")
+        say("judge", "working", "audit, reproducibility and the look at the hidden block")
         cand, tf = fcand, fcand["tf"]
         s_full, rc, pos_full, b_full = guarded_full_series(bars, cand, best_exit, contract, contracts, slippage_ticks, dev_days, final_dev, spec.name)
         report["ledger_check"] = rc
         locked_days = [d for d in sessions if d >= cut]
         locked = s_full.reindex(locked_days).fillna(0.0)
+        meta_c = {"template": spec.template, "params": dict(cand["params"]), "tf": tf, "direction": direction, "exit": best_exit, "contracts": contracts,
+                  "slippage_ticks": slippage_ticks, "contract": {"symbol": contract.symbol, "tick_size": contract.tick_size, "tick_value": contract.tick_value,
+                                                                  "commission_per_side": contract.commission_per_side}}
+        report["repro"] = {"meta": meta_c, "dataset_fp": dfp, "code_version": code_v, "config_version": cfg_v, "cost_model": cost_model,
+                           "engine_version": ENGINE_VERSION, "oos_fraction": oos_fraction, "wf_plan": plan,
+                           "seeds": {"search": rcfg["search"].get("seed", 7), "farming": farm["cfg"].get("seed")},
+                           "rulesets": [f"{r.id} v{r.version} ({r.provenance})" for r in farm["rulesets"]],
+                           "digest_dev": repro.digest(final_dev), "digest_locked": repro.digest(locked), "spec": dataclasses.asdict(spec),
+                           "trial_budget": {"planned": spec.n_candidates, "executed": len(cands), "registry_total": registry.n_trials}}
+        try:                                                      # recompute from the stored metadata ONLY and compare
+            report["repro"]["verified"] = bool(repro.candidate_digest(bars, meta_c, dev_days) == report["repro"]["digest_dev"] and
+                                               repro.candidate_digest(bars, meta_c, locked_days) == report["repro"]["digest_locked"])
+        except Exception as e:
+            report["repro"]["verified"] = False; report["repro"]["error"] = f"{type(e).__name__}: {str(e)[:160]}"
         var_sr = float(np.var([r["sharpe"] for r in rows], ddof=1))
         v = judge(locked.values, rules, registry.n_trials + 1, var_sr, judge_th)
         registry.add_locked_look(f"{spec.name}:{cand['params']}@{tf}", v.status, experiment_id=eid, dataset_fp=dfp,
@@ -470,27 +670,82 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
         try:
             led_full = led_full or run_ledger(b_full, pos_full, contract, contracts, slippage_ticks, best_exit)
             pool_dev_f, pool_oos_f = FM.split_pool(pool_from_ledger(b_full, led_full), str(cut)[:10])
-            ctx = {"integrity_ok": bool(rc.get("ok")), "edge_ok": bool(v.checks.get("dsr")), "oos_positive": bool(locked.sum() > 0),
-                   "robust_ok": True, "forward": None}
+            report["locked"]["oos_evidence"] = oos_evidence(pool_oos_f, locked, rcfg["sample"]["min_oos_trades"])
+            ctx = {"integrity_ok": bool(rc.get("ok")) and bool(report["repro"].get("verified")), "edge_ok": bool(v.checks.get("dsr")),
+                   "oos_positive": bool(locked.sum() > 0), "robust_ok": True, "forward": None}
             fr = FM.review(pool_dev_f, pool_oos_f, farm["rulesets"], contracts, farm["cfg"], ctx, spec.template) if farm["rulesets"] else None
             if fr is not None:
                 report["farming"] = json.loads(json.dumps(fr, default=lambda o: o.item() if hasattr(o, "item") else str(o)))
                 report["locked"]["status"] = fr["verdict"]
                 report["locked"]["failed_gate"] = fr["first_failed"]
                 report["locked"]["suited"] = fr["suited"]
+                report["gate_failed"] = (fr["first_failed"] or {}).get("name")
         except Exception as e:                                           # never lose a finished study: fall back to the legacy verdict
             report["locked"]["farming_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        if not report["repro"].get("verified") and report["locked"]["status"] == "APPROVED":
+            report["locked"]["status"] = REJECTED                        # a result that cannot be reproduced from its metadata is not promoted
+            report["locked"]["reason"] = "not reproducible from the saved metadata"
+            report["gate_failed"] = "reproducibility"
+        stages.end(2, "causalità, libro mastro, riproducibilità, blocco nascosto, Giudice, prop farming", report["locked"]["status"] == "APPROVED")
     else:
         why = [k for k, ok in surf["checks"].items() if not ok]
         if wf_pnl <= 0:
-            why.append("walk_forward_pnl" if wf_kind == "nested" else "walk_forward_pnl_entry_only")
-        if quality is not None and not quality["ok"]:
+            why.append("walk_forward_pnl")
+        if not plan["target_met"]:
+            why.append(f"walk_forward_windows_{plan['windows']}_of_{plan['target_windows']}")
+        if not quality["ok"]:
             why += [f"quality_{k}" for k, ok in quality["checks"].items() if not ok]
         if surf_d is not None and not surf_d["robust"]:
             bad = [k for k, ok in surf_d["checks"].items() if not ok]
             why.append(f"fragile_without_market_drift: surface fails {bad} once the trend is removed")
+        report["gate_failed"] = ("validation: " if surf_d is None else "robustness: ") + ", ".join(why)
         report["locked"] = {"status": REJECTED, "reason": f"failed {why}; locked block not touched"}
-    return report
+    return finish(report)
+
+
+def evidence_ladder(report: dict) -> dict:
+    """Four DIFFERENT kinds of evidence, never mixed: screening (development sweep), walk-forward (nested, development), the locked
+    out-of-sample block (one look) and forward (paper, filled by the Lab). Screening results are not statistical confirmation."""
+    lk = report.get("locked") or {}
+    return {"screening": {"label": "screening (dati di sviluppo, NON è una conferma)", "median_sharpe": (report.get("surface") or {}).get("median_sharpe"),
+                          "robust": (report.get("surface") or {}).get("robust"), "n": report.get("n_candidates")},
+            "walk_forward": {"label": "walk-forward (sviluppo, finestre cronologiche)", "kind": report.get("wf_kind"), "windows": (report.get("wf_plan") or {}).get("windows"),
+                             "oos_pnl": report.get("wf_oos_pnl")} if report.get("wf_kind") == "nested" else None,
+            "locked_oos": {"label": "blocco bloccato (un solo sguardo)", "status": lk.get("status"), "pnl": lk.get("pnl")} if "checks" in lk else None,
+            "forward": None}
+
+
+def oos_evidence(pool, locked, min_trades: int) -> dict:
+    """What the unseen block can support: trade count against the target, serial dependence, profit concentration, and an uncertainty
+    interval for the mean daily P&L from a block bootstrap (days are not independent)."""
+    x = np.asarray(locked, dtype=float)
+    n_tr = int(pool.trades.sum())
+    pos = np.sort(x[x > 0])[::-1]
+    conc = float(pos[: max(1, int(0.05 * len(x)))].sum() / pos.sum()) if len(pos) and pos.sum() > 0 else None
+    ac = float(np.corrcoef(x[:-1], x[1:])[0, 1]) if len(x) > 5 and x.std() > 0 else None
+    rng = np.random.default_rng(1)
+    means = [float(x[FM.block_indices(len(x), len(x), 3, rng)].mean()) for _ in range(400)] if len(x) > 5 else []
+    return {"n_trades": n_tr, "target_trades": int(min_trades), "target_met": n_tr >= min_trades, "n_sessions": int(len(x)),
+            "top5pct_days_share_of_profit": conc, "lag1_autocorrelation": ac,
+            "mean_daily_pnl_ci95": [float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))] if means else None,
+            "note": "il campione è indicativo: numero di trade, dipendenza seriale, concentrazione e intervallo contano insieme"}
+
+
+def ablation_study(fcand, template, bars_by_tf, exit_, contract, contracts, slippage_ticks, dev_days, registry, eid, name, meta) -> list:
+    """Switch each optional filter of the final candidate OFF (development data) and report what it was worth. A filter that does not
+    improve the Sharpe is dead weight (and a degree of freedom). The variants are counted as trials."""
+    filters = TEMPLATES[template].filters
+    out = []
+    for f in filters:
+        if fcand["params"].get(f) in (None, 0):
+            continue
+        off = {**fcand, "params": {**fcand["params"], f: 0}}
+        s_on = sharpe(daily_series(bars_by_tf, fcand, contract, contracts, slippage_ticks, exit=exit_).reindex(dev_days).fillna(0.0))
+        s_off = sharpe(daily_series(bars_by_tf, off, contract, contracts, slippage_ticks, exit=exit_).reindex(dev_days).fillna(0.0))
+        out.append({"filter": f, "sharpe_with": float(s_on), "sharpe_without": float(s_off), "delta": float(s_on - s_off), "useful": bool(s_on > s_off)})
+    if out:
+        registry.add_trials(len(out), f"ablation:{name}", experiment_id=eid, kind="ablation", stage="validation", **meta)
+    return out
 
 
 def farming_for_study(bars, report: dict, series: dict, contract, contracts: int, farm: dict | None = None, slippage_ticks: float = 1.0,

@@ -16,12 +16,16 @@ def save_study(work: str | Path, report: dict, planner: dict | None = None, audi
     slug = slugify(rep["name"])
     d = Path(work) / "reports"
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"{slug}.json").write_text(json.dumps(
+    def atomic(path, text):                       # the UI reads these files while a study is being saved: never a half-written file
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(text)
+        tmp.replace(path)
+    if report.get("series"):
+        atomic(d / f"{slug}_series.json", json.dumps(report["series"], default=str))
+    atomic(d / f"{slug}.json", json.dumps(
         {"report": rep, "planner": planner, "auditor": auditor,
          "saved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")},
         indent=1, default=str))
-    if report.get("series"):
-        (d / f"{slug}_series.json").write_text(json.dumps(report["series"], default=str))
     return slug
 
 

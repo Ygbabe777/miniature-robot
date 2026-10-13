@@ -1,3 +1,4 @@
+import pytest
 import json
 
 from ofo.papers import chunk_text, extract_pdf_text, parse_json, propose_specs
@@ -10,8 +11,9 @@ class FakeLLM:
         return self.replies.pop(0)
 
 
+from cards import CARD  # noqa: E402
 GOOD = {"name": "ORB 15-60", "template": "orb", "ranges": {"or_minutes": {"min": 15, "max": 60, "step": 15}},
-        "timeframes": ["5min", "15min"], "rationale": "paper claims range expansion after the open"}
+        "timeframes": ["5min", "15min"], "rationale": "paper claims range expansion after the open", "hypothesis": CARD}
 
 
 def test_valid_and_invalid_proposals_are_separated():
@@ -61,3 +63,59 @@ def test_only_strategy_relevant_chunks_are_sent():
     got = select_chunks(chunks, 2)
     assert got == [chunks[1], chunks[3]]
     assert select_chunks(["nothing useful here at all"], 5) == ["nothing useful here at all"]
+
+
+def test_an_llm_that_is_down_or_blocked_is_never_recorded_as_read_nothing_found(tmp_path):
+    """The reported bug: the Researcher searched but proposed nothing, because LLM errors (budget pause, key refused, network) were
+    swallowed as 'unparseable reply' and the paper was marked as read."""
+    from ofo.agents.loop import ResearchLoop
+    from ofo.backtest import MNQ
+    from ofo.events import EventLog
+    from ofo.llm.client import LLMError
+    from ofo.prop import PRESETS
+    from ofo.registry import TrialRegistry
+    from test_research import synth
+
+    class Down:
+        def chat(self, *a, **k):
+            raise LLMError("budget paused")
+    with pytest.raises(LLMError):
+        propose_specs(Down(), "strategy entry futures " * 40, source="x")
+    ideas = tmp_path / "ideas"; ideas.mkdir()
+    (ideas / "p.txt").write_text("Opening range breakout after the cash open tends to continue " * 20)
+    ev = EventLog(tmp_path / "e.jsonl")
+    loop = ResearchLoop(synth(n_sessions=40, seed=1), MNQ, PRESETS["50k"], TrialRegistry(tmp_path / "r.json"), Down(), ev, tmp_path / "w")
+    assert loop.ingest_ideas(ideas) == 0
+    assert loop.processed_ideas == set()                                   # still to be read once the AI is back
+    assert any(e["type"] == "error" and "AI non utilizzabile" in e["message"] for e in ev.tail())
+    assert loop.ingest_log[-1]["error"] and "budget paused" in loop.ingest_log[-1]["error"]
+
+
+def test_garbage_replies_are_retried_twice_before_a_paper_is_given_up(tmp_path):
+    from ofo.agents.loop import ResearchLoop
+    from ofo.backtest import MNQ
+    from ofo.events import EventLog
+    from ofo.prop import PRESETS
+    from ofo.registry import TrialRegistry
+    from test_research import synth
+    ideas = tmp_path / "ideas"; ideas.mkdir()
+    (ideas / "p.txt").write_text("Opening range breakout after the cash open tends to continue " * 20)
+    loop = ResearchLoop(synth(n_sessions=40, seed=1), MNQ, PRESETS["50k"], TrialRegistry(tmp_path / "r.json"), FakeLLM(["garbage"] * 3),
+                        EventLog(tmp_path / "e.jsonl"), tmp_path / "w")
+    for k in (1, 2):
+        loop.ingest_ideas(ideas)
+        assert loop.processed_ideas == set() and loop.idea_attempts and max(loop.idea_attempts.values()) == k
+    loop.ingest_ideas(ideas)
+    assert len(loop.processed_ideas) == 1                                  # third failure: given up
+
+
+def test_missing_hypothesis_card_gets_one_repair_round():
+    incomplete = {k: v for k, v in GOOD.items() if k != "hypothesis"}
+    fixed = json.dumps({"strategies": [GOOD]})
+    llm = FakeLLM([json.dumps({"strategies": [incomplete]}), fixed])
+    specs, rejected = propose_specs(llm, "some paper text", source="Paper X")
+    assert len(specs) == 1 and specs[0].hypothesis["previsione_falsificabile"] and rejected == []
+    assert len(llm.calls) == 2 and "hypothesis" in llm.calls[1][-1]["content"] and "REJECTED" in llm.calls[1][-1]["content"]
+    llm2 = FakeLLM([json.dumps({"strategies": [incomplete]})] * 2)
+    specs2, rej2 = propose_specs(llm2, "some paper text", source="Paper X")
+    assert specs2 == [] and "hypothesis" in rej2[0]["reason"]             # still incomplete after the repair: refused, never executed

@@ -61,6 +61,8 @@ class ResearchLoop:
         self.queue: list[tuple[StrategySpec, int]] = []
         self.trials_spent = 0
         self.all_timeframes = True          # the Optimizer always tries every timeframe (tests can switch it off)
+        self.ingest_log: list = []              # what the Researcher did with each file (for the lab's diagnostics)
+        self.idea_attempts: dict = {}
         self.judge_th = None                # judge.Thresholds from the owner's goal (set by the Lab)
         self.max_chunks = 6                 # paper chunks read per document; the Lab lowers it in economy mode
         self.memory = lambda: ""            # set by the Lab: what the lab already learned (knowledge.memory_text)
@@ -100,11 +102,23 @@ class ResearchLoop:
                 info: dict = {}
                 specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=source, language=self.language,
                                                 memory=self.memory(), info=info, max_chunks=self.max_chunks)
-            except Exception as e:                       # unreadable file or LLM down: retry later
-                self.events.emit("researcher", "error", f"{p.name}: {e}")
+            except Exception as e:                       # unreadable file or LLM down / budget / key refused: retry later, never "consumed"
+                self.events.emit("researcher", "error", f"{p.name}: AI non utilizzabile ({type(e).__name__}: {str(e)[:160]}): il file resta da leggere")
                 self.events.emit("researcher", "idle", "stopped")
+                self.ingest_log.append({"at": time.time(), "file": p.name, "error": f"{type(e).__name__}: {str(e)[:160]}", "proposals": 0, "rejected": []})
+                continue
+            unparse = [r for r in rejected if r.get("kind") == "unparseable"]
+            if not specs and unparse and len(unparse) == len([r for r in rejected if "chunk" in r or r.get("kind")]) and \
+                    self.idea_attempts.get(h, 0) + 1 < 3:
+                self.idea_attempts[h] = self.idea_attempts.get(h, 0) + 1          # the model answered garbage: try again twice before giving up
+                self.events.emit("researcher", "error", f"{p.name}: risposta non leggibile ({self.idea_attempts[h]}/3), riproverò")
+                self.events.emit("researcher", "idle", "stopped")
+                self.ingest_log.append({"at": time.time(), "file": p.name, "error": "risposta non leggibile", "proposals": 0, "rejected": [r["reason"][:120] for r in rejected[:3]]})
                 continue
             self.events.emit("researcher", "done", f"{p.name}: {len(specs)} proposals")
+            self.ingest_log.append({"at": time.time(), "file": p.name, "error": None, "proposals": len(specs), "rejected": [r["reason"][:120] for r in rejected[:3]],
+                                    "concepts": len(info.get("concepts", []))})
+            self.ingest_log = self.ingest_log[-30:]
             self.processed_ideas.add(h)
             (self.work / "specs_auto").mkdir(exist_ok=True)
             (self.work / "specs_auto" / f"{_slug(p.stem)}.json").write_text(json.dumps(

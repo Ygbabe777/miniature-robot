@@ -93,11 +93,14 @@ def test_agent_gives_up_after_max_attempts():
         Agent("auditor", llm, "AUDITOR", lambda d: d, max_attempts=3).run({})
 
 
+from cards import CARD  # noqa: E402
+
+
 def test_loop_ingests_ideas_once_and_logs_events(tmp_path):
     ideas = tmp_path / "ideas"; ideas.mkdir()
     (ideas / "note.txt").write_text("Opening range breakout after the cash open tends to continue.")
     spec = {"name": "ORB small", "template": "orb", "ranges": {"or_minutes": [15, 30]},
-            "timeframes": ["15min", "30min"], "rationale": "MECCANISMO ..."}
+            "timeframes": ["15min", "30min"], "rationale": "MECCANISMO ...", "hypothesis": CARD}
     llm = Scripted(researcher=[json.dumps({"strategies": [spec]})] * 2, auditor=[json.dumps({"summary": "s"})] * 4)
     ev = EventLog(tmp_path / "events.jsonl")
     loop = ResearchLoop(synth(n_sessions=260, seed=6), MNQ, PRESETS["50k"], TrialRegistry(tmp_path / "r.json"),
@@ -146,7 +149,7 @@ def test_strategist_builds_the_orb_retest_spec_the_user_asked_for():
                    "tol": {"values": [0.0, 0.15, 0.3]}},
         "timeframes": ["5min", "15min"], "rationale": "MECCANISMO ... EVIDENZA idea dell'utente ... QUANDO NON FUNZIONA ..."}})
     out = make_strategist(Scripted(strategist=[reply])).run({"message": "creami una strategia ORB con i retest"})
-    assert out["spec"].template == "orb_retest" and out["spec"].n_candidates == 7 * 4 * 3 * 2
+    assert out["spec"].template == "orb_retest" and out["spec"].n_candidates == min(7 * 4 * 3, 60) * 2      # 84 combinations, capped at the template's 60 (staged search) x 2 timeframes
 
 
 def test_strategist_missing_logic_becomes_a_template_request_not_a_wrong_spec():

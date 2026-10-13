@@ -1,0 +1,160 @@
+{
+ "strategies": [
+  {
+   "name": "Sweep e reclaim livelli",
+   "template": "sweep_reclaim",
+   "ranges": {
+    "sweep_atr": {
+     "min": 0.1,
+     "max": 0.8,
+     "step": 0.1
+    },
+    "reclaim_bars": {
+     "min": 1,
+     "max": 6,
+     "step": 1
+    },
+    "level_set": {
+     "values": [
+      0,
+      1,
+      2
+     ]
+    },
+    "ctx": {
+     "values": [
+      0,
+      1
+     ]
+    }
+   },
+   "rationale": "MECCANISMO: sopra i massimi e sotto i minimi del giorno prima e dell'overnight si accumulano stop; superarli e rientrare indica che la liquidità è stata raccolta e non c'è domanda reale. EVIDENZA: ipotesi da letteratura di microstruttura sulla caccia agli stop, da verificare. QUANDO NON FUNZIONA: quando lo sweep è l'inizio di un trend con rottura vera (rientro che non arriva).",
+   "hypothesis": {
+    "fenomeno": "raccolta di liquidità oltre livelli strutturali seguita da rientro",
+    "persistenza": "gli stop oltre i livelli non sono domanda informata: dopo averli presi il prezzo torna",
+    "condizioni_funziona": "livelli puliti, apertura RTH, volatilità normale",
+    "condizioni_fallisce": "giorni di trend con rottura vera del livello",
+    "segnale": "massimo/minimo oltre il livello di sweep_atr ATR e chiusura di nuovo dentro entro reclaim_bars barre",
+    "regola_ingresso": "ingresso contro lo sweep alla chiusura della barra di rientro",
+    "regola_uscita": "fine sessione; stop/target scelti sui dati di sviluppo",
+    "costi_limiti": "commissioni e 1 tick di slippage per lato, ingresso alla chiusura della barra del segnale, tutto chiuso prima delle 16:45 ET",
+    "previsione_falsificabile": "expectancy netta positiva con rientro rapido (1-3 barre) e peggiore con rientro lento",
+    "criterio_rigetto": "nessun plateau su sweep_atr e reclaim_bars o filtro ctx inutile all'ablation"
+   }
+  },
+  {
+   "name": "Pullback nel trend",
+   "template": "trend_pullback",
+   "ranges": {
+    "ema_fast": {
+     "min": 8,
+     "max": 34,
+     "step": 5
+    },
+    "ema_slow": {
+     "min": 40,
+     "max": 150,
+     "step": 20
+    },
+    "pullback_z": {
+     "min": 0.5,
+     "max": 2.0,
+     "step": 0.25
+    },
+    "ctx": {
+     "values": [
+      0,
+      1
+     ]
+    }
+   },
+   "rationale": "MECCANISMO: nei trend intraday i ritracciamenti verso la media veloce sono occasioni dei partecipanti in ritardo e i fondi sistematici rientrano. EVIDENZA: letteratura sul momentum intraday, da verificare. QUANDO NON FUNZIONA: quando il pullback è l'inversione del trend (media lenta che si appiattisce).",
+   "hypothesis": {
+    "fenomeno": "continuazione del trend dopo un ritracciamento",
+    "persistenza": "chi non è entrato nel trend compra i ritracciamenti, sostenendo la continuazione",
+    "condizioni_funziona": "giornate direzionali con EMA veloce sopra/sotto la lenta",
+    "condizioni_fallisce": "mercato laterale o inversione del trend",
+    "segnale": "EMA veloce > lenta e prezzo sotto la veloce di pullback_z deviazioni",
+    "regola_ingresso": "ingresso nella direzione del trend alla chiusura della barra del ritracciamento",
+    "regola_uscita": "ritorno sopra la EMA veloce, rottura del trend o fine sessione",
+    "costi_limiti": "commissioni e 1 tick di slippage per lato, ingresso alla chiusura della barra del segnale, tutto chiuso prima delle 16:45 ET",
+    "previsione_falsificabile": "expectancy positiva solo se il trend è confermato dal contesto a 15 minuti",
+    "criterio_rigetto": "ctx inutile all'ablation o nessun plateau tra pullback_z adiacenti"
+   }
+  },
+  {
+   "name": "Inventario overnight",
+   "template": "overnight_gap",
+   "ranges": {
+    "gap_atr": {
+     "min": 0.2,
+     "max": 1.5,
+     "step": 0.1
+    },
+    "mode": {
+     "values": [
+      0,
+      1
+     ]
+    },
+    "exit_min": {
+     "min": 60,
+     "max": 240,
+     "step": 30
+    }
+   },
+   "rationale": "MECCANISMO: il gap tra chiusura RTH e apertura riflette l'inventario accumulato di notte da pochi partecipanti; all'apertura arrivano i flussi RTH che lo ridimensionano (fade) oppure lo confermano (continuazione). EVIDENZA: studi su overnight returns vs intraday, da verificare. QUANDO NON FUNZIONA: giornate con notizie macro alle 8:30 che cambiano il quadro.",
+   "hypothesis": {
+    "fenomeno": "transizione overnight→RTH: il gap viene riassorbito o confermato nelle prime ore",
+    "persistenza": "la liquidità overnight è sottile, i flussi RTH ripristinano il prezzo di equilibrio",
+    "condizioni_funziona": "gap moderati senza catalizzatore",
+    "condizioni_fallisce": "giorni di dati macro o gap molto grandi da notizia",
+    "segnale": "gap tra chiusura RTH precedente e primo prezzo RTH in unità di range medio a 14 giorni",
+    "regola_ingresso": "ingresso alla prima barra RTH completa, contro (mode 0) o con (mode 1) il gap",
+    "regola_uscita": "exit_min minuti dopo le 9:30 oppure fine sessione",
+    "costi_limiti": "commissioni e 1 tick di slippage per lato, ingresso alla chiusura della barra del segnale, tutto chiuso prima delle 16:45 ET",
+    "previsione_falsificabile": "una delle due modalità ha expectancy positiva mentre l'altra no",
+    "criterio_rigetto": "entrambe le modalità negative o instabili tra gap_atr vicini"
+   }
+  },
+  {
+   "name": "Regime adaptive",
+   "template": "regime_adaptive",
+   "ranges": {
+    "er_window": {
+     "min": 6,
+     "max": 24,
+     "step": 6
+    },
+    "er_thresh": {
+     "min": 0.2,
+     "max": 0.5,
+     "step": 0.1
+    },
+    "lookback": {
+     "min": 20,
+     "max": 120,
+     "step": 20
+    },
+    "z": {
+     "min": 1.0,
+     "max": 2.5,
+     "step": 0.5
+    }
+   },
+   "rationale": "MECCANISMO: i mercati alternano fasi direzionali e fasi bilanciate; una sola logica perde nell'altra fase, mentre scegliere la logica con un indicatore point-in-time evita di combattere il regime. EVIDENZA: letteratura sui regimi di volatilità e sull'efficiency ratio, da verificare. QUANDO NON FUNZIONA: quando il regime cambia più in fretta dell'indicatore.",
+   "hypothesis": {
+    "fenomeno": "alternanza di regimi direzionale e bilanciato",
+    "persistenza": "il comportamento dei flussi cambia con la volatilità e l'efficienza del prezzo",
+    "condizioni_funziona": "regimi persistenti per ore",
+    "condizioni_fallisce": "transizioni rapide di regime",
+    "segnale": "efficiency ratio su barre da 15 minuti sopra/sotto er_thresh",
+    "regola_ingresso": "breakout nel regime direzionale, fade dello z-score nel regime bilanciato",
+    "regola_uscita": "cambio di segnale o fine sessione",
+    "costi_limiti": "commissioni e 1 tick di slippage per lato, ingresso alla chiusura della barra del segnale, tutto chiuso prima delle 16:45 ET",
+    "previsione_falsificabile": "la strategia combinata ha expectancy migliore di ciascuna logica da sola in un regime",
+    "criterio_rigetto": "nessun miglioramento rispetto alle logiche singole o instabilità tra er_thresh adiacenti"
+   }
+  }
+ ]
+}

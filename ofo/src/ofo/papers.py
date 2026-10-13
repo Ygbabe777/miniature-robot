@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 
 from .agents.base import load_prompt, parse_json
+from .llm.client import LLMError
 from .specs import SpecError, StrategySpec, from_dict
 from .strategies import TEMPLATES, TIMEFRAMES
 
@@ -56,7 +57,8 @@ def _catalogue() -> str:
         if t.control:
             continue
         params = ", ".join(f"{p} ({typ.__name__}, {lo}..{hi})" for p, (typ, lo, hi) in t.params.items())
-        lines.append(f'- "{name}": {t.doc}. parameters: {params}')
+        fam = f" [family {t.family}]" if t.family else ""
+        lines.append(f'- "{name}": {t.doc}{fam}. parameters: {params}')
     return "\n".join(lines)
 
 
@@ -78,24 +80,39 @@ def propose_specs(llm, text: str, source: str = "", max_chunks: int = 6, languag
     for n, chunk in enumerate(select_chunks(chunk_text(text, max_chars=CHUNK_CHARS), max_chunks)):
         msgs = [{"role": "system", "content": system_prompt(language)},
                 {"role": "user", "content": (memory + "\n\n" if memory else "") + f"Source: {source}\n\nTEXT (part {n + 1}):\n{chunk}"}]
-        try:
-            data = parse_json(llm.chat(msgs, temperature=0.2))
-            proposals = data.get("strategies", [])
-            if info is not None:
-                from .knowledge import clean_concepts
-                info["concepts"] += [c for c in clean_concepts(data.get("concepts")) if c not in info["concepts"]]
-        except Exception as e:                      # bad JSON from a weak model is expected
-            rejected.append({"chunk": n, "reason": f"unparseable reply: {e}"})
-            continue
-        for p in proposals if isinstance(proposals, list) else []:
+        for attempt in (1, 2):                      # attempt 2 = ONE repair round when proposals were refused for fixable reasons
             try:
-                p = {**p, "source": p.get("source") or source}
-                spec = from_dict(p)
-            except (SpecError, TypeError, AttributeError) as e:
-                rejected.append({"proposal": p, "reason": str(e)})
-                continue
-            k = (spec.template, json.dumps(spec.ranges, sort_keys=True), tuple(spec.timeframes))
-            if k not in seen:
-                seen.add(k)
-                specs.append(spec)
+                reply = llm.chat(msgs, temperature=0.2)         # an LLM that is down, blocked by the budget or refusing the key RAISES:
+            except LLMError:                                    # the paper must be retried later, not recorded as "read, nothing found"
+                raise
+            try:
+                data = parse_json(reply)
+                proposals = data.get("strategies", [])
+                if info is not None:
+                    from .knowledge import clean_concepts
+                    info["concepts"] += [c for c in clean_concepts(data.get("concepts")) if c not in info["concepts"]]
+            except Exception as e:                      # bad JSON from a weak model is expected
+                rejected.append({"chunk": n, "reason": f"unparseable reply: {e}", "kind": "unparseable"})
+                break
+            fixable = []
+            for p in proposals if isinstance(proposals, list) else []:
+                try:
+                    p = {**p, "source": p.get("source") or source}
+                    spec = from_dict(p, require_card=True)
+                except (SpecError, TypeError, AttributeError) as e:
+                    if attempt == 1 and isinstance(e, SpecError) and "hypothesis" in str(e):
+                        fixable.append((p, str(e)))             # the model gets ONE chance to fix what the validator refused
+                    else:
+                        rejected.append({"proposal": p, "reason": str(e)})
+                    continue
+                k = (spec.template, json.dumps(spec.ranges, sort_keys=True), tuple(spec.timeframes))
+                if k not in seen:
+                    seen.add(k)
+                    specs.append(spec)
+            if not fixable:
+                break
+            msgs = msgs + [{"role": "assistant", "content": reply},
+                           {"role": "user", "content": "These proposals were REJECTED by the validator, fix exactly what is listed and reply again with ONLY "
+                            "the corrected JSON object in the same format (keep the valid ones out, never invent numbers):\n"
+                            + "\n".join(f"- {p.get('name', '?')}: {why}" for p, why in fixable)}]
     return specs, rejected

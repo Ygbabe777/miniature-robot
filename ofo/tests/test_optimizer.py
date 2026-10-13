@@ -32,7 +32,7 @@ def test_noise_surface_is_not_robust():
 
 def test_spec_validation():
     ok = {"template": "orb", "ranges": {"or_minutes": [15, 30]}, "rationale": "range expansion after the open"}
-    assert from_dict(ok).n_candidates == 8
+    assert from_dict(ok).n_candidates == 4 and from_dict(ok).timeframes == ["1min", "5min"]     # the default execution timeframes
     for bad in ({**ok, "template": "os.system"}, {**ok, "ranges": {"or_minutes": [1]}},
                 {**ok, "ranges": {"or_minutes": [15], "x": [1]}}, {**ok, "rationale": ""},
                 {**ok, "timeframes": ["1s"]}, {"template": "random_control", "ranges": {"seed": [1]}, "rationale": "x"}):
@@ -98,3 +98,21 @@ def test_orb_retest_enters_only_after_the_retest():
     # no retest within the window -> never enters
     no_retest = orb_retest(bars, or_minutes=30, retest_bars=1, tol=0.0)
     assert (no_retest == 0).all()
+
+
+def test_new_family_templates_are_causal_including_the_fifteen_minute_context():
+    """The new whitelisted families use structural levels and a 15-minute context. Each bar may use only what was complete before it."""
+    import pandas as pd
+    from ofo.data import resample
+    from ofo.strategies import TEMPLATES
+    bars = synth(n_sessions=40, seed=3)
+    cases = {"sweep_reclaim": {"sweep_atr": 0.2, "reclaim_bars": 3, "level_set": 2, "ctx": 1}, "overnight_gap": {"gap_atr": 0.3, "mode": 0, "exit_min": 120},
+             "regime_adaptive": {"er_window": 10, "er_thresh": 0.3, "lookback": 40, "z": 1.5}, "trend_pullback": {"ema_fast": 9, "ema_slow": 50, "pullback_z": 1.0, "ctx": 1}}
+    for tf in ("1min", "5min", "15min"):
+        b = resample(bars, tf) if tf != "1min" else bars
+        for name, kw in cases.items():
+            full = TEMPLATES[name].fn(b, **kw)
+            for frac in (0.35, 0.6, 0.85):
+                cut = int(len(b) * frac) + 7
+                pd.testing.assert_series_equal(full.iloc[:cut], TEMPLATES[name].fn(b.iloc[:cut], **kw), check_names=False, obj=f"{name}@{tf}")
+            assert (full != 0).any(), name                                     # the family really trades on this data

@@ -9,7 +9,9 @@ from ofo.strategies import INDICATOR_HELP, TEMPLATES, ema_cross, orb
 from test_research import synth
 
 PARAMS = {"ema_cross": {"fast": 5, "slow": 30}, "breakout": {"lookback": 20}, "mean_reversion": {"window": 30, "z": 1.5},
-          "orb": {"or_minutes": 30}, "orb_retest": {"or_minutes": 30, "retest_bars": 6, "tol": 0.2}, "vwap_dev": {"window": 30, "z": 1.5}}
+          "orb": {"or_minutes": 30}, "orb_retest": {"or_minutes": 30, "retest_bars": 6, "tol": 0.2}, "vwap_dev": {"window": 30, "z": 1.5},
+          "sweep_reclaim": {"sweep_atr": 0.2, "reclaim_bars": 3, "level_set": 2, "ctx": 1}, "overnight_gap": {"gap_atr": 0.3, "mode": 0, "exit_min": 120},
+          "regime_adaptive": {"er_window": 10, "er_thresh": 0.3, "lookback": 40, "z": 1.5}, "trend_pullback": {"ema_fast": 9, "ema_slow": 50, "pullback_z": 1.0, "ctx": 1}}
 
 
 @pytest.fixture(scope="module")

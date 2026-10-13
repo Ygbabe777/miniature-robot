@@ -154,7 +154,7 @@
     $('#reqs').innerHTML = s.template_requests.length ? `<h2>${t('reqs_title')}</h2>` + s.template_requests.map(r => `<div class="card"><b>${esc(r.name)}</b><div class="meta">${esc(r.when)}</div>${esc(r.description)}</div>`).join('') : '';
     if (window.LabScene) LabScene.setTrader(s.strategies.filter(x => x.status === 'APPROVED').map(x => x.name), { wait: t('tr_wait'), desk: t('tr_desk'), ready: t('tr_ready'), head: t('tr_head'), none: t('tr_none') });
     trader.symbol = s.symbol; trader.setMarkets(s.markets, s.primary); trader.setStrategies(s.strategies);
-    renderFasc(s.fascicoli || []);
+    renderFasc(s.fascicoli || []); renderResearcher(s.researcher);
     const rk = s.strategies.map(x => x.slug + x.status).join('|') + (s.farming_pending || 0); if (rk !== rankKey) { rankKey = rk; loadRanking(); }
     farmPending(s.farming_pending || 0);
   }
@@ -325,6 +325,24 @@
     $('#rk-sel').onchange = (e) => loadRanking(e.target.value);
   }
   let rankKey = '';
+  async function loadResearch() {
+    let d; try { d = await api('/api/research'); } catch (e) { return; }
+    const el = $('#research'); if (!el || d.error) return;
+    const caps = d.budget.caps, used = d.budget.used, bar = (u, c) => `<span class="bar"><i style="width:${Math.min(100, c ? 100 * u / c : 0)}%"></i></span> ${u}/${c}`;
+    const stg = rcfgStages.map(s => `<tr><th>${t('rsr_st_' + s)}</th><td>${bar(used[s], caps[s])}</td><td>${(d.stage_flow[s] || {}).entered || 0}</td><td>${(d.stage_flow[s] || {}).passed || 0}</td></tr>`).join('');
+    const fam = Object.entries(d.trades_by_family).map(([f, v]) => `<tr class="${v.status === 'blocked_no_data' ? 'dim' : ''}"><th>${esc(f)} <small>${esc(v.label)}</small></th><td>${v.trials}</td><td>${v.studies}</td><td>${v.survivors}</td><td>${v.validated}</td><td>${v.approved}</td><td>${v.rate == null ? '–' : (v.rate * 100).toFixed(0) + '%'}</td><td>${v.status === 'blocked_no_data' ? esc(t('rsr_blocked')) : ''}</td></tr>`).join('');
+    const gt = d.elimination_by_gate.map(([g, n]) => `<div>${n} × ${esc(g)}</div>`).join('') || `<div class="smeta">–</div>`;
+    const ng = d.recurring_negatives.map(([g, n]) => `<div>${n} × ${esc(g)}</div>`).join('') || `<div class="smeta">–</div>`;
+    const pr = d.promising.map(x => `<div>${esc(x.name)} <small>${esc(x.family || '')} · ${esc(x.evidence)}${x.best_tf ? ' · ' + esc(x.best_tf) : ''}</small></div>`).join('') || `<div class="smeta">${t('rsr_none')}</div>`;
+    el.innerHTML = `<h2>${t('rsr_title')}</h2><div class="smeta">${t('rsr_cfg')} ${esc(d.config_version)} · ${t('rsr_total', { u: d.total_budget.trials_registered, c: d.total_budget.cap })} · ${t('rsr_today', { s: d.today.studies, a: d.today.approved })}</div>
+      <div style="overflow-x:auto"><table class="rrt"><tr><th>${t('rsr_stage')}</th><th>${t('rsr_budget_today')}</th><th>${t('rsr_entered')}</th><th>${t('rsr_passed')}</th></tr>${stg}</table></div>
+      <div class="smeta">${t('rsr_cost', { c: d.mean_cost_per_test_s == null ? '–' : d.mean_cost_per_test_s, s: d.mean_study_s })} · ${t('rsr_dups', { e: d.duplicates_avoided.exact, n: d.duplicates_avoided.near })} · ${t('rsr_flow', { q: d.in_queue, r: d.running, p: d.in_paper, a: d.approved })}</div>
+      <div style="overflow-x:auto"><table class="rrt"><tr><th>${t('rsr_family')}</th><th>${t('rsr_trials')}</th><th>${t('rsr_studies')}</th><th>${t('rsr_surv')}</th><th>${t('rsr_valid')}</th><th>${t('rsr_appr')}</th><th>${t('rsr_rate')}</th><th></th></tr>${fam}</table></div>
+      <div class="two"><div><b>${t('rsr_elim')}</b>${gt}</div><div><b>${t('rsr_neg')}</b>${ng}</div></div>
+      <div><b>${t('rsr_prom')}</b>${pr}</div><div class="smeta">${esc(d.evidence_note)}</div><div class="smeta">${esc(d.today.note)}</div>`;
+  }
+  const rcfgStages = ['hypothesis', 'screening', 'validation', 'robustness', 'audit'];
+  setInterval(loadResearch, 30000); setTimeout(loadResearch, 1500);
   function farmPending(n) {
     const el = $('#farmreview'); if (!el) return;
     el.innerHTML = n ? `<div class="card"><b>${t('fr_title')}</b><div class="meta">${t('fr_sub', { n })}</div><button class="btn small" id="fr-go">${t('fr_go')}</button></div>` : '';
@@ -670,6 +688,14 @@
     $('#directives').querySelectorAll('button.x').forEach(b => b.onclick = async () => { const r = await api('/api/directives/remove', { method: 'POST', json: { id: b.dataset.id } }); renderDirectives(r.directives); });
   }
   api('/api/directives').then(d => renderDirectives(d.directives || [])).catch(() => {});
+  function renderResearcher(r) {
+    const el = $('#rstatus'); if (!r || !el) return;
+    const bits = [r.ai ? `AI: <b class="ok">${t('rs_on')}</b>` : `AI: <b class="no">${t('rs_off')}</b>`, r.allowed ? '' : `<b class="no">${t('rs_blocked')}: ${esc(r.why || '')}</b>`,
+      `${t('rs_unread')}: <b>${r.unread}</b>`, `${t('rs_queue')}: <b>${r.queue}</b>`].filter(Boolean).join(' · ');
+    const rec = (r.recent || []).slice().reverse().map(x => x.error ? `<div class="no">✘ ${esc(x.at)} ${esc(x.file)}: ${esc(x.error)}</div>`
+      : `<div class="${x.proposals ? 'ok' : ''}">${x.proposals ? '✔' : '·'} ${esc(x.at)} ${esc(x.file)}: ${x.proposals} ${t('rs_prop')}${(x.rejected || []).length ? ' (' + esc(x.rejected[0]) + ')' : ''}</div>`).join('');
+    el.innerHTML = `<div class="smeta">${bits}</div>${rec}`;
+  }
 
   // ---------- PDF the Researcher asked for: notification + upload ----------
   function toast(html, ms) {
