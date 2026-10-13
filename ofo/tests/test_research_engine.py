@@ -321,3 +321,80 @@ def test_a_running_study_reports_its_stage_and_the_optimizer_is_the_one_working_
     ev = [(e["agent"], e["type"]) for e in lab.events.tail(400)]
     if ("validator", "working") in ev:
         assert ev.index(("optimizer", "working")) < ev.index(("validator", "working"))
+
+
+def _lab_with_researcher(tmp_path, reply):
+    from ofo.app.lab import Lab
+    from test_knowledge import Fake
+    csv = tmp_path / "b.csv.gz"; synth(n_sessions=40, seed=2).to_csv(csv)
+    return Lab(str(csv), data_dir=str(tmp_path / "d"), ideas_dir=str(tmp_path / "i"), llm={"researcher": Fake(reply)})
+
+
+def test_the_researcher_develops_hypotheses_on_its_own_family_by_family_even_while_the_scout_searches(tmp_path):
+    """Reported: 'the researcher brings no hypotheses and no tests to develop'. Phase 1 is now a duty of its own."""
+    prop = {"name": "Sweep dei minimi", "template": "sweep_reclaim", "timeframes": ["5min"], "hypothesis": CARD,
+            "ranges": {"sweep_atr": [0.2, 0.3], "reclaim_bars": [2, 3], "level_set": [2], "ctx": [0]},
+            "rationale": "MECCANISMO ... EVIDENZA ... QUANDO NON FUNZIONA ..."}
+    lab = _lab_with_researcher(tmp_path, {"strategies": [prop], "concepts": ["liquidity sweep"]})
+    lab.busy["research"] = 1                                                       # the Scout is in the middle of a long search...
+    st = lab.hypothesis_status(now=10_000.0)
+    assert st["ready"] and st["queued"] == 0
+    assert lab.hypothesize(now=10_000.0, sync=True) == 1                           # ...and the Researcher still develops a hypothesis
+    v = next(iter(lab.pending.values()))
+    assert v["origin"] == "hypothesis" and v["spec"].template == "sweep_reclaim" and v["spec"].hypothesis["previsione_falsificabile"]
+    assert lab.hypothesis_status(now=10_001.0)["why"].startswith("prossima richiesta")              # at most one request every min_gap_min
+    assert any(e["type"] == "proposal" and "💡" in e["message"] for e in lab.events.tail())
+    assert lab.registry.usage(group="stage")["hypothesis"]["evals"] >= 1                           # phase-1 consumption is accounted
+    brief = lab.hypothesis_brief("C")
+    assert "sweep_reclaim" in brief and "Plausible ranges" in brief and "FAMILY C" in brief
+    assert lab.hypothesis_status(now=10_000.0 + 3600)["queued"] == 1                               # one test is waiting, below the low-water mark: it may ask again
+
+
+def test_hypothesis_generation_waits_for_a_low_queue_respects_pauses_and_rotates_families(tmp_path):
+    lab = _lab_with_researcher(tmp_path, {"strategies": []})
+    for i in range(4):
+        lab._add_pending(from_dict({**SPEC, "name": f"q{i}", "ranges": {"lookback": [10 + i]}}), "paper")
+    assert lab.hypothesis_status(now=50_000.0)["why"].startswith("coda sufficiente")              # enough tests already waiting
+    lab.pending.clear()
+    first = lab.pick_family()
+    lab._hyp_last = {first: 1.0}
+    assert lab.pick_family() != first or len([f for f, v in rc.get()["families"].items() if v["templates"]]) == 1   # round-robin on equal evidence
+    assert lab.pick_family() in {"A", "B", "C", "E", "F", "G"}                                    # blocked families (D, GEX) are never asked
+    from ofo.app.lab import NoLLM
+    lab.llm = NoLLM()
+    assert lab.hypothesis_status(now=50_000.0)["why"] == "nessuna AI configurata"
+
+
+def test_an_ai_failure_while_developing_hypotheses_is_reported_not_swallowed(tmp_path):
+    from ofo.app.lab import Lab
+    from ofo.llm.client import LLMError
+    csv = tmp_path / "b.csv.gz"; synth(n_sessions=40, seed=2).to_csv(csv)
+
+    class Down:
+        def chat(self, *a, **k):
+            raise LLMError("key refused")
+    lab = Lab(str(csv), data_dir=str(tmp_path / "d"), ideas_dir=str(tmp_path / "i"), llm={"researcher": Down()})
+    assert lab.hypothesize(now=1000.0, sync=True) == 0
+    log = lab.researcher_status()["hypothesis"]["log"][-1]
+    assert "key refused" in log["error"] and any(e["type"] == "error" and "AI non utilizzabile" in e["message"] for e in lab.events.tail())
+
+
+def test_two_studies_run_one_after_the_other_and_the_waiting_one_says_who_it_waits_for(tmp_path):
+    import time
+    from ofo.app.lab import Lab
+    csv = tmp_path / "b.csv.gz"; synth(n_sessions=300, drift_ar=0.9, seed=5).to_csv(csv)
+    lab = Lab(str(csv), data_dir=str(tmp_path / "d"), ideas_dir=str(tmp_path / "i"))
+    a = lab.start(lab._add_pending(from_dict({**SPEC, "name": "first"}), "paper")["id"])
+    for _ in range(100):                                                       # wait until the first one holds the engine
+        if lab.engine_state().get("kind") == "study":
+            break
+        time.sleep(0.1)
+    b = lab.start(lab._add_pending(from_dict({**SPEC, "name": "second", "ranges": {"lookback": [15, 25, 35]}}), "paper")["id"])
+    time.sleep(0.3)
+    eng = lab.engine_state()
+    assert lab.jobs[b["id"]]["status"] == "queued" and eng["kind"] == "study" and eng["name"] == "first"      # it says WHO it waits for
+    for _ in range(900):
+        if all(lab.jobs[j["id"]]["status"] in ("done", "error") for j in (a, b)):
+            break
+        time.sleep(0.3)
+    assert [lab.jobs[j["id"]]["status"] for j in (a, b)] == ["done", "done"] and lab.engine_state()["kind"] is None

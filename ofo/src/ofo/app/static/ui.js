@@ -148,7 +148,7 @@
     const pend = $('#pending'); pend.innerHTML = s.pending.length ? `<h2>${t(s.autopilot && s.autopilot.enabled ? 'pending_auto' : 'pending_title')}</h2>` : '';
     s.pending.forEach(sp => { const o = document.createElement('div'); o.style.cssText = 'color:var(--dim);font-size:10px;margin-bottom:2px'; o.textContent = t('origin') + ': ' + t('o_' + sp.origin) + (sp.market ? ' · ' + sp.market : ''); pend.appendChild(o); pend.appendChild(specCard(sp)); });
     $('#jobs').innerHTML = s.jobs.filter(j => j.status === 'queued' || j.status === 'running').map(j => `<div class="card"><span class="spin"></span>${t('job_run', { n: '<b>' + esc(j.name) + '</b>', c: j.n_candidates })}
-      <div class="meta">${j.status === 'queued' ? t('job_wait', { why: esc(s.engine_busy_with || t('job_wait_other')) }) : t('job_stage', { s: t('stg_' + (j.stage || 'starting')), d: esc(j.stage_detail || '') })}</div></div>`).join('')
+      <div class="meta">${j.status === 'queued' ? t('job_wait', { why: esc(engineWhy(s.engine)) }) : t('job_stage', { s: t('stg_' + (j.stage || 'starting')), d: esc(j.stage_detail || '') })}</div></div>`).join('')
       + s.jobs.filter(j => j.status === 'error').slice(-1).map(j => `<div class="card" style="border-color:var(--down)">${t('job_err', { n: esc(j.name), e: esc(j.error) })}</div>`).join('');
     $('#studies').innerHTML = `<h2>${t('studies_title')}</h2>` + (s.strategies.length ? s.strategies.map(x => `<div class="row" data-slug="${esc(x.slug)}"><div><b>${esc(x.name)}</b><small>${esc(x.template)} · ${x.n_candidates} ${t('combos')} · ${t('med_sharpe')} ${num(x.median_sharpe, 3)} · ${x.robust ? t('robust') : t('fragile')}</small></div><span class="badge b-${x.status}">${t('v_' + x.status)}</span></div>`).join('') : `<div class="empty">${t('none_yet')}</div>`);
     $('#studies').querySelectorAll('.row').forEach(r => r.onclick = () => openDetail(r.dataset.slug));
@@ -326,6 +326,13 @@
     $('#rk-sel').onchange = (e) => loadRanking(e.target.value);
   }
   let rankKey = '';
+  function engineWhy(e) {
+    if (!e || !e.busy) return t('job_wait_free');
+    const m = e.elapsed_s != null ? Math.max(0, Math.round(e.elapsed_s / 60)) : 0;
+    if (e.kind === 'review') return t('job_wait_review', { n: e.name, m });
+    if (e.kind === 'study') return t('job_wait_study', { n: e.name, s: e.stage ? t('stg_' + e.stage) : '', m });
+    return t('job_wait_other');
+  }
   async function loadResearch() {
     let d; try { d = await api('/api/research'); } catch (e) { return; }
     const el = $('#research'); if (!el || d.error) return;
@@ -695,7 +702,8 @@
       `${t('rs_unread')}: <b>${r.unread}</b>`, `${t('rs_queue')}: <b>${r.queue}</b>`].filter(Boolean).join(' · ');
     const rec = (r.recent || []).slice().reverse().map(x => x.error ? `<div class="no">✘ ${esc(x.at)} ${esc(x.file)}: ${esc(x.error)}</div>`
       : `<div class="${x.proposals ? 'ok' : ''}">${x.proposals ? '✔' : '·'} ${esc(x.at)} ${esc(x.file)}: ${x.proposals} ${t('rs_prop')}${(x.rejected || []).length ? ' (' + esc(x.rejected[0]) + ')' : ''}</div>`).join('');
-    el.innerHTML = `<div class="smeta">${bits}</div>${rec}`;
+    const h = r.hypothesis, hy = h ? `<div class="smeta">${t('rs_hyp')}: <b class="${h.ready ? 'ok' : ''}">${esc(h.ready ? t('rs_hyp_ready') : h.why)}</b>${(h.log || []).length ? ' · ' + esc(h.log[h.log.length - 1].family) + ': ' + (h.log[h.log.length - 1].error ? '✘ ' + esc(h.log[h.log.length - 1].error) : h.log[h.log.length - 1].proposals + ' ' + t('rs_prop')) : ''}</div>` : '';
+    el.innerHTML = `<div class="smeta">${bits}</div>${hy}${rec}`;
   }
 
   // ---------- PDF the Researcher asked for: notification + upload ----------

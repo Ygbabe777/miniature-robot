@@ -160,6 +160,8 @@ class ResearchLoop:
         decision = {"decision": "abandon", "reason": "failed a deterministic gate (surface, walk-forward or beta)", "spec": None}
         if gate:
             left = self.max_cycle_trials - self.trials_spent
+            if getattr(self, "on_stage", None):
+                self.on_stage("planner", "il Planner decide il passo successivo (chiamata AI)")
             try:
                 decision = make_planner(_llm(self.llm, "planner"), spec, left, depth, ev, self.language).run(
                     dev_summary(rep, {"trials_total": self.registry.n_trials, "trials_left": left,
@@ -171,6 +173,8 @@ class ResearchLoop:
         ev.emit("judge", "verdict", f"{spec.name}: {locked['status']}", {k: v for k, v in locked.items() if k != "checks"})
         audit = None
         if "checks" in locked or s["robust"]:
+            if getattr(self, "on_stage", None):
+                self.on_stage("auditor", "l'Auditor commenta lo studio (chiamata AI)")
             payload = {k: v for k, v in rep.items() if k not in ("wf_oos_series", "series")}
             payload["trials_total"] = self.registry.n_trials
             try:

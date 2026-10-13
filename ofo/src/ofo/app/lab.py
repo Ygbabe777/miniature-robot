@@ -115,6 +115,7 @@ class Lab:
         self.rbudget = ResearchBudget(self.registry)
         self.pending: dict[str, dict] = {}
         self._running_specs: dict[str, dict] = {}
+        self._holder: dict | None = None                       # who holds the engine right now (a study or a review), for the UI
         self.queue_file = self.data / "queue.json"
         self.jobs: dict[str, dict] = {}
         self.lock, self.run_lock = threading.Lock(), threading.Lock()
@@ -130,7 +131,7 @@ class Lab:
         self.ideas.mkdir(parents=True, exist_ok=True)
         self._fetch, self._scout, self._scout_running = fetch, None, False
         self._channels = channels or []              # sources.build_channels(...): web / github / rss / exa / youtube / reddit / x
-        self.busy = {"research": 0, "job": 0, "chat": 0, "review": 0}          # real activity, not event timeouts
+        self.busy = {"research": 0, "job": 0, "chat": 0, "review": 0, "hypo": 0}          # real activity, not event timeouts
         self.ap_file = self.data / "autopilot.json"
         first = not self.ap_file.exists()
         self.ap = {"v": 2, "markets": None, "enabled": True, "max_trials_per_day": 30000, "max_trials_total": 300000, "day": "", "trials_today": 0}
@@ -406,8 +407,9 @@ class Lab:
         return job
 
     def _run_job(self, job: dict, spec: StrategySpec, market: str | None = None) -> None:
-        with self.working("job"), self.run_lock:  # one study at a time: they are CPU heavy
-            job["status"] = "running"
+        res = None
+        with self.working("job"), self.run_lock:  # one STUDY at a time (they are CPU heavy); nothing else ever holds this lock for long
+            self._holder = {"kind": "study", "name": spec.name, "job": job["id"], "since": time.time()}
             try:
                 lp = self.loop(market)
                 lp.judge_th = self.judge_thresholds()
@@ -417,22 +419,31 @@ class Lab:
                     res = lp.process(spec, 0)
                 finally:
                     lp.on_stage = None
-                job.update(status="done", slug=slugify(spec.name), verdict=res["verdict"])
+                job.update(slug=slugify(spec.name), verdict=res["verdict"])
                 while lp.queue:                   # planner proposals: the autopilot runs them, otherwise they wait
                     nxt, _ = lp.queue.pop(0)
                     self._add_pending(nxt, "planner", market)
-                self.farming_post(job["slug"])         # fascicolo + the board's discussion of the numbers (italian)
-                if res["verdict"] == "APPROVED":
-                    self.make_dossier(job["slug"])
-                    self.deploy_ready()                # approved -> paper forward validation (gate 7); LIVE stays the owner's decision
             except Exception as e:
+                res = None
                 job.update(status="error", error=str(e)[:300])
                 self.events.emit("lab", "error", f"{spec.name}: {e}")
                 for agent in ("optimizer", "validator", "judge"):      # nobody stays "working" after a crash
                     self.events.emit(agent, "idle", "stopped")
             finally:
-                self._running_specs.pop(job["id"], None)
-                self._persist_queue()
+                self._holder = None
+        # the engine is free from here: dossier, fascicolo and paper deployment must not make the next study wait
+        try:
+            if res is not None:
+                job["status"] = "done"
+                self.farming_post(job["slug"])         # fascicolo + the board's discussion of the numbers (italian)
+                if res["verdict"] == "APPROVED":
+                    self.make_dossier(job["slug"])
+                    self.deploy_ready()                # approved -> paper forward validation (gate 7); LIVE stays the owner's decision
+        except Exception as e:
+            self.events.emit("lab", "error", f"{spec.name}: post-processing: {e}")
+        finally:
+            self._running_specs.pop(job["id"], None)
+            self._persist_queue()
 
     def _ingest_now(self) -> None:
         if not self.llm_allowed("researcher"):
@@ -595,6 +606,15 @@ class Lab:
             return True
         return False
 
+    def engine_state(self) -> dict:
+        """Who holds the (one-study-at-a-time) engine: a study with its stage and elapsed time, a review, or nobody."""
+        h = self._holder
+        if not h:
+            return {"busy": self.run_lock.locked(), "kind": None}
+        job = self.jobs.get(h.get("job", ""), {})
+        return {"busy": True, "kind": h["kind"], "name": h["name"], "elapsed_s": int(time.time() - h["since"]), "stage": job.get("stage"),
+                "stage_detail": job.get("stage_detail")}
+
     def research_report(self) -> dict:
         """The research engine in numbers: budget, trials per family, candidates per stage, elimination per gate, cost per test,
         duplicates avoided, promising hypotheses, recurring negatives. Screening, walk-forward, locked and forward results are
@@ -669,7 +689,7 @@ class Lab:
         return {"ai": not isinstance(self.llm, NoLLM), "allowed": ok, "why": why, "budget_mode": g.mode() if g else None, "unread": unread,
                 "queue": len(self.pending), "autopilot": bool(self.ap["enabled"]),
                 "recent": [{**x, "at": time.strftime("%H:%M:%S", time.localtime(x["at"]))} for x in (lp.ingest_log[-5:] if lp else [])],
-                "last_brainstorm": time.strftime("%H:%M:%S", time.localtime(self._last_brainstorm)) if getattr(self, "_last_brainstorm", 0) else None}
+                "hypothesis": self.hypothesis_status(), "last_brainstorm": time.strftime("%H:%M:%S", time.localtime(self._last_brainstorm)) if getattr(self, "_last_brainstorm", 0) else None}
 
     def _unread_ideas(self) -> bool:
         done = self._loop_obj.processed_ideas if self._loop_obj else set()
@@ -791,6 +811,117 @@ class Lab:
             self.events.emit("researcher", "done", f"brainstorm: {n} new proposals")
         return n
 
+    def hypothesis_brief(self, fid: str) -> str:
+        """What the Researcher is told when it must develop hypotheses for one family: its label, the whitelisted templates with their
+        hard bounds and the economically plausible ranges from the research config. Never numbers about results."""
+        cfg = rcfg_mod.get()
+        fam = cfg["families"][fid]
+        lines = [f"HYPOTHESIS GENERATION (no paper this time) for FAMILY {fid}: {fam['label']}.",
+                 "Develop NEW, economically distinct hypotheses for NQ/MNQ intraday futures that fit this family. Use ONLY these templates:"]
+        for tname in fam["templates"]:
+            t = TEMPLATES[tname]
+            sp = cfg.get("search_space", {}).get(tname, {}).get("params", {})
+            params = ", ".join(f"{p} {sp[p]['range'][0]}..{sp[p]['range'][1]} (start {sp[p]['init']}, step {sp[p]['step']}: {sp[p]['why']})" if p in sp else
+                               f"{p} ({typ.__name__} {lo}..{hi})" for p, (typ, lo, hi) in t.params.items())
+            lines.append(f'- "{tname}": {t.doc}. Plausible ranges: {params}')
+        lines += ["Rules: at most %d strategies; each with the full hypothesis card and a rationale (mechanism / evidence / when it fails); 6-12 values per "
+                  "parameter inside the plausible ranges above; timeframes from 1min, 5min (add 15min only if the idea needs it); do not repeat what the lab "
+                  "memory shows already tested or failed; never invent results or statistics." % int(cfg["hypothesis"]["per_call"])]
+        if fam.get("note"):
+            lines.append("Note: " + fam["note"])
+        return "\n".join(lines)
+
+    def pick_family(self) -> str | None:
+        """The active family worth developing next: shrunk success estimate x novelty / cost (same allocator as the test queue), and the
+        one asked longest ago on ties, so every family keeps being explored."""
+        cfg = rcfg_mod.get()
+        act = [f for f, v in cfg["families"].items() if v.get("status", "active") == "active" and v.get("templates")]
+        if not act:
+            return None
+        st, a = self.rbudget.family_stats(), cfg["allocation"]
+        last = getattr(self, "_hyp_last", {})
+
+        def score(f):
+            s = st.get(f)
+            rate = s["rate"] if s else float(a["prior_rate"])
+            return (rate * (1 + float(a["novelty_weight"]) / (1 + (s["studies"] if s else 0))), -last.get(f, 0.0))
+        return max(act, key=lambda f: (score(f)[0], score(f)[1]))
+
+    def hypothesis_status(self, now: float | None = None) -> dict:
+        """Why the Researcher is (not) developing hypotheses right now. Same rules as hypothesize()."""
+        now = now or time.time()
+        h = rcfg_mod.get()["hypothesis"]
+        gap = float(h["min_gap_min"]) * 60 * (float(h["economy_gap_factor"]) if self.economy() else 1.0)
+        on = set(self.enabled_markets())
+        with self.lock:
+            queued = sum(1 for v in self.pending.values() if (v.get("market") or self.primary) in on)
+        used = self.rbudget.used()["hypothesis"]
+        why = None
+        if isinstance(self.llm, NoLLM):
+            why = "nessuna AI configurata"
+        elif getattr(self, "_hyp_running", False):
+            why = "sta lavorando"
+        elif queued >= int(h["queue_low"]):
+            why = f"coda sufficiente ({queued} test in attesa)"
+        elif used >= self.rbudget.caps()["hypothesis"] + self.rbudget.overage_allowed():
+            why = "tetto giornaliero della fase ipotesi raggiunto"
+        elif now - getattr(self, "_last_hyp", 0.0) < gap:
+            why = f"prossima richiesta tra {int((gap - (now - getattr(self, '_last_hyp', 0.0))) / 60) + 1} min"
+        else:
+            ok = self.llm_allowed("researcher")
+            if not ok:
+                why = "AI in pausa per il budget"
+        return {"ready": why is None, "why": why, "queued": queued, "used_today": used, "log": getattr(self, "_hyp_log", [])[-5:]}
+
+    def hypothesize(self, now: float | None = None, force: bool = False, sync: bool = False) -> int:
+        """PHASE 1 of the research protocol, run by the Researcher on its own: develop hypotheses family by family whenever the test queue
+        runs low, whether or not the Scout is busy searching. Every proposal still needs the hypothesis card and goes through the same
+        deterministic tests; nothing here is a result."""
+        now = now or time.time()
+        if not force and not self.hypothesis_status(now)["ready"]:
+            return 0
+        if isinstance(self.llm, NoLLM) or getattr(self, "_hyp_running", False):
+            return 0
+        fid = self.pick_family()
+        if fid is None:
+            return 0
+        self._hyp_running, self._last_hyp = True, now
+        self._hyp_last = {**getattr(self, "_hyp_last", {}), fid: now}
+
+        def work() -> int:
+            from ..papers import propose_specs
+            n, t0, entry = 0, time.time(), {"at": time.strftime("%H:%M:%S"), "family": fid, "proposals": 0, "error": None, "rejected": []}
+            try:
+                with self.working("hypo"):
+                    self.events.emit("researcher", "working", f"sviluppo ipotesi per la famiglia {fid}: {rcfg_mod.get()['families'][fid]['label']}")
+                    llm = self.llm["researcher"] if isinstance(self.llm, dict) else self.llm
+                    specs, rejected = propose_specs(llm, self.hypothesis_brief(fid), source=f"ipotesi famiglia {fid}", language=self.language,
+                                                    memory=self.memory_text(), max_chunks=1)
+                    entry["rejected"] = [r.get("reason", "")[:100] for r in rejected[:3]]
+                    for sp in specs:
+                        got = self._add_pending_all(sp, "hypothesis")
+                        n += got
+                        if got:
+                            self.events.emit("researcher", "proposal", f"💡 {sp.name}: {sp.template}, {sp.n_candidates} candidati" +
+                                             (f" (scheda incompleta: {len(sp.hypothesis_missing)} voci)" if sp.hypothesis_missing else ""),
+                                             {"rationale": sp.rationale, "family": fid})
+                    entry["proposals"] = n
+                    self.registry.add_trials(0, f"hypothesis:{fid}", kind="compute", stage="hypothesis", family=fid, n_evals=max(1, len(specs)),
+                                             compute_s=time.time() - t0, config_version=rcfg_mod.get()["config_version"])
+                    self.events.emit("researcher", "done", f"famiglia {fid}: {n} nuove ipotesi in coda")
+            except Exception as e:                                  # AI down / budget / key refused: say so, try again after the gap
+                entry["error"] = f"{type(e).__name__}: {str(e)[:160]}"
+                self.events.emit("researcher", "error", f"ipotesi famiglia {fid}: AI non utilizzabile ({entry['error']})")
+                self.events.emit("researcher", "idle", "stopped")
+            finally:
+                self._hyp_log = (getattr(self, "_hyp_log", []) + [entry])[-20:]
+                self._hyp_running = False
+            return n
+        if sync:
+            return work()
+        threading.Thread(target=work, daemon=True).start()
+        return 0
+
     def connect_ideas(self, now: float | None = None) -> int:
         """The Researcher reads the knowledge network (and your Obsidian notes) and combines two concepts into new
         strategies: pairs you linked by hand first, then untested or successful concepts that were never combined.
@@ -850,7 +981,7 @@ class Lab:
         if self.busy["research"] > 0:
             return
         if self.seed_specs() == 0 and self.connect_ideas() == 0:
-            self.brainstorm()
+            self.hypothesize()
 
     def autopilot_state(self) -> dict:
         sc = self.scout()
@@ -878,7 +1009,7 @@ class Lab:
         """Who is really busy right now. Derived from live activity counters and the agents' own
         lifecycle events, never from a timeout: a long LLM wait must not look like 'switched off'."""
         life, b, out = self.events.life, self.busy, set()
-        if b["research"] > 0:
+        if b["research"] > 0 or b.get("hypo", 0) > 0:
             out.add("researcher")
             if life.get("scout") == "working" or self._scout_running:
                 out.add("scout")
@@ -1008,7 +1139,11 @@ class Lab:
                         while any(j["status"] in ("queued", "running") for j in self.jobs.values()):
                             time.sleep(2.0)                           # a study the owner is waiting for always goes first
                         with self.run_lock:
-                            self.farming_review(slug)
+                            self._holder = {"kind": "review", "name": slug, "since": time.time()}
+                            try:
+                                self.farming_review(slug)
+                            finally:
+                                self._holder = None
             finally:
                 self._farm_busy = False
         threading.Thread(target=work, daemon=True).start()
@@ -1331,6 +1466,8 @@ class Lab:
                         if n % 3 == 0:
                             self.scout_tick()
                         self.autopilot_tick()
+                        if n % 2 == 0:
+                            self.hypothesize()                     # the Researcher develops hypotheses on its own, independent of the Scout and of the tests
                         if n % 12 == 0:
                             self.deploy_ready()
                             self.forward_tick()
@@ -1364,6 +1501,7 @@ class Lab:
                 "strategies": list_studies(self.work), "template_requests": reqs,
                 "templates": {k: t.doc for k, t in TEMPLATES.items() if not t.control}, "symbol": self.contract.symbol,
                 "primary": self.primary, "markets": [{"sym": k, "name": MARKETS[k]["name"], "micro": c.contract.symbol} for k, c in self.mk.items()],
+                "engine": self.engine_state(),
                 "engine_busy_with": ("revisione prop farming" if getattr(self, "_farm_busy", False) else None),
                 "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state(),
                 "autopilot": self.autopilot_state(), "budget": self.budget_state(), "obsidian": self.obsidian_state(),

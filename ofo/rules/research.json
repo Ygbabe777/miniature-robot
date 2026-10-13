@@ -498,5 +498,12 @@
     }
    }
   }
+ },
+ "hypothesis": {
+  "queue_low": 4,
+  "min_gap_min": 8,
+  "economy_gap_factor": 3,
+  "per_call": 2,
+  "note": "fase 1: il Researcher genera ipotesi da solo, famiglia per famiglia, quando la coda di test scende sotto queue_low, anche mentre lo Scout cerca; al massimo una richiesta ogni min_gap_min minuti (x economy_gap_factor in modalità risparmio); il consumo conta nel tetto della fase 'hypothesis'"
  }
 }

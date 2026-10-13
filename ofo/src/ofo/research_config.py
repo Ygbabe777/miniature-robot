@@ -31,6 +31,7 @@ def _default() -> dict:
             "search": {"coarse_step": 2, "random_extra_fraction": 0.25, "refine_top": 3, "refine_share": 0.25, "seed": 7},
             "early_stop": {"min_fraction": 0.3, "min_configs": 8, "z": 1.645},
             "allocation": {"prior_strength": 20, "prior_rate": 0.05, "novelty_weight": 1.0, "min_family_share": 0.10, "max_family_share": 0.40},
+            "hypothesis": {"queue_low": 4, "min_gap_min": 8, "economy_gap_factor": 3, "per_call": 2},
             "cost_model_version": "1", "dsr_trials": "raw", "families": {}, "search_space": {}}
 
 
