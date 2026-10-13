@@ -15,10 +15,11 @@ class Fake:
         return json.dumps(self.reply)
 
 
-def study(name, status, gates=None, template="orb"):
+def study(name, status, gates=None, template="orb", dev_gates=None):
     return {"report": {"name": name, "template": template, "rationale": "r", "source": "s", "n_candidates": 4,
-                       "surface": {"median_sharpe": 0, "frac_positive": 0.5, "plateau_ratio": 0.5, "robust": False},
-                       "wf_oos_pnl": 0.0,
+                       "surface": {"median_sharpe": 0, "frac_positive": 0.5, "plateau_ratio": 0.5, "robust": not dev_gates,
+                                   "checks": {g: False for g in (dev_gates or [])}},
+                       "wf_oos_pnl": 1.0,
                        "locked": {"status": status, "checks": {g: False for g in (gates or [])}}}}
 
 
@@ -37,7 +38,8 @@ def test_graph_links_papers_strategies_and_concepts_and_builds_memory(tmp_path):
     (sd / "arxiv_1.json").write_text(json.dumps({"strategies": [{"name": "ORB a"}], "concepts": ["opening range", "gap"]}))
     papers = {"arxiv:1": {"title": "Paper One", "status": "downloaded", "file": "web/arxiv_1.pdf", "query": "opening range breakout"},
               "arxiv:2": {"title": "Paper Two", "status": "downloaded", "file": "web/arxiv_2.pdf", "query": "gap fade"}}
-    g = kn.build([study("ORB a", "REJECTED", ["dsr"]), study("ORB b", "REJECTED", ["dsr", "bust_risk"])], papers, sd)
+    g = kn.build([study("ORB a", "REJECTED", ["dsr"], dev_gates=["plateau"]),
+                  study("ORB b", "REJECTED", ["dsr", "bust_risk"], dev_gates=["plateau", "median_sharpe"])], papers, sd)
     c = g["concepts"]
     assert g["paper_concepts"]["Paper One"] == ["opening range", "gap", "opening range breakout"]
     assert "ORB a" in c["opening range"]["strategies"] and c["opening range"]["tested"] >= 1
@@ -45,7 +47,8 @@ def test_graph_links_papers_strategies_and_concepts_and_builds_memory(tmp_path):
     assert any("none approved" in x for x in c["opening range"]["lessons"])
     assert c["gap fade"]["tested"] == 0 and "no strategy tested yet" in c["gap fade"]["lessons"][0]
     mem = kn.memory_text(g)
-    assert "opening range" in mem and "usually fails: dsr" in mem and "gap fade" in mem and "NEW mechanism" in mem
+    assert "opening range" in mem and "usually fails: plateau" in mem and "gap fade" in mem and "NEW mechanism" in mem
+    assert any("none approved" in x for x in c["opening range"]["lessons"])           # the human-facing lessons keep the verdicts
     obs = ob.sync(tmp_path / "v", [study("ORB a", "REJECTED", ["dsr"])], [], [], {"arxiv:1": {**papers["arxiv:1"], "status": "downloaded"}}, [], "it", graph=g) \
         if (tmp_path / "v").mkdir() is None else None
     root = tmp_path / "v" / "OFO"
@@ -70,7 +73,7 @@ def _graph():
         "opening range": {"papers": ["P"], "strategies": ["ORB a"], "tested": 2, "approved": 0, "gates": {}, "related": ["gap"], "lessons": ["2 tested, none approved"], "owner_notes": []},
         "gap": {"papers": ["P"], "strategies": [], "tested": 0, "approved": 0, "gates": {}, "related": ["opening range"], "lessons": [], "owner_notes": []},
         "volatility regime": {"papers": ["Q"], "strategies": [], "tested": 0, "approved": 0, "gates": {}, "related": [], "lessons": [], "owner_notes": ["la volatilità conta"]},
-        "vwap": {"papers": [], "strategies": ["V"], "tested": 3, "approved": 1, "gates": {}, "related": [], "lessons": [], "owner_notes": []}}}
+        "vwap": {"papers": [], "strategies": ["V"], "tested": 3, "approved": 1, "dev_passed": 2, "gates": {}, "related": [], "lessons": [], "owner_notes": []}}}
 
 
 def test_connection_candidates_prefer_owner_links_then_untested_or_successful_and_skip_done():
@@ -117,3 +120,23 @@ def test_connect_ideas_reads_the_vault_proposes_hybrids_and_writes_a_linked_idea
     assert "[[Concetto - opening range|opening range]]" in idea and "[[Hybrid ORB gap]]" in idea
     assert lab.connect_ideas(now=100_100.0) == 0                                 # rate limited
     assert "opening range|volatility regime" in (lab.data / "connections.json").read_text()
+
+
+def test_agent_memory_never_contains_what_happened_on_the_hidden_block():
+    """Verdicts and checks of the locked block (approved counts, dsr, bust_risk, pass probability) are for humans.
+    If agents learned from them, the hidden block would become training data for the next hypotheses."""
+    g = kn.build([study("A", "APPROVED", None, dev_gates=None), study("B", "REJECTED", ["dsr", "bust_risk", "pass_prob_ci_lower"],
+                                                                     dev_gates=None),
+                  study("C", "REJECTED", ["dsr"], dev_gates=["plateau"])], {}, __import__("pathlib").Path("/nonexistent"))
+    mem = kn.memory_text(g)
+    for forbidden in ("approved", "APPROVED", "dsr", "bust_risk", "pass_prob", "Judge", "locked", "hidden"):
+        assert forbidden not in mem, forbidden
+    assert "3 tested, 2 passed the development checks" in mem and "usually fails" not in mem          # dev facts only
+    for c in g["concepts"].values():
+        assert all("approved" not in x.lower() and "dsr" not in x for x in c["dev_lessons"])
+    # connection ideas are ranked with development facts too: an approval alone cannot raise a pair
+    g2 = {"concepts": {"x": {"tested": 2, "approved": 2, "dev_passed": 0, "related": []},
+                       "y": {"tested": 2, "approved": 0, "dev_passed": 1, "related": []},
+                       "z": {"tested": 2, "approved": 0, "dev_passed": 0, "related": []}}}
+    top = kn.connection_candidates(g2, n=1)[0]
+    assert set(top[:2]) == {"y", "z"} or "y" in top[:2]

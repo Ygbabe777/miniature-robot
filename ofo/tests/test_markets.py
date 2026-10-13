@@ -68,10 +68,16 @@ def test_knowledge_remembers_on_which_market_each_family_works():
     def st(name, market, status):
         return {"report": {"name": name, "market": market, "template": "orb", "rationale": "", "source": "", "n_candidates": 1,
                            "surface": {}, "wf_oos_pnl": 0, "locked": {"status": status, "checks": {}}}}
-    g = kn.build([st("a", "NQ", "REJECTED"), st("a [ES]", "ES", "APPROVED"), st("a [GC]", "GC", "REJECTED")], {}, __import__("pathlib").Path("/nonexistent"))
+    def st2(name, market, status, robust):
+        r = st(name, market, status)
+        r["report"]["surface"] = {"robust": robust, "checks": {} if robust else {"plateau": False}}
+        r["report"]["wf_oos_pnl"] = 1.0 if robust else -1.0
+        return r
+    g = kn.build([st2("a", "NQ", "REJECTED", False), st2("a [ES]", "ES", "APPROVED", True), st2("a [GC]", "GC", "REJECTED", False)],
+                 {}, __import__("pathlib").Path("/nonexistent"))
     assert g["templates"]["orb"] == {"NQ": {"tested": 1, "approved": 0}, "ES": {"tested": 1, "approved": 1}, "GC": {"tested": 1, "approved": 0}}
     mem = kn.memory_text(g)
-    assert "ES 1 tested/1 approved" in mem and "NQ 1 tested/0 approved" in mem and "Results by market" in mem
+    assert "ES 1 tested/1 passed" in mem and "NQ 1 tested/0 passed" in mem and "Results by market" in mem and "approved" not in mem
 
 
 def test_dossier_uses_the_markets_micro_contract_and_point_value():

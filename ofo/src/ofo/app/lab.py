@@ -509,7 +509,7 @@ class Lab:
         def describe(c):
             d = g["concepts"][c]
             ex = " | ".join((studies[x].get("rationale") or "")[:300] for x in d["strategies"][:2] if x in studies)
-            return (f"- {c}: " + "; ".join(d["lessons"]) + (f" Example rationale: {ex}" if ex else "")
+            return (f"- {c}: " + "; ".join(d.get("dev_lessons", [])) + (f" Example rationale: {ex}" if ex else "")
                     + (f" Owner's note: {' / '.join(d.get('owner_notes', []))}" if d.get("owner_notes") else ""))
         text = ("CONNECTION TASK (no paper this time). Two concepts from the lab's knowledge network:\n" + describe(a) + "\n"
                 + describe(b) + f"\nPropose one or two NEW testable strategies that combine '{a}' and '{b}' (for example one as the "

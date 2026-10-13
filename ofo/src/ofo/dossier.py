@@ -46,7 +46,7 @@ T = {
         "multi": " Se non passi al primo tentativo: con più conti, uno dopo l'altro (date diverse), per passarne almeno uno entro {days} giorni con l'80% di probabilità servono {n80} conti, {n90} per il 90%{t3}. Costo atteso fino al primo passaggio, al massimo 10 tentativi: circa ${cost:,.0f}. Conti aperti insieme con gli stessi trade NON sono indipendenti: la probabilità non si moltiplica.",
         "multi_t": "; con 3 conti {p3:.0%}, con 5 {p5:.0%}",
         "cmp": "Conto 50k o 25k? Passare entro {days} giorni: 50k {f50:.0%}, 25k {f25:.0%}. Costo atteso per un passaggio: 50k ≈ ${c50:,.0f}, 25k ≈ ${c25:,.0f}. Payout più probabile: {w} ({a:.0%} contro {b:.0%}). Valore atteso per tentativo: 50k {e50:+,.0f}$, 25k {e25:+,.0f}$ (stime con costi indicativi).",
-        "caveat": "Avvertenze: stima su {n} giorni mai visti dall'ottimizzatore, dopo {trials} prove totali in questo laboratorio (il Giudice le ha già conteggiate). Le regole dell'account sono quelle di esempio, NON verificate: controllale sul regolamento del tuo prop firm prima di usarle. Una probabilità non è una promessa.",
+        "caveat": "Avvertenze: stima su {n} giorni mai visti dall'ottimizzatore, dopo {trials} prove totali in questo laboratorio (il Giudice le ha già conteggiate). Le regole dell'account sono quelle di esempio, NON verificate: controllale sul regolamento del tuo prop firm prima di usarle. La dimensione consigliata è scelta tra {k} alternative guardando proprio quel blocco, quindi le probabilità sono un po' ottimistiche: la conferma vera è il paper trading. Una probabilità non è una promessa.",
         "none": "Nessuna dimensione adatta: o brucia l'account troppo spesso nella settimana, o a lungo andare brucia quasi sempre (con 1 micro: {b:.0%}). Non operarla su questo account.",
     },
     "en": {
@@ -71,7 +71,7 @@ T = {
         "multi": " If you do not pass on the first try: with several accounts, one after another (different dates), to pass at least one within {days} days with 80% probability you need {n80} accounts, {n90} for 90%{t3}. Expected cost until the first pass, at most 10 attempts: about ${cost:,.0f}. Accounts opened together copying the same trades are NOT independent: the probability does not multiply.",
         "multi_t": "; with 3 accounts {p3:.0%}, with 5 {p5:.0%}",
         "cmp": "50k or 25k? Passing within {days} days: 50k {f50:.0%}, 25k {f25:.0%}. Expected cost per pass: 50k ≈ ${c50:,.0f}, 25k ≈ ${c25:,.0f}. More likely payout: {w} ({a:.0%} vs {b:.0%}). Expected value per attempt: 50k {e50:+,.0f}$, 25k {e25:+,.0f}$ (estimates with indicative costs).",
-        "caveat": "Caveats: estimate on {n} days the optimiser never saw, after {trials} total trials in this lab (the Judge already counted them). The account rules are example values, NOT verified: check them against your prop firm's rulebook before relying on them. A probability is not a promise.",
+        "caveat": "Caveats: estimate on {n} days the optimiser never saw, after {trials} total trials in this lab (the Judge already counted them). The account rules are example values, NOT verified: check them against your prop firm's rulebook before relying on them. The recommended size is picked among {k} alternatives by looking at that very block, so the probabilities are somewhat optimistic: the real confirmation is paper trading. A probability is not a promise.",
         "none": "No suitable size: it either busts the account too often that week, or over the long run it almost surely busts (with 1 micro: {b:.0%}). Do not trade this on this account.",
     },
 }
@@ -231,7 +231,7 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
     strat += " " + ext if ext else ""
     if report.get("source"):
         strat += L["src"].format(src=str(report["source"])[:160])
-    caveat = L["caveat"].format(n=len(pnl), trials=trials_total)
+    caveat = L["caveat"].format(n=len(pnl), trials=trials_total, k=len(MICRO_SIZES) + len(MINI_SIZES))
     return {"name": report["name"], "market": market, "micro": micro, "point_value": point_value,
             "template": report["template"], "tf": tf, "params": params, "headline": head,
             "strategy_text": strat, "comparison": comparison, "economics_assumed": True, "fast_ok": fast_ok,

@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from ..optimizer import run_study
+from ..registry import DuplicateExperiment
 from ..papers import extract_pdf_text, propose_specs
 from ..specs import StrategySpec, from_dict
 from ..storage import save_study
@@ -119,8 +120,17 @@ class ResearchLoop:
     def process(self, spec: StrategySpec, depth: int = 0) -> dict:
         ev = self.events
         ev.emit("optimizer", "study_started", f"{spec.name}: {spec.n_candidates} candidates")
-        rep = run_study(self.bars, spec, self.contract, self.rules, self.registry, contracts=self.contracts,
-                        progress=lambda agent, state, msg='': ev.emit(agent, state, msg))
+        try:
+            rep = run_study(self.bars, spec, self.contract, self.rules, self.registry, contracts=self.contracts,
+                            progress=lambda agent, state, msg='': ev.emit(agent, state, msg),
+                            dedupe=True, market=self.market)
+        except DuplicateExperiment as e:                  # same strategy, same data, already in the registry: never re-test
+            self.done_specs.add(_fingerprint(spec))
+            self._save()
+            ev.emit("optimizer", "duplicate", f"{spec.name}: already tested on this data (experiment {e.experiment_id[:8]})")
+            for agent in ("optimizer", "validator", "judge"):
+                ev.emit(agent, "idle", "duplicate skipped")
+            return {"spec": spec.name, "verdict": "DUPLICATE", "decision": "skip", "audit": None}
         self.trials_spent += rep["n_candidates"]
         self.done_specs.add(_fingerprint(spec))
         s = rep["surface"]

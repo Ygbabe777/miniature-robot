@@ -1,3 +1,4 @@
+from ofo.registry import TrialRegistry
 import json
 
 import pytest
@@ -53,21 +54,14 @@ def test_lab_serves_demo_then_real_accounts(tmp_path):
     assert out["demo"] is False and out["accounts"][0]["id"] == "1"
 
 
-def test_run_study_reports_who_is_working_in_order():
+def test_run_study_reports_who_is_working_in_order(tmp_path):
     events = []
     spec = from_dict({"template": "ema_cross", "ranges": {"fast": [5, 9], "slow": [30, 60]},
                       "timeframes": ["15min"], "rationale": "t"})
-    run_study(synth(n_sessions=200, seed=4), spec, MNQ, PRESETS["50k"], _Reg(),
+    run_study(synth(n_sessions=200, seed=4), spec, MNQ, PRESETS["50k"], TrialRegistry(tmp_path / "r.json"),
               train_days=60, test_days=10, progress=lambda a, s, m="": events.append((a, s)))
     assert events[:4] == [("optimizer", "working"), ("optimizer", "done"), ("validator", "working"), ("validator", "done")]
     assert ("judge", "working") not in events                    # a failed surface never reaches the hidden block
-
-
-class _Reg:
-    n_trials = 0
-    data = {"locked_looks": 0}
-    def add_trials(self, n, label): self.n_trials += n
-    def add_locked_look(self, label, status): self.data["locked_looks"] += 1; self.n_trials += 1
 
 
 def test_agent_emits_working_then_done_or_idle(tmp_path):
