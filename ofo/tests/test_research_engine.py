@@ -464,3 +464,29 @@ def test_loading_the_big_price_file_does_not_freeze_the_job_start_or_the_state(t
         pass
     lab.state()                                                            # what the page polls every second
     assert time.time() - t0 < 1.0
+
+
+def test_a_damaged_event_line_does_not_break_the_feed_and_threads_do_not_interleave(tmp_path):
+    """Reported: GET /api/events?after=0 answered 500 for ever (one unreadable line in the log took the whole feed down)."""
+    import threading
+    from ofo.events import EventLog
+    ev = EventLog(tmp_path / "e.jsonl")
+    ts = [threading.Thread(target=lambda k=k: [ev.emit("lab", "x", "m" * 3000 + str(k)) for _ in range(40)]) for k in range(6)]
+    [t.start() for t in ts]; [t.join() for t in ts]
+    assert len(ev.read()) == 240                                                   # every line whole
+    with ev.path.open("a", encoding="utf-8") as f:
+        f.write('{"t": "x", "agent": "lab", "typ\n')                                # a half-written line
+    ev.emit("lab", "after", "still readable")
+    got = ev.read()
+    assert len(got) == 241 and got[-1]["type"] == "after"
+
+
+def test_the_research_panel_reads_only_keys_the_server_really_sends(tmp_path):
+    import re
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    rep = lab.research_report()
+    from pathlib import Path
+    js = (Path(__file__).resolve().parents[1] / "src/ofo/app/static/ui.js").read_text(encoding="utf-8")
+    body = js[js.index("async function loadResearch"):js.index("const rcfgStages")]
+    missing = sorted(k for k in set(re.findall(r"\bd\.([a-z_]+)", body)) if k != "error" and k not in rep)
+    assert not missing, missing

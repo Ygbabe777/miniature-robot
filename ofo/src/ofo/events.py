@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import threading
 from pathlib import Path
 
 
@@ -11,6 +12,7 @@ class EventLog:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._w = threading.Lock()          # many threads emit (scout, hypotheses, studies): lines must never interleave
         self.life: dict[str, str] = {}      # last working/done/idle/error per agent, for the live state view
 
     def emit(self, agent: str, type_: str, message: str = "", data: dict | None = None) -> None:
@@ -18,7 +20,7 @@ class EventLog:
                 "agent": agent, "type": type_, "message": message, "data": data or {}}
         if type_ in ("working", "done", "idle", "error"):
             self.life[agent] = type_
-        with self.path.open("a", encoding="utf-8") as f:
+        with self._w, self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
 
     def alert(self, agent: str, key: str, message: str, cooldown_s: float = 1800.0) -> bool:
@@ -35,7 +37,15 @@ class EventLog:
     def read(self) -> list[dict]:
         if not self.path.exists():
             return []
-        return [json.loads(x) for x in self.path.read_text(encoding="utf-8").splitlines() if x.strip()]
+        out = []
+        for x in self.path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not x.strip():
+                continue
+            try:
+                out.append(json.loads(x))
+            except ValueError:
+                continue                    # one damaged line (crash, half-written) must not take the whole feed down with a 500
+        return out
 
     def tail(self, n: int = 2000) -> list[dict]:
         """The last n events without parsing a log that may have grown for months."""
