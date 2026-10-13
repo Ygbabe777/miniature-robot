@@ -41,7 +41,7 @@ def dev_view(r: dict) -> str:
     keep = {"surface": r["surface"], "quality": r["quality"], "wf": (r["wf_kind"], r["wf_oos_days"], round(r["wf_oos_pnl"], 6)),
             "cut": r["series"]["cut"], "best": r["series"]["best_params"], "exit": r["series"]["exit"], "exits": r["exits"],
             "dev_best": r["series"]["dev_best"], "wf_series": r["series"]["wf_oos"],
-            "detrended": r["surface_detrended"]}
+            "detrended": r["surface_detrended"], "timing": r["timing"]}
     return json.dumps(keep, sort_keys=True, default=str)
 
 

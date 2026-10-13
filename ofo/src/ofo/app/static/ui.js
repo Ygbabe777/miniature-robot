@@ -337,6 +337,18 @@
     const l = names.map(n => t('w_' + n) === 'w_' + n ? n : t('w_' + n)).join('; ');
     return /fragile_without_market_drift/.test(r) ? t('r_fragile', { l }) : t('r_failed', { l });
   }
+  function timingBox(tm) {
+    if (!tm) return '';
+    const rows = Object.entries(tm.accounts).map(([acct, r]) => {
+      const w = String(tm.window_days), pw = r.p_pass_within[w];
+      return `<tr><th>${esc(acct)}</th><td>${r.n_micro}</td><td><b>${r.min_days_seen == null ? '–' : r.min_days_seen}</b></td><td>${r.median_days == null ? '–' : r.median_days.toFixed(0)}</td>
+        <td>${r.p10_days == null ? '–' : r.p10_days.toFixed(0) + '–' + r.p90_days.toFixed(0)}</td><td>${r.hist_min_days == null ? '–' : r.hist_min_days}</td>
+        <td class="${r.within_window_ok ? 'pos' : 'neg'}">${pct(pw)} ${r.within_window_ok ? '✔' : '✘'}</td></tr>`;
+    }).join('');
+    return `<div class="judge"><b>${t('tm_title')}</b><div class="sub">${tm.in_sample ? t('tm_insample') : t('tm_oos')} ${t('tm_goal', { d: tm.window_days, p: pct(tm.min_pass_rate) })}</div>
+      <table class="rrt"><tr><th></th><th>${t('tm_size')}</th><th>${t('tm_min')}</th><th>${t('tm_med')}</th><th>${t('tm_range')}</th><th>${t('tm_hist')}</th><th>${t('tm_within', { d: tm.window_days })}</th></tr>${rows}</table>
+      <div class="sub">${t('tm_note')}</div></div>`;
+  }
   function rrBox(ex) {
     if (!ex) return '';
     const stops = [...new Set(ex.grid.map(c => c.stop_atr))], rrs = [...new Set(ex.grid.map(c => c.rr))];
@@ -369,6 +381,7 @@
         ${L.p_pass != null ? `<div>${t('d_pass')}: <b>${pct(L.p_pass)}</b> (${t('d_interval')} ${pct(L.p_pass_ci95[0])}–${pct(L.p_pass_ci95[1])}) · ${t('d_bust')}: <b>${pct(L.p_bust)}</b> · ${t('d_pnl_block')}: <b class="${L.pnl >= 0 ? 'pos' : 'neg'}">${money(L.pnl)}</b></div>` : ''}</div>
       <div class="grid">${kpi(t('kp_med'), num(sur.median_sharpe, 3))}${kpi(t('kp_pos'), pct(sur.frac_positive))}${kpi(t('kp_plat'), num(sur.plateau_ratio, 2))}${kpi(t('kp_rob'), sur.robust ? t('yes') : t('no'), sur.robust ? 'pos' : 'neg')}${kpi(t('kp_wf'), money(rep.wf_oos_pnl), rep.wf_oos_pnl >= 0 ? 'pos' : 'neg')}</div>
       ${d.best_params ? `<div class="sub">${t('d_best', { p: esc(JSON.stringify(d.best_params)), n: rep.n_candidates })}</div>` : ''}
+      ${timingBox(rep.locked && rep.locked.timing ? rep.locked.timing : rep.timing)}
       ${rrBox(rep.exits)}
       <div class="seg" id="seg">${keys.map(k => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${title[k]}</button>`).join('')}</div>
       <div id="warn"></div><div class="grid" id="kpis"></div>

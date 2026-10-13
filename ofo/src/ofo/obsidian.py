@@ -137,6 +137,13 @@ def strategy_note(rep: dict, planner, auditor, papers_by_title: dict, dossier_na
               "| stop ATR | rr | Sharpe | win | n |", "|---|---|---|---|---|"]
         b += [f"| {c['stop_atr']} | {c['rr'] if c['rr'] else '–'} | {c['sharpe']:+.3f} | {_pct(c.get('win_rate'))} | {c.get('n_trades')} |"
               for c in ex["grid"]]
+    tm_ = (rep.get("locked") or {}).get("timing") or rep.get("timing")
+    if tm_:
+        b += ["", "## Days to pass / Giorni per passare" + (" (in-sample)" if tm_.get("in_sample") else ""), "",
+              "| account | micro | fastest | median | within window |", "|---|---|---|---|---|"]
+        b += [f"| {a} | {r['n_micro']} | {r['min_days_seen'] if r['min_days_seen'] is not None else '–'} | "
+              f"{('%.0f' % r['median_days']) if r['median_days'] is not None else '–'} | {r['p_pass_within'].get(str(tm_['window_days']), 0):.0%} |"
+              for a, r in tm_["accounts"].items()]
     if rep["name"] in dossier_names:
         b += ["", f"## {L['dossier']}", f"[[{safe(rep['name'])} (pronta)]]"]
     if planner and planner.get("reason"):

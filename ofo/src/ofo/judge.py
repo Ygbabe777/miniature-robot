@@ -11,8 +11,10 @@ from .stats import deflated_sharpe
 class Thresholds:
     min_days: int = 120
     min_dsr: float = 0.95
-    min_p_pass_lower: float = 0.40      # lower bound of the 95% CI, not the point value
-    max_p_bust: float = 0.40
+    min_pass_rate: float = 0.30         # a challenge worth considering passes at least this often (the owner's rule: 30-35%)
+    eval_days: int = 5                  # ... within this many sessions, at the best size that does not bust too often
+    base_contracts: int = 2             # size the daily P&L series was produced with
+    max_p_bust: float = 0.40            # at the base size, over a long horizon
 
 
 APPROVED = "APPROVED"
@@ -40,7 +42,12 @@ def judge(oos_daily_pnl, rules: PropRules, n_trials: int, var_sr_trials: float,
     if not checks["enough_days"]:
         return Verdict(INSUFFICIENT, checks)
     checks["dsr"] = bool(deflated_sharpe(x, n_trials, var_sr_trials) >= th.min_dsr)
-    mc = pass_probability_ci(x, rules)
-    checks["pass_prob_ci_lower"] = bool(mc["p_pass_ci95"][0] >= th.min_p_pass_lower)
+    mc = pass_probability_ci(x, rules)                       # base size, long horizon: the interval shown to the owner + bust risk
+    # PASS RATE: the owner's business rule. A strategy is worth considering when, at the best size that does not bust too
+    # often, it passes the challenge within eval_days at least min_pass_rate of the time. Same function the dossier uses.
+    from .dossier import choose, size_table
+    best = choose(size_table(x, rules, th.base_contracts, th.eval_days))["pick"]
+    mc["best_size"] = None if best is None else {k: best[k] for k in ("micro_equiv", "p_fast", "p_fast_lo", "p_fast_hi", "p_bust_fast")}
+    checks["pass_rate"] = bool(best is not None and best["p_fast"] >= th.min_pass_rate)
     checks["bust_risk"] = bool(mc["p_bust"] <= th.max_p_bust)
     return Verdict(APPROVED if all(checks.values()) else REJECTED, checks, mc)

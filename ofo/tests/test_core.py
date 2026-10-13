@@ -77,12 +77,25 @@ def test_ci_is_wide_for_short_history_and_narrow_for_long():
     assert w(short) > 2 * w(long_)
 
 
-def test_lucky_noise_sample_does_not_clear_the_pass_prob_bar():
-    """126 zero-edge days that happen to have a positive mean (luck) must still fail."""
-    from ofo.judge import Thresholds
+def test_lucky_noise_cannot_be_approved_even_if_it_games_the_pass_rate():
+    """Zero-edge days with a lucky positive mean: sizing up can make a 5-day pass rate look fine (that is just variance), so
+    the pass-rate rule alone proves nothing. The deflated Sharpe, which counts every trial, must still reject them."""
+    from ofo.judge import REJECTED
     rng = np.random.default_rng(5)
     for _ in range(5):
         x = rng.normal(0, 400, 126)
         x = x - x.mean() + 60          # force a lucky positive mean
-        v = judge(x, PRESETS["50k"], n_trials=1, var_sr_trials=0.01, th=Thresholds(min_dsr=0.0))
-        assert not v.checks["pass_prob_ci_lower"], v.mc["p_pass_ci95"]
+        v = judge(x, PRESETS["50k"], n_trials=1747, var_sr_trials=0.01)
+        assert v.status == REJECTED and not v.checks["dsr"]
+
+
+def test_pass_rate_rule_uses_the_best_size_and_the_owners_threshold():
+    from ofo.judge import Thresholds
+    rng = np.random.default_rng(2)
+    x = rng.normal(150, 250, 130)                                    # a real, steady edge
+    ok = judge(x, PRESETS["50k"], n_trials=1, var_sr_trials=0.01, th=Thresholds(min_dsr=0.0))
+    assert ok.checks["pass_rate"] and ok.mc["best_size"]["p_fast"] >= 0.30
+    strict = judge(x, PRESETS["50k"], n_trials=1, var_sr_trials=0.01, th=Thresholds(min_dsr=0.0, min_pass_rate=0.99))
+    assert not strict.checks["pass_rate"]                            # the threshold is the owner's to set
+    losing = judge(rng.normal(-80, 300, 130), PRESETS["50k"], n_trials=1, var_sr_trials=0.01, th=Thresholds(min_dsr=0.0))
+    assert not losing.checks["pass_rate"] and "pass_prob_ci_lower" not in losing.checks

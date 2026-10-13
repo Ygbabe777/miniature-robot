@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import economics as eco
+from . import timing as tm
 
 from .prop import PropRules, pass_probability_ci
 
@@ -19,19 +20,19 @@ MICRO_SIZES = (1, 2, 3, 4, 5, 6, 8)
 MINI_SIZES = (10, 20)            # 1 and 2 mini contracts, as micro equivalents
 MAX_BUST = 0.35                  # a size is only recommended if its bust probability is below this
 MINI_MARGIN = 0.03               # minis must beat the best micro size by this much (lower bound)
-GOAL = {"max_eval_days": 5, "min_p_fast_lower": 0.25}   # pass the evaluation within a week, with an acceptable pass rate
+GOAL = {"max_eval_days": 5, "min_pass_rate": 0.30, "strong_pass_rate": 0.35}   # a challenge is worth considering from a 30% pass rate (strong from 35%)
 MAX_BUST_FAST = 0.65             # an evaluation-sprint size is rejected if it busts this often within the sprint
 MAX_BUST_ANY = 0.90              # ... or if over the long run the strategy at that size almost surely busts
 
 T = {
     "it": {
         "head": "{name}: pronta per un account {acct}",
-        "head_slow": "{name}: approvata dal Giudice ma TROPPO LENTA per l'obiettivo di {days} giorni",
+        "head_slow": "{name}: approvata dal Giudice ma pass rate sotto il {minp:.0%} entro {days} giorni: DA SCARTARE",
         "strat": "Strategia: {doc} ({tmpl}) su barre {tf}, parametri {params}. {why}",
         "src": " Fonte: {src}.",
         "size": "Per passare la valutazione in {days} giorni usa {n} micro ({micro}){mini}. Probabilità di passare entro {days} giorni: {pf:.0%} (intervallo 95%: {flo:.0%}-{fhi:.0%}); di bruciare l'account in quella settimana: {bf:.0%}. Senza limite di tempo: passi nel {p:.0%} dei casi; tempo mediano per passare {d} giorni.",
-        "goal_ok": " ✔ Soddisfa il tuo obiettivo (passare in {days} giorni con almeno il {minp:.0%} nel caso peggiore dell'intervallo).",
-        "goal_no": " ✘ NON soddisfa il tuo obiettivo: entro {days} giorni passi solo con il {pf:.0%} (caso peggiore {flo:.0%}, serve almeno {minp:.0%}). Tempo mediano per passare quando passa: {d} giorni.",
+        "goal_ok": " ✔ DA CONSIDERARE: passi la challenge entro {days} giorni nel {pf:.0%} dei casi (soglia {minp:.0%}{strong}). Intervallo 95%: {flo:.0%}-{fhi:.0%}: con pochi mesi di dati la stima è incerta.",
+        "goal_no": " ✘ DA SCARTARE: entro {days} giorni passi solo nel {pf:.0%} dei casi (serve almeno {minp:.0%}; intervallo {flo:.0%}-{fhi:.0%}). Tempo mediano per passare quando passa: {d} giorni.",
         "cost": " Costo per passare: un tentativo costa circa ${fee:,.0f} (una mensilità); servono in media {k:.1f} tentativi per un passaggio, quindi ≈ ${cpp:,.0f} + ${act:,.0f} di attivazione a passaggio avvenuto.",
         "funded": " Dopo il passaggio, sul conto funded riduci a {n} micro (rischio di bruciare l'account {b:.0%} nel lungo periodo): la dimensione veloce serve solo per la valutazione.",
         "mini_yes": " = {k} mini NQ",
@@ -43,20 +44,20 @@ T = {
         "exit_off": "Uscite: nessuno stop/target ha migliorato in modo netto l'uscita propria della strategia, quindi si usa quella. La tabella rischio/rendimento è nel dettaglio.",
         "rpt": " Rischio per operazione con {n} micro: circa ${r:,.0f} ({pdd:.0%} del drawdown massimo).",
         "eco": " Costi stimati, solo indicativi (valutazione ~${fee:,.0f}/mese, attivazione ~${act:,.0f}): costo medio per tentativo ${fees:,.0f}. Probabilità di arrivare a un payout: {pp:.0%} (passi {p:.0%}, poi incassi nel {pg:.0%} dei casi); payout netto medio ${net:,.0f}; valore atteso per tentativo {ev:+,.0f}$ (95%: {lo:+,.0f} / {hi:+,.0f}).",
-        "multi": " Se non passi al primo tentativo: con più conti, uno dopo l'altro (date diverse), per passarne almeno uno entro {days} giorni con l'80% di probabilità servono {n80} conti, {n90} per il 90%{t3}. Costo atteso fino al primo passaggio, al massimo 10 tentativi: circa ${cost:,.0f}. Conti aperti insieme con gli stessi trade NON sono indipendenti: la probabilità non si moltiplica.",
+        "multi": " QUANTI CONTI: con 1 conto passi nel {p1:.0%}; il 2° tentativo (altro conto, altra data) porta la probabilità cumulata a {p2:.0%}; il 3° a {p3:.0%}; il 4° a {p4:.0%}; il 5° a {p5:.0%}. Per essere al 90% servono {n90} conti, al 95% {n95}, al 99% {n99} (al 100% non si arriva mai). Se falliscono tutti i {n95} tentativi spendi ${worst:,.0f}; costo atteso fino al primo passaggio ${cost:,.0f}. Conti aperti insieme con gli stessi trade NON sono indipendenti: la probabilità non si moltiplica.",
         "multi_t": "; con 3 conti {p3:.0%}, con 5 {p5:.0%}",
-        "cmp": "Conto 50k o 25k? Passare entro {days} giorni: 50k {f50:.0%}, 25k {f25:.0%}. Costo atteso per un passaggio: 50k ≈ ${c50:,.0f}, 25k ≈ ${c25:,.0f}. Payout più probabile: {w} ({a:.0%} contro {b:.0%}). Valore atteso per tentativo: 50k {e50:+,.0f}$, 25k {e25:+,.0f}$ (stime con costi indicativi).",
+        "cmp": "25k O 50k? Probabilità di passare entro {days} giorni: 25k {f25:.0%}, 50k {f50:.0%} → più probabile con il {best}. Per arrivare al 95%: 25k servono {n25} conti (spesa massima ${w25:,.0f}), 50k servono {n50} conti (spesa massima ${w50:,.0f}). Costo atteso per un passaggio: 25k ≈ ${c25:,.0f}, 50k ≈ ${c50:,.0f}. Payout più probabile: {w} ({a:.0%} contro {b:.0%}). Valore atteso per tentativo: 25k {e25:+,.0f}$, 50k {e50:+,.0f}$ (costi indicativi).",
         "caveat": "Avvertenze: stima su {n} giorni mai visti dall'ottimizzatore, dopo {trials} prove totali in questo laboratorio (il Giudice le ha già conteggiate). Le regole dell'account sono quelle di esempio, NON verificate: controllale sul regolamento del tuo prop firm prima di usarle. La dimensione consigliata è scelta tra {k} alternative guardando proprio quel blocco, quindi le probabilità sono un po' ottimistiche: la conferma vera è il paper trading. Una probabilità non è una promessa.",
         "none": "Nessuna dimensione adatta: o brucia l'account troppo spesso nella settimana, o a lungo andare brucia quasi sempre (con 1 micro: {b:.0%}). Non operarla su questo account.",
     },
     "en": {
         "head": "{name}: ready for a {acct} account",
-        "head_slow": "{name}: approved by the Judge but TOO SLOW for the {days}-day goal",
+        "head_slow": "{name}: approved by the Judge but pass rate below {minp:.0%} within {days} days: DISCARD",
         "strat": "Strategy: {doc} ({tmpl}) on {tf} bars, parameters {params}. {why}",
         "src": " Source: {src}.",
         "size": "To pass the evaluation in {days} days use {n} micro ({micro}){mini}. Probability of passing within {days} days: {pf:.0%} (95% interval: {flo:.0%}-{fhi:.0%}); of busting the account that week: {bf:.0%}. With no time limit: you pass in {p:.0%} of cases; median time to pass {d} days.",
-        "goal_ok": " ✔ Meets your goal (pass within {days} days with at least {minp:.0%} even at the pessimistic end of the interval).",
-        "goal_no": " ✘ Does NOT meet your goal: within {days} days you pass only {pf:.0%} of the time (pessimistic {flo:.0%}, need at least {minp:.0%}). Median time to pass when it passes: {d} days.",
+        "goal_ok": " ✔ WORTH CONSIDERING: you pass the challenge within {days} days {pf:.0%} of the time (threshold {minp:.0%}{strong}). 95% interval: {flo:.0%}-{fhi:.0%}: with a few months of data the estimate is uncertain.",
+        "goal_no": " ✘ DISCARD: within {days} days you pass only {pf:.0%} of the time (need at least {minp:.0%}; interval {flo:.0%}-{fhi:.0%}). Median time to pass when it passes: {d} days.",
         "cost": " Cost to pass: one attempt costs about ${fee:,.0f} (one month); on average {k:.1f} attempts per pass, so ≈ ${cpp:,.0f} + ${act:,.0f} activation once passed.",
         "funded": " After passing, on the funded account cut back to {n} micro (long-run bust risk {b:.0%}): the fast size is only for the evaluation.",
         "mini_yes": " = {k} mini NQ",
@@ -68,9 +69,9 @@ T = {
         "exit_off": "Exits: no stop/target clearly improved on the strategy's own exit, so that one is used. The risk/reward table is in the detail.",
         "rpt": " Risk per trade with {n} micro: about ${r:,.0f} ({pdd:.0%} of the max drawdown).",
         "eco": " Estimated costs, indicative only (evaluation ~${fee:,.0f}/month, activation ~${act:,.0f}): average cost per attempt ${fees:,.0f}. Probability of reaching a payout: {pp:.0%} (you pass {p:.0%}, then get paid in {pg:.0%} of cases); average net payout ${net:,.0f}; expected value per attempt {ev:+,.0f}$ (95%: {lo:+,.0f} / {hi:+,.0f}).",
-        "multi": " If you do not pass on the first try: with several accounts, one after another (different dates), to pass at least one within {days} days with 80% probability you need {n80} accounts, {n90} for 90%{t3}. Expected cost until the first pass, at most 10 attempts: about ${cost:,.0f}. Accounts opened together copying the same trades are NOT independent: the probability does not multiply.",
+        "multi": " HOW MANY ACCOUNTS: with 1 account you pass {p1:.0%}; the 2nd attempt (another account, another date) brings the cumulative probability to {p2:.0%}; the 3rd to {p3:.0%}; the 4th to {p4:.0%}; the 5th to {p5:.0%}. To be at 90% you need {n90} accounts, at 95% {n95}, at 99% {n99} (100% is never reached). If all {n95} attempts fail you spend ${worst:,.0f}; expected cost until the first pass ${cost:,.0f}. Accounts opened together copying the same trades are NOT independent: the probability does not multiply.",
         "multi_t": "; with 3 accounts {p3:.0%}, with 5 {p5:.0%}",
-        "cmp": "50k or 25k? Passing within {days} days: 50k {f50:.0%}, 25k {f25:.0%}. Expected cost per pass: 50k ≈ ${c50:,.0f}, 25k ≈ ${c25:,.0f}. More likely payout: {w} ({a:.0%} vs {b:.0%}). Expected value per attempt: 50k {e50:+,.0f}$, 25k {e25:+,.0f}$ (estimates with indicative costs).",
+        "cmp": "25k OR 50k? Probability of passing within {days} days: 25k {f25:.0%}, 50k {f50:.0%} → more likely with the {best}. To reach 95%: 25k needs {n25} accounts (maximum spend ${w25:,.0f}), 50k needs {n50} accounts (maximum spend ${w50:,.0f}). Expected cost per pass: 25k ≈ ${c25:,.0f}, 50k ≈ ${c50:,.0f}. More likely payout: {w} ({a:.0%} vs {b:.0%}). Expected value per attempt: 25k {e25:+,.0f}$, 50k {e50:+,.0f}$ (indicative costs).",
         "caveat": "Caveats: estimate on {n} days the optimiser never saw, after {trials} total trials in this lab (the Judge already counted them). The account rules are example values, NOT verified: check them against your prop firm's rulebook before relying on them. The recommended size is picked among {k} alternatives by looking at that very block, so the probabilities are somewhat optimistic: the real confirmation is paper trading. A probability is not a promise.",
         "none": "No suitable size: it either busts the account too often that week, or over the long run it almost surely busts (with 1 micro: {b:.0%}). Do not trade this on this account.",
     },
@@ -141,9 +142,10 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
     if not series:
         return None
     goal = {**GOAL, **(goal or {})}
-    days, minp = int(goal["max_eval_days"]), float(goal["min_p_fast_lower"])
+    days, minp, strong = int(goal["max_eval_days"]), float(goal["min_pass_rate"]), float(goal["strong_pass_rate"])
     pnl = np.array([v for _, v in series], dtype=float)
-    L = T["it" if language.lower().startswith("it") else "en"]
+    lang_it = language.lower().startswith("it")
+    L = T["it" if lang_it else "en"]
     accounts = {}
     for acct, rules in rules_by_account.items():
         table = size_table(pnl, rules, base_contracts, days)
@@ -162,12 +164,15 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
             vs = L["vs_mini"].format(k=n // 10, m=ch.get("margin", 0)) if ch["instrument"] == "mini" else L["vs_micro"]
             r = entry["risk"]
             d = pick["median_days"]
-            entry["fast_ok"] = bool(pick["p_fast_lo"] >= minp)
+            entry["fast_ok"] = bool(pick["p_fast"] >= minp)
+            entry["pass_class"] = "strong" if pick["p_fast"] >= strong else ("considered" if entry["fast_ok"] else "below")
             entry["text"] = " ".join([
                 L["size"].format(days=days, n=n, micro=micro, mini=mini, pf=pick["p_fast"], flo=pick["p_fast_lo"], fhi=pick["p_fast_hi"],
                                  bf=pick["p_bust_fast"], p=pick["p_pass"], d=f"{d:.0f}" if d else "n/d")
-                + (L["goal_ok"].format(days=days, minp=minp) if entry["fast_ok"] else
-                   L["goal_no"].format(days=days, pf=pick["p_fast"], flo=pick["p_fast_lo"], minp=minp, d=f"{d:.0f}" if d else "n/d")),
+                + (L["goal_ok"].format(days=days, minp=minp, pf=pick["p_fast"], flo=pick["p_fast_lo"], fhi=pick["p_fast_hi"],
+                                      strong=("; solida: sopra il %d%%" % round(strong * 100) if lang_it else "; strong: above %d%%" % round(strong * 100))
+                                      if pick["p_fast"] >= strong else "") if entry["fast_ok"] else
+                   L["goal_no"].format(days=days, pf=pick["p_fast"], flo=pick["p_fast_lo"], fhi=pick["p_fast_hi"], minp=minp, d=f"{d:.0f}" if d else "n/d")),
                 L["risk"].format(stop=r["daily_stop"], dd=r["max_drawdown_allowed"], worst=abs(r["worst_day"]),
                                  mdd=r["max_drawdown_oos"], hit=r["stop_hit_rate"]),
                 L["vs"].format(why=vs)])
@@ -186,22 +191,35 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
                 entry["economics"], entry["multi"] = e, m
                 if attempts:
                     entry["text"] += L["cost"].format(fee=fee, k=attempts, cpp=attempts * fee, act=assume["activation_fee"])
-                t3 = L["multi_t"].format(p3=m["table"][2]["p_pass_any"], p5=m["table"][4]["p_pass_any"]) if m["table"] else ""
                 entry["text"] += L["eco"].format(fee=e["eval_fee_monthly"], act=e["activation_fee"], fees=e["mean_fees"],
                                                  pp=e["p_payout"], p=e["p_pass"], pg=e["p_payout_given_pass"], net=e["mean_net_payout"],
                                                  ev=e["ev"], lo=e["ev_ci95"][0], hi=e["ev_ci95"][1])
-                entry["text"] += L["multi"].format(days=days, n80=m["n_for_80"] or "–", n90=m["n_for_90"] or "–", t3=t3,
-                                                   cost=m["table"][-1]["expected_cost"])
+                tb = m["table"]
+                n95 = m["n_for_95"]
+                entry["text"] += L["multi"].format(p1=tb[0]["p_pass_any"], p2=tb[1]["p_pass_any"], p3=tb[2]["p_pass_any"], p4=tb[3]["p_pass_any"],
+                                                   p5=tb[4]["p_pass_any"], n90=m["n_for_90"] or "–", n95=n95 or "–", n99=m["n_for_99"] or "–",
+                                                   worst=(n95 or 0) * fee, cost=tb[min((n95 or 10), 10) - 1]["expected_cost"])
         accounts[acct] = entry
-    comparison = None
+    comparison, attempts_table = None, None
     if all((accounts.get(k) or {}).get("economics") for k in ("50k", "25k")):
         a, b = accounts["50k"]["economics"], accounts["25k"]["economics"]
-        w = "50k" if a["p_payout"] >= b["p_payout"] else "25k"
+        m50, m25 = accounts["50k"]["multi"], accounts["25k"]["multi"]
         f50, f25 = accounts["50k"]["recommended"]["p_fast"], accounts["25k"]["recommended"]["p_fast"]
         c50, c25 = a.get("cost_per_pass") or 0.0, b.get("cost_per_pass") or 0.0
-        comparison = L["cmp"].format(days=days, f50=f50, f25=f25, c50=c50, c25=c25, w=w,
+        w = "50k" if a["p_payout"] >= b["p_payout"] else "25k"
+        n50, n25 = m50["n_for_95"] or 10, m25["n_for_95"] or 10
+        comparison = L["cmp"].format(days=days, f50=f50, f25=f25, c50=c50, c25=c25, w=w, best=("25k" if f25 >= f50 else "50k"),
                                      a=max(a["p_payout"], b["p_payout"]), b=min(a["p_payout"], b["p_payout"]),
-                                     e50=a["ev"], e25=b["ev"])
+                                     e50=a["ev"], e25=b["ev"], n25=n25, n50=n50,
+                                     w25=n25 * b["eval_fee_monthly"], w50=n50 * a["eval_fee_monthly"])
+        attempts_table = [{"attempt": i + 1,
+                           "p25_cum": m25["table"][i]["p_pass_any"], "cost25_expected": m25["table"][i]["expected_cost"], "cost25_if_all_fail": m25["table"][i]["cost_if_all_fail"],
+                           "p50_cum": m50["table"][i]["p_pass_any"], "cost50_expected": m50["table"][i]["expected_cost"], "cost50_if_all_fail": m50["table"][i]["cost_if_all_fail"]}
+                          for i in range(10)]
+    for acct, entry in accounts.items():                  # days to pass, from the unseen block, at each account's recommended size
+        if entry.get("recommended"):
+            entry["timing"] = tm.pass_timing(pnl, rules_by_account[acct], base_contracts, entry["recommended"]["micro_equiv"], days)
+            entry["text"] += " " + tm.describe({"window_days": days, "accounts": {acct: entry["timing"]}}, "it" if lang_it else "en")
     fast_ok = any(e["fast_ok"] for e in accounts.values())
     ex = report.get("exits") or {}
     ext = ""
@@ -225,7 +243,7 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
     tf = (report["series"].get("best_params") or {}).get("tf", "?")
     ps = ", ".join(f"{k}={v}" for k, v in params.items())
     best = next((a for a, e in accounts.items() if e["fast_ok"]), next((a for a, e in accounts.items() if e["recommended"]), next(iter(accounts))))
-    head = L["head"].format(name=report["name"], acct=best) if fast_ok else L["head_slow"].format(name=report["name"], days=days)
+    head = L["head"].format(name=report["name"], acct=best) if fast_ok else L["head_slow"].format(name=report["name"], days=days, minp=minp)
     strat = L["strat"].format(doc=doc or report["template"], tmpl=report["template"], tf=tf, params=ps,
                               why=(report.get("rationale") or "")[:400])
     strat += " " + ext if ext else ""
@@ -234,8 +252,8 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
     caveat = L["caveat"].format(n=len(pnl), trials=trials_total, k=len(MICRO_SIZES) + len(MINI_SIZES))
     return {"name": report["name"], "market": market, "micro": micro, "point_value": point_value,
             "template": report["template"], "tf": tf, "params": params, "headline": head,
-            "strategy_text": strat, "comparison": comparison, "economics_assumed": True, "fast_ok": fast_ok,
-            "goal": {"max_eval_days": days, "min_p_fast_lower": minp},
+            "strategy_text": strat, "comparison": comparison, "attempts_table": attempts_table, "economics_assumed": True, "fast_ok": fast_ok,
+            "goal": {"max_eval_days": days, "min_pass_rate": minp, "strong_pass_rate": strong},
             "exits": {"chosen": report["series"].get("exit"), "grid": ex.get("grid", [])}, "accounts": accounts, "caveat": caveat,
             "n_oos_days": len(pnl), "oos_pnl": float(pnl.sum()), "oos_mean": float(pnl.mean()), "oos_std": float(pnl.std(ddof=1)),
             "base_contracts": base_contracts, "language": language,

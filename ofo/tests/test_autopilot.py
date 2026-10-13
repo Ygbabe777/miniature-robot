@@ -238,8 +238,24 @@ def test_dossier_has_payout_probability_costs_multi_account_and_50k_vs_25k():
 def test_dossier_answers_whether_the_evaluation_can_be_passed_within_a_week():
     d = build_dossier(report(150, 250), RULES, 2, 1000)
     a = d["accounts"]["50k"]
-    assert d["goal"] == {"max_eval_days": 5, "min_p_fast_lower": 0.25} and d["fast_ok"] is True
-    assert "entro 5 giorni" in a["text"] and "Soddisfa il tuo obiettivo" in a["text"] and "Costo per passare" in a["text"]
+    assert d["goal"] == {"max_eval_days": 5, "min_pass_rate": 0.30, "strong_pass_rate": 0.35} and d["fast_ok"] is True
+    assert "entro 5 giorni" in a["text"] and "DA CONSIDERARE" in a["text"] and a["pass_class"] in ("strong", "considered") and "Costo per passare" in a["text"]
     assert a["economics"]["cost_per_pass"] > 0 and "50k" in d["comparison"] and "Costo atteso per un passaggio" in d["comparison"]
-    slow = build_dossier(report(150, 250), RULES, 2, 1000, goal={"max_eval_days": 1, "min_p_fast_lower": 0.99})
-    assert slow["fast_ok"] is False and "TROPPO LENTA" in slow["headline"] and "NON soddisfa" in slow["accounts"]["50k"]["text"]
+    slow = build_dossier(report(150, 250), RULES, 2, 1000, goal={"max_eval_days": 1, "min_pass_rate": 0.99})
+    assert slow["fast_ok"] is False and "DA SCARTARE" in slow["headline"] and "DA SCARTARE" in slow["accounts"]["50k"]["text"]
+
+
+def test_dossier_answers_how_many_accounts_which_size_and_what_it_costs():
+    d = build_dossier(report(40, 300), RULES, 2, 1000)
+    a, b = d["accounts"]["25k"], d["accounts"]["50k"]
+    for x in (a, b):
+        p = x["recommended"]["p_fast"]
+        tb = x["multi"]["table"]
+        assert abs(tb[0]["p_pass_any"] - p) < 1e-9 and abs(tb[1]["p_pass_any"] - (1 - (1 - p) ** 2)) < 1e-9     # 2nd attempt: cumulative
+        assert abs(tb[2]["p_at_attempt"] - p * (1 - p) ** 2) < 1e-9 and tb[3]["cost_if_all_fail"] == 4 * x["economics"]["eval_fee_monthly"]
+        assert x["multi"]["n_for_99"] >= x["multi"]["n_for_95"] >= x["multi"]["n_for_90"] >= 1
+        assert "QUANTI CONTI" in x["text"] and "al 99%" in x["text"] and "spendi $" in x["text"]
+    t = d["attempts_table"]
+    assert len(t) == 10 and t[0]["p25_cum"] == a["multi"]["table"][0]["p_pass_any"] and t[1]["cost50_if_all_fail"] == 2 * b["economics"]["eval_fee_monthly"]
+    assert d["comparison"].startswith("25k O 50k?") and ("più probabile con il 25k" in d["comparison"] or "più probabile con il 50k" in d["comparison"])
+    assert "spesa massima" in d["comparison"] and "Costo atteso per un passaggio" in d["comparison"]

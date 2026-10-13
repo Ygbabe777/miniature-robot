@@ -60,6 +60,7 @@ class ResearchLoop:
         self.done_specs: set = set(st.get("done_specs", []))
         self.queue: list[tuple[StrategySpec, int]] = []
         self.trials_spent = 0
+        self.judge_th = None                # judge.Thresholds from the owner's goal (set by the Lab)
         self.max_chunks = 6                 # paper chunks read per document; the Lab lowers it in economy mode
         self.memory = lambda: ""            # set by the Lab: what the lab already learned (knowledge.memory_text)
 
@@ -124,7 +125,7 @@ class ResearchLoop:
         try:
             rep = run_study(self.bars, spec, self.contract, self.rules, self.registry, contracts=self.contracts,
                             progress=lambda agent, state, msg='': ev.emit(agent, state, msg),
-                            dedupe=True, market=self.market)
+                            dedupe=True, market=self.market, judge_th=self.judge_th)
         except DuplicateExperiment as e:                  # same strategy, same data, already in the registry: never re-test
             self.done_specs.add(_fingerprint(spec))
             self._save()

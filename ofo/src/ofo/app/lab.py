@@ -30,6 +30,7 @@ from .. import deploy as dep
 from .. import knowledge, obsidian
 from ..ledger import run_ledger
 from ..budget import BudgetGovernor
+from ..judge import Thresholds
 from ..prop_intraday import arrays_from_ledger, describe as describe_intraday, intraday_report
 from ..strategies import flatten_overnight
 from ..dossier import build_dossier
@@ -249,6 +250,12 @@ class Lab:
     def governor(self):
         return getattr(self.pool, "governor", None) if self.pool is not None else None
 
+    def judge_thresholds(self) -> Thresholds:
+        """The Judge's pass-rate rule comes from the owner's goal (rules/economics.json)."""
+        g = load_goal(self._econ_path())
+        return Thresholds(min_pass_rate=float(g.get("min_pass_rate", 0.30)), eval_days=int(g.get("max_eval_days", 5)),
+                          base_contracts=self.contracts)
+
     def llm_allowed(self, role: str) -> bool:
         """Autonomous AI work asks here first. False = today's allowance is gone (or weekend / weekly reserve)."""
         g = self.governor()
@@ -337,6 +344,7 @@ class Lab:
             job["status"] = "running"
             try:
                 lp = self.loop(market)
+                lp.judge_th = self.judge_thresholds()
                 res = lp.process(spec, 0)
                 job.update(status="done", slug=slugify(spec.name), verdict=res["verdict"])
                 while lp.queue:                   # planner proposals: the autopilot runs them, otherwise they wait

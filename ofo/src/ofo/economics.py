@@ -57,16 +57,17 @@ def multi_account(p_pass: float, p_lo: float, p_hi: float, p_payout: float, fees
     rows = []
     for n in range(1, n_max + 1):
         used = (1 - (1 - p_pass) ** n) / p_pass if p_pass > 0 else float(n)       # expected attempts actually bought
-        rows.append({"accounts": n, "p_pass_any": 1 - (1 - p_pass) ** n, "p_pass_any_lo": 1 - (1 - p_lo) ** n,
+        rows.append({"accounts": n, "p_at_attempt": p_pass * (1 - p_pass) ** (n - 1),
+                     "cost_if_all_fail": fees_per_attempt * n, "p_pass_any": 1 - (1 - p_pass) ** n, "p_pass_any_lo": 1 - (1 - p_lo) ** n,
                      "p_pass_any_hi": 1 - (1 - p_hi) ** n, "p_payout_any": 1 - (1 - p_payout) ** n,
                      "expected_cost": fees_per_attempt * used + activation * (1 - (1 - p_pass) ** n)})
     return {"table": rows, "n_for_80": attempts_needed(p_pass, 0.8), "n_for_90": attempts_needed(p_pass, 0.9),
-            "n_for_95": attempts_needed(p_pass, 0.95)}
+            "n_for_95": attempts_needed(p_pass, 0.95), "n_for_99": attempts_needed(p_pass, 0.99)}
 
 
 def load_goal(path: str | Path | None) -> dict:
-    """The owner's goal from rules/economics.json: {"goal": {"max_eval_days": 5, "min_p_fast_lower": 0.25}}."""
+    """The owner's goal from rules/economics.json: {"goal": {"max_eval_days": 5, "min_pass_rate": 0.30, "strong_pass_rate": 0.35}}."""
     if path and Path(path).exists():
         g = json.loads(Path(path).read_text()).get("goal") or {}
-        return {k: g[k] for k in ("max_eval_days", "min_p_fast_lower") if k in g}
+        return {k: g[k] for k in ("max_eval_days", "min_pass_rate", "strong_pass_rate") if k in g}
     return {}

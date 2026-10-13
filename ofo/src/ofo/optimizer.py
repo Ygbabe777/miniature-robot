@@ -19,12 +19,13 @@ from .data import resample
 from .exits import exit_grid, summarize_info
 from .judge import REJECTED, judge
 from .ledger import AccountingError, reconcile, run_ledger, run_ledger_next_open
-from .prop import PropRules
+from .prop import PRESETS, PropRules
 from .prop_intraday import arrays_from_ledger, intraday_report
 from .registry import DuplicateExperiment, TrialRegistry
 from .research import daily_series, walk_forward
 from .specs import StrategySpec
 from .stats import sharpe
+from .timing import timing_report
 from .strategies import TEMPLATES, TIMEFRAMES, flatten_overnight
 
 ENGINE_VERSION = "2"      # bump when the study methodology changes: old experiments stay in the history, re-tests are allowed
@@ -251,7 +252,7 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
               registry: TrialRegistry, contracts: int = 2, slippage_ticks: float = 1.0,
               oos_fraction: float = 0.25, train_days: int = 120, test_days: int = 20,
               surface_th: SurfaceThresholds | None = None, progress=None, dedupe: bool = False,
-              market: str | None = None) -> dict:
+              market: str | None = None, judge_th=None) -> dict:
     """Sweep every combination of `spec`, judge the surface, walk-forward the whole procedure, and only if everything
     survives take ONE look at the locked block.
 
@@ -293,12 +294,16 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     wf_pnl = float(wf.sum()) if len(wf) else 0.0
     final_dev = daily_series({cands[best_i]["tf"]: tfs_dev[cands[best_i]["tf"]]}, cands[best_i], contract, contracts,
                              slippage_ticks, exit=best_exit).reindex(dev_days).fillna(0.0)
+    # How fast could this strategy pass a 25k and a 50k challenge? For EVERY study, on development data only (in-sample).
+    goal_days = judge_th.eval_days if judge_th is not None else 5
+    goal_rate = judge_th.min_pass_rate if judge_th is not None else 0.30
+    timing = timing_report(final_dev.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, goal_rate, "development")
     quality = None
     if surf["robust"]:
         quality = quality_checks(tfs_dev, cands[best_i], best_exit, contract, contracts, slippage_ticks, dev_days, th)
     pair = lambda ser: [[str(d)[:10], float(v)] for d, v in ser.items()]
     report = {"name": spec.name, "template": spec.template, "rationale": spec.rationale,
-              "source": spec.source, "n_candidates": len(cands), "surface": surf, "quality": quality,
+              "source": spec.source, "n_candidates": len(cands), "surface": surf, "quality": quality, "timing": timing,
               "wf_kind": wf_kind, "wf_oos_days": len(wf), "wf_oos_pnl": wf_pnl,
               "wf_oos_sharpe_daily": sharpe(wf) if len(wf) > 2 else 0.0,
               "n_locked_days": len(sessions) - len(dev_days), "wf_oos_series": wf,
@@ -325,14 +330,16 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
         locked_days = [d for d in sessions if d >= cut]
         locked = s_full.reindex(locked_days).fillna(0.0)
         var_sr = float(np.var([r["sharpe"] for r in rows], ddof=1))
-        v = judge(locked.values, rules, registry.n_trials + 1, var_sr)
+        v = judge(locked.values, rules, registry.n_trials + 1, var_sr, judge_th)
         registry.add_locked_look(f"{spec.name}:{cand['params']}@{tf}", v.status, experiment_id=eid, dataset_fp=dfp,
                                  oos_start=str(cut)[:10])
         # the human may only see the locked block once the Judge has already used its look
         report["series"]["locked"] = pair(locked)
         report["locked"] = {"status": v.status, "checks": v.checks, "pnl": float(locked.sum()),
+                            "timing": timing_report(locked.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts,
+                                                    goal_days, goal_rate, "unseen_block"),
                             "p_pass": v.mc.get("p_pass"), "p_pass_ci95": v.mc.get("p_pass_ci95"),
-                            "p_bust": v.mc.get("p_bust"), "params": cand["params"],
+                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "params": cand["params"],
                             "tf": tf, "exit": best_exit, "prop_model": "daily_simplified"}
         # The Judge above is DETERMINISTIC and uses the simplified daily account model. After its look, the same unseen
         # block is replayed bar by bar with unrealised P&L and intraday drawdown rules, for the owner to read.
