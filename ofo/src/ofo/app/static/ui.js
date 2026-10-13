@@ -136,11 +136,12 @@
       if (evNext === 0 && r.events.length > 60) r.events = r.events.slice(-60);
       r.events.forEach(e => { addFeed(e); if (evNext > 0) noteEvent(e); if (window.LabScene && (evNext > 0 || r.events.length < 8)) LabScene.onEvent(e); });
       evNext = r.next;
-    } catch (e) {}
+    } catch (e) { console.error("OFO UI", e); }
   }
 
   // ---------- state ----------
   function renderState(s) {
+    if (s.build) { const c = $('#credit'); if (c && !c.dataset.b) { c.dataset.b = 1; c.textContent = 'build ' + s.build + ' · ' + c.textContent; } }
     $('#c-trials').textContent = s.trials; $('#c-looks').textContent = s.locked_looks;
     $('#c-calls').textContent = s.calls_last_minute == null ? '–' : s.calls_last_minute + '/' + (s.calls_per_minute ?? '–');
     $('#c-ai').textContent = s.ai ? t('ai_on') : t('ai_off'); $('#c-ai-chip').className = 'chip ' + (s.ai ? 'ok' : 'bad');
@@ -160,7 +161,7 @@
     const rk = s.strategies.map(x => x.slug + x.status).join('|') + (s.farming_pending || 0); if (rk !== rankKey) { rankKey = rk; loadRanking(); }
     farmPending(s.farming_pending || 0);
   }
-  async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); if (s.autopilot) renderAutopilot(s.autopilot); if (s.obsidian) renderObsidian(s.obsidian); renderBudget(s.budget); } catch (e) {} }
+  async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); if (s.autopilot) renderAutopilot(s.autopilot); if (s.obsidian) renderObsidian(s.obsidian); renderBudget(s.budget); } catch (e) { console.error("OFO UI", e); } }
 
   // ---------- token budget ----------
   let budKey = '';
@@ -223,7 +224,7 @@
           <div class="meta">${x.account ? t('dep_on', { n: x.micro, a: esc(x.account) }) + ' · ' : ''}${t('dep_days', { n: f.days || 0 })}${f.days ? ' · P&L ' + money(f.pnl) : ''}${f.eval_if_traded ? ' · ' + t('dep_eval', { s: t('dep_ev_' + f.eval_if_traded.status), n: f.eval_if_traded.days }) : ''}</div>
           ${spark}${x.reason ? `<div class="sub">${esc(x.reason)}</div>` : ''}</div>`;
       }).join('');
-    } catch (e) {}
+    } catch (e) { console.error("OFO UI", e); }
   }
   setInterval(() => { depN = -1; }, 300000);
   async function loadReady() {
@@ -236,7 +237,7 @@
           ${a.multi ? `<details><summary>${t('ready_multi')} (${t('ready_multi_cols')})</summary><table>${a.multi.table.map(r => `<tr><td>${r.accounts}</td><td>${pct(r.p_pass_any)} <small>(${pct(r.p_pass_any_lo)}–${pct(r.p_pass_any_hi)})</small></td><td>${pct(r.p_payout_any)}</td><td>$${Math.round(r.expected_cost)}</td></tr>`).join('')}</table></details>` : ''}</div>`).join('');
         return `<div class="dossier"><h3 style="color:${x.fast_ok === false ? 'var(--warn)' : 'var(--up)'}">${esc(x.headline)}</h3><p>${esc(x.strategy_text)}</p>${x.comparison ? `<p><b>${esc(x.comparison)}</b></p>` : ''}${accts}${x.auditor ? `<p><b>${t('ready_aud')}:</b> ${esc(x.auditor)}</p>` : ''}<p class="cav">${esc(x.caveat)}</p></div>`;
       }).join('');
-    } catch (e) {}
+    } catch (e) { console.error("OFO UI", e); }
   }
 
 

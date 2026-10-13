@@ -34,6 +34,7 @@ lab = Lab(args[0], rules=PRESETS[args[1] if len(args) > 1 else "50k"],
 lab.start_background()                    # the Scout's schedule (only acts if you switch auto mode on)
 srv = make_server(lab, port=port)
 url = f"http://127.0.0.1:{port}"
+from ofo import BUILD; print("Versione OFO build", BUILD)
 print("Mercati attivi:", ", ".join(lab.mk))
 print(f"Lab pronto su {url}  (Ctrl+C per chiudere)")
 webbrowser.open(url)

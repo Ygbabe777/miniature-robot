@@ -490,3 +490,11 @@ def test_the_research_panel_reads_only_keys_the_server_really_sends(tmp_path):
     body = js[js.index("async function loadResearch"):js.index("const rcfgStages")]
     missing = sorted(k for k in set(re.findall(r"\bd\.([a-z_]+)", body)) if k != "error" and k not in rep)
     assert not missing, missing
+
+
+def test_starter_strategies_in_the_queue_do_not_stop_the_researcher_from_proposing(tmp_path):
+    """Reported: 'the researcher never proposes anything'. ~20 classic starters keep the queue above the low-water mark for hours."""
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    assert lab.seed_specs() > 4                                                    # the classic families fill the queue
+    st = lab.hypothesis_status(now=10_000.0)
+    assert st["ready"] and st["queued"] == 0                                       # only the Researcher's OWN proposals count

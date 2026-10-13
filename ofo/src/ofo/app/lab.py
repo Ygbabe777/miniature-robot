@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .. import BUILD
 from ..agents.base import AgentError
 from ..agents.loop import IDEA_SUFFIXES, ResearchLoop
 from ..agents.roles import make_strategist
@@ -131,6 +132,7 @@ class Lab:
         self.requests_file = self.data / "template_requests.json"
         self.ideas.mkdir(parents=True, exist_ok=True)
         self._fetch, self._scout, self._scout_running = fetch, None, False
+        self._connecting = False
         self._channels = channels or []              # sources.build_channels(...): web / github / rss / exa / youtube / reddit / x
         self.busy = {"research": 0, "job": 0, "chat": 0, "review": 0, "hypo": 0}          # real activity, not event timeouts
         self.ap_file = self.data / "autopilot.json"
@@ -692,7 +694,7 @@ class Lab:
                      and hashlib.sha256(p.read_bytes()).hexdigest() not in done)
         lp = self._loop_obj
         return {"ai": not isinstance(self.llm, NoLLM), "allowed": ok, "why": why, "budget_mode": g.mode() if g else None, "unread": unread,
-                "queue": len(self.pending), "autopilot": bool(self.ap["enabled"]),
+                "queue": len(self.pending), "autopilot": bool(self.ap["enabled"]), "build": BUILD,
                 "recent": [{**x, "at": time.strftime("%H:%M:%S", time.localtime(x["at"]))} for x in (lp.ingest_log[-5:] if lp else [])],
                 "hypothesis": self.hypothesis_status(), "doing": self.researcher_doing(), "last_brainstorm": time.strftime("%H:%M:%S", time.localtime(self._last_brainstorm)) if getattr(self, "_last_brainstorm", 0) else None}
 
@@ -877,7 +879,7 @@ class Lab:
         gap = float(h["min_gap_min"]) * 60 * (float(h["economy_gap_factor"]) if self.economy() else 1.0)
         on = set(self.enabled_markets())
         with self.lock:
-            queued = sum(1 for v in self.pending.values() if (v.get("market") or self.primary) in on)
+            queued = sum(1 for v in self.pending.values() if (v.get("market") or self.primary) in on and v.get("origin") != "starter")
         used = self.rbudget.used()["hypothesis"]
         why = None
         if isinstance(self.llm, NoLLM):
@@ -1522,7 +1524,18 @@ class Lab:
                             self.scout_tick()
                         self.autopilot_tick()
                         if n % 2 == 0:
-                            self.hypothesize()                     # the Researcher develops hypotheses on its own, independent of the Scout and of the tests
+                            self.hypothesize()
+                        if n % 6 == 0 and not self._connecting:
+                            self._connecting = True              # Obsidian connections are the Researcher's own duty too: not only when the queue is empty
+
+                            def _conn():
+                                try:
+                                    self.connect_ideas()
+                                except Exception as e:
+                                    self.events.emit("researcher", "error", f"collegamenti Obsidian: {e}"[:200])
+                                finally:
+                                    self._connecting = False
+                            threading.Thread(target=_conn, daemon=True).start()                     # the Researcher develops hypotheses on its own, independent of the Scout and of the tests
                         if n % 12 == 0:
                             self.deploy_ready()
                             self.forward_tick()
@@ -1556,7 +1569,7 @@ class Lab:
                 "strategies": list_studies(self.work), "template_requests": reqs,
                 "templates": {k: t.doc for k, t in TEMPLATES.items() if not t.control}, "symbol": self.contract.symbol,
                 "primary": self.primary, "markets": [{"sym": k, "name": MARKETS[k]["name"], "micro": c.contract.symbol} for k, c in self.mk.items()],
-                "engine": self.engine_state(),
+                "engine": self.engine_state(), "build": BUILD,
                 "engine_busy_with": ("revisione prop farming" if getattr(self, "_farm_busy", False) else None),
                 "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state(),
                 "autopilot": self.autopilot_state(), "budget": self.budget_state(), "obsidian": self.obsidian_state(),
