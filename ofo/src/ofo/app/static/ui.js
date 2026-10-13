@@ -365,7 +365,7 @@
     const TFS = [['1min', '1m'], ['5min', '5m'], ['15min', '15m'], ['30min', '30m'], ['60min', '1h'], ['1D', '1D']];
     const RNG = [['1D', 1, '1min'], ['5D', 5, '5min'], ['1M', 21, '30min'], ['3M', 63, '60min'], ['6M', 126, '1D'], ['1Y', 252, '1D'], ['ALL', 'all', '1D']];
     let tf = '15min', rng = '5D', chart = null, cs = null, vs = null, last = null, symbol = 'NQ', before = null;
-    let tfilter = 'all', focus = -1, ov = null, tsize = 'base'; let trades = null, loaded = [], slug = '', listKey = '', indSeries = [], market = '', markets = [];
+    let tfilter = 'all', focus = -1, ov = null, tsize = 'base', tAcct = store.get('ofo_tacct', '50k'), tMicro = null; let trades = null, loaded = [], slug = '', listKey = '', indSeries = [], market = '', markets = [];
     const order = TFS.map(x => x[0]);
     const seg = (el, items, cur, fn) => { el.innerHTML = items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${label}</button>`).join(''); el.querySelectorAll('button').forEach(b => b.onclick = () => fn(b.dataset.k)); };
     function draw() {
@@ -422,8 +422,8 @@
 
     // ---- overlay: entry triangle at the real price, exit circle, connecting line, stop/target levels ----
     const vis = () => (trades ? trades.trades.map((x, i) => Object.assign({ i }, x)).filter(x => tfilter === 'all' || (tfilter === 'win' && x.pnl > 0) || (tfilter === 'loss' && x.pnl <= 0) || (tfilter === 'long' && x.side > 0) || (tfilter === 'short' && x.side < 0)) : []);
-    const nC = () => tsize === 'base' || !trades ? (trades ? trades.base_contracts : 1) : ((trades.sizing || {})[tsize] || trades.base_contracts);
-    const sc = () => nC() / (trades ? trades.base_contracts : 1), pnlOf = x => x.pnl * sc();
+    const nC = () => trades ? (trades.contracts || trades.base_contracts) : 1;      // the backtest is replayed AT this size (not rescaled)
+    const pnlOf = x => x.pnl;
     const reasonTxt = x => t('tl_' + (x.reason === 'stop' || x.reason === 'target' ? x.reason : x.reason === 'open' ? 'open' : 'signal'));
     function drawOverlay() {
       const el = $('#tchart'); if (!el) return;
@@ -444,9 +444,10 @@
         if (xe === null) xe = 0; if (xx === null) xx = w;
         if (ye === null || yx === null) return;
         g.globalAlpha = focus >= 0 && !sel ? 0.35 : 1;
-        if (sel || few) {                                  // stop / target levels and the trade box
-          const lv = (p, c) => { const y = Y(p); if (y === null) return; g.strokeStyle = c; g.setLineDash([4, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(xe, y); g.lineTo(xx, y); g.stroke(); g.setLineDash([]); g.fillStyle = c; g.fillText(p === x.stop ? 'SL ' + x.stop : 'TP ' + x.target, xx + 3, y); };
-          if (x.stop) lv(x.stop, THEME.down); if (x.target) lv(x.target, THEME.up);
+        if (sel || list.length <= 100) {                   // stop loss and take profit of EVERY trade in view, plus the trade box
+          const lv = (p, c, tag) => { const y = Y(p); if (y === null) return; g.strokeStyle = c; g.setLineDash(sel ? [] : [5, 3]); g.lineWidth = sel ? 2 : 1.3; g.beginPath(); g.moveTo(xe, y); g.lineTo(Math.max(xx, xe + 24), y); g.stroke(); g.setLineDash([]);
+            const lab = tag + ' ' + p, wl = g.measureText(lab).width + 8, lx = Math.max(xx, xe + 24) + 3; g.fillStyle = c; g.fillRect(lx, y - 7, wl, 14); g.fillStyle = '#000'; g.fillText(lab, lx + 4, y); };
+          if (x.stop != null) lv(x.stop, THEME.down, 'SL'); if (x.target != null) lv(x.target, THEME.up, 'TP');
           g.fillStyle = col + '22'; g.fillRect(Math.min(xe, xx), Math.min(ye, yx), Math.max(2, Math.abs(xx - xe)), Math.max(2, Math.abs(yx - ye)));
         }
         g.strokeStyle = col; g.lineWidth = sel ? 2.5 : 1.5; g.setLineDash([2, 2]); g.beginPath(); g.moveTo(xe, ye); g.lineTo(xx, yx); g.stroke(); g.setLineDash([]);
@@ -463,18 +464,28 @@
       });
       g.globalAlpha = 1;
     }
+    function propBanner(p) {
+      if (!p || p.status === 'none' || p.status === 'error') return `<div class="propb open">${t('prop_none')}${p && p.error ? ' (' + esc(p.error) + ')' : ''}</div>`;
+      const h = p.hist, hh = h ? t('prop_hist', { p: pct(h.p_pass), b: pct(h.p_bust), n: h.n_windows }) : '';
+      const cls = p.status === 'passed' ? 'ok' : p.status === 'busted' ? 'bad' : 'open';
+      const head = p.status === 'passed' ? t('prop_passed', { a: p.account, n: p.micro, d: p.sessions }) : p.status === 'busted' ? t('prop_busted', { a: p.account, n: p.micro, d: p.sessions }) : t('prop_open', { a: p.account, n: p.micro, d: p.sessions });
+      const why = p.breach ? `<div>${t('prop_why', { k: esc(p.breach.kind), d: esc(p.breach.session), e: money(p.breach.equity), f: money(p.breach.floor) })}</div>` : '';
+      return `<div class="propb ${cls}"><b>${head}</b>${why}<div class="smeta">${t('prop_from', { d: esc(p.start), t: money(p.target), dd: money(p.max_drawdown) })} ${hh}</div></div>`;
+    }
     const fmtT = e => new Date(e * 1000).toISOString().slice(5, 16).replace('T', ' ');
     function renderList() {
       const box = $('#tlist'); if (!box) return;
       if (!trades || !trades.trades.length) { box.innerHTML = ''; return; }
       const L = vis(), cols = t('tl_cols');
       const fb = (k, label) => `<button data-f="${k}" class="${tfilter === k ? 'on' : ''}">${label}</button>`;
-      box.innerHTML = `<div class="bar">${fb('all', t('tl_all'))}${fb('win', t('tl_win'))}${fb('loss', t('tl_loss'))}${fb('long', t('tl_long'))}${fb('short', t('tl_short'))}
+      box.innerHTML = propBanner(trades.prop) + `<div class="bar">${fb('all', t('tl_all'))}${fb('win', t('tl_win'))}${fb('loss', t('tl_loss'))}${fb('long', t('tl_long'))}${fb('short', t('tl_short'))}
         <button data-n="-1">${t('tl_prev')}</button><button data-n="1">${t('tl_next')}</button><span>${t('tl_of', { i: Math.max(0, L.findIndex(x => x.i === focus) + 1), n: L.length })}</span>
-        <select id="tsize">${[['base', t('tl_size_base', { n: trades.base_contracts })]].concat(Object.entries(trades.sizing || {}).filter(([, v]) => v).map(([a, v]) => [a, t('tl_size_rec', { a, n: v })])).map(([k, l]) => `<option value="${k}" ${k === tsize ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select id="tacct">${['25k', '50k'].map(a => `<option value="${a}" ${a === tAcct ? 'selected' : ''}>${t('tl_acct', { a })}</option>`).join('')}</select>
+        <select id="tsize"><option value="" ${!tMicro ? 'selected' : ''}>${t('tl_size_rec2', { a: tAcct, n: (trades.sizing || {})[tAcct] || trades.base_contracts })}</option>${(trades.sizes || []).map(n => `<option value="${n}" ${tMicro === n ? 'selected' : ''}>${t('tl_size_n', { n })}</option>`).join('')}</select>
         <button data-csv="1">${t('tl_csv')}</button></div>
-        <table><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>${L.map((x, k) => `<tr class="tr ${x.i === focus ? 'sel' : ''}" data-i="${x.i}"><td>${k + 1}</td><td>${fmtT(x.entry_t)}</td><td class="${x.side > 0 ? 'up' : 'dn'}">${x.side > 0 ? 'L' : 'S'}</td><td>${x.entry_px}</td><td><b>${nC()}</b></td><td>${x.exit_px}</td><td>${reasonTxt(x)}</td><td class="${x.pnl >= 0 ? 'up' : 'dn'}">${x.pnl >= 0 ? '+' : '-'}$${Math.abs(Math.round(pnlOf(x)))}</td><td>${x.r == null ? '' : x.r}</td></tr>`).join('')}</table>`;
-      box.querySelector('#tsize').onchange = (e) => { tsize = e.target.value; renderList(); drawOverlay(); };
+        <table><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>${L.map((x, k) => `<tr class="tr ${x.i === focus ? 'sel' : ''}" data-i="${x.i}"><td>${k + 1}</td><td>${fmtT(x.entry_t)}</td><td class="${x.side > 0 ? 'up' : 'dn'}">${x.side > 0 ? 'L' : 'S'}</td><td>${x.entry_px}</td><td><b>${nC()}</b></td><td class="dn">${x.stop != null ? x.stop : '–'}</td><td class="up">${x.target != null ? x.target : t('tl_tp_strategy')}</td><td>${x.exit_px}</td><td>${reasonTxt(x)}</td><td class="${x.pnl >= 0 ? 'up' : 'dn'}">${x.pnl >= 0 ? '+' : '-'}$${Math.abs(Math.round(pnlOf(x)))}</td><td>${x.r == null ? '' : x.r}</td></tr>`).join('')}</table>`;
+      box.querySelector('#tsize').onchange = (e) => { tMicro = e.target.value ? +e.target.value : null; reloadTrades(); };
+      box.querySelector('#tacct').onchange = (e) => { tAcct = e.target.value; store.set('ofo_tacct', tAcct); tMicro = null; reloadTrades(); };
       box.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { tfilter = b.dataset.f; focus = -1; renderList(); drawOverlay(); });
       box.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { const k = L.findIndex(x => x.i === focus); const n = L[(k + +b.dataset.n + L.length) % L.length]; if (n) focusTrade(n.i); });
       box.querySelectorAll('tr.tr').forEach(r => r.onclick = () => focusTrade(+r.dataset.i));
@@ -542,10 +553,14 @@
       last = `${symbol} ${tf} · ` + t('t_sessions', { n: d.n_sessions, a: d.from, b: d.to }); $('#tinfo').textContent = last; note();
       if (bumpNote) { $('#tinfo').textContent = last + ' · ' + t('t_bumped', bumpNote); bumpNote = null; }
     }
+    const tradesUrl = s => '/api/trades/' + encodeURIComponent(s) + '?account=' + tAcct + (tMicro ? '&micro=' + tMicro : '');
+    async function reloadTrades() {
+      if (!slug) return; const d = await api(tradesUrl(slug)); if (d.error) return; trades = d; note(); drawOverlay();
+    }
     async function pick(s) {
-      slug = s; trades = null; focus = -1; tfilter = 'all'; tsize = 'base';
+      slug = s; trades = null; focus = -1; tfilter = 'all'; tMicro = null;
       if (!s) { applyMarkers(); drawIndicators(); note(); return; }
-      const d = await api('/api/trades/' + encodeURIComponent(s));
+      const d = await api(tradesUrl(s));
       if (d.error) { note(); return; }
       trades = d;
       if (d.market && d.market !== market) { market = d.market; $('#tmarket').value = market; }

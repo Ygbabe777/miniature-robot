@@ -17,7 +17,7 @@ import numpy as np
 
 from .prop import PropRules, _resample_blocks, simulate_account
 
-SIZES = (1, 2, 3, 4, 5, 6, 8, 10, 20)           # micro-contract equivalents
+SIZES = tuple(range(1, 13)) + (15, 20)        # micro-contract equivalents: EVERY size from 1 to 12, then 15 and 20 (not just 1 and 10)
 MAX_BUST_WINDOW = 0.65                           # a size that busts more often than this inside the window is not offered
 CHECKPOINTS = (1, 2, 3, 5, 10)
 

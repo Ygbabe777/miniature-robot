@@ -828,3 +828,36 @@ def test_retest_reruns_a_tested_strategy_as_a_new_counted_experiment_and_keeps_t
     from ofo.storage import load_study
     assert load_study(lab.work, "to_retest")["report"]["retest_no"] == 1
     assert lab.retest("does_not_exist")["error"]
+
+
+def test_every_strategy_that_goes_on_has_a_stop_loss_even_when_its_own_exit_wins(tmp_path):
+    reg = TrialRegistry(tmp_path / "r.db")
+    rep = run_study(synth(n_sessions=520, drift_ar=0.9, seed=5), from_dict(SPEC), MNQ, PRESETS["50k"], reg, dedupe=True)
+    if rep.get("exits") and not rep["exits"].get("informational"):
+        ex = rep["series"]["exit"]
+        assert ex is not None and ex["stop_atr"] > 0                                    # a stop is mandatory
+        assert (ex["rr"] is not None) == bool(rep["exits"]["chosen"]) or rep["exits"].get("mandatory_stop")
+        if rep["exits"].get("mandatory_stop"):
+            assert ex["rr"] is None and rep["exits"]["stop_only"] == ex                  # the strategy keeps its own exit, but WITH the stop
+
+
+def test_trader_tab_backtests_at_the_chosen_size_and_says_prop_passed_or_busted(tmp_path):
+    import time
+    from ofo.app.lab import Lab
+    csv = tmp_path / "b.csv.gz"; synth(n_sessions=400, drift_ar=0.9, seed=5).to_csv(csv)
+    lab = Lab(str(csv), data_dir=str(tmp_path / "d"), ideas_dir=str(tmp_path / "i"))
+    job = lab.start(lab._add_pending(from_dict({**SPEC, "name": "trader view"}), "paper")["id"])
+    for _ in range(500):
+        if lab.jobs[job["id"]]["status"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    a = lab.trades("trader_view", "25k", 2)
+    b = lab.trades("trader_view", "25k", 6)
+    assert a["contracts"] == 2 and b["contracts"] == 6 and a["trades"] and all(x["contracts"] == 2 for x in a["trades"])
+    assert abs(b["summary"]["pnl"]) > 0 and abs(b["summary"]["pnl"] / a["summary"]["pnl"] - 3.0) < 0.35      # replayed at 3x the contracts: ~3x the P&L (costs scale too)
+    assert a["prop"]["status"] in ("passed", "busted", "open") and a["prop"]["account"] == "25k" and a["prop"]["micro"] == 2
+    assert lab.trades("trader_view", "50k", 6)["prop"]["account"] == "50k"
+    assert all(("stop" in x) for x in a["trades"]) and a["sizes"][:3] == [1, 2, 3] and 20 in a["sizes"]
+    big = lab.trades("trader_view", "25k", 60)["prop"]                                                       # an absurd size burns far more attempts than a small one
+    assert big["hist"] and a["prop"]["hist"] and big["hist"]["p_bust"] >= a["prop"]["hist"]["p_bust"]
+    assert big["status"] in ("passed", "busted", "open") and (big["status"] != "busted" or big["breach"]["kind"])

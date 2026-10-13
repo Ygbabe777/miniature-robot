@@ -239,3 +239,9 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 
 .bubble.alert{background:#fff3b0;border-color:#c1121f;box-shadow:3px 3px 0 #c1121f;font-weight:600;opacity:1;animation:alertpulse 1.6s ease-in-out infinite}
 @keyframes alertpulse{50%{transform:translate(-50%,-104%)}}
+
+.propb{margin:6px 0;padding:8px 10px;border:3px solid #000;font-size:12px;line-height:1.4}
+.propb b{font-size:14px;letter-spacing:.04em}
+.propb.ok{background:#12351f;color:#7dffa6;border-color:#39ff7a}
+.propb.bad{background:#3a1414;color:#ff8a8a;border-color:#ff4b4b}
+.propb.open{background:#2a2a14;color:#ffe27a;border-color:#ffd84a}

@@ -16,7 +16,7 @@ from . import timing as tm
 
 from .prop import PropRules, pass_probability_ci
 
-MICRO_SIZES = (1, 2, 3, 4, 5, 6, 8)
+MICRO_SIZES = tuple(range(1, 10))
 MINI_SIZES = (10, 20)            # 1 and 2 mini contracts, as micro equivalents
 MAX_BUST = 0.35                  # a size is only recommended if its bust probability is below this
 MINI_MARGIN = 0.03               # minis must beat the best micro size by this much (lower bound)

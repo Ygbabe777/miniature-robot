@@ -24,6 +24,7 @@ from ..events import EventLog
 from ..llm.client import LLMError
 from ..metrics import chart_pack
 from ..prop import PRESETS
+from ..timing import SIZES as SIZES_ALL
 from ..registry import TrialRegistry
 from ..agents.loop import _fingerprint
 from ..specs import StrategySpec, from_dict
@@ -33,7 +34,7 @@ from .. import knowledge, obsidian
 from ..ledger import run_ledger
 from ..budget import BudgetGovernor
 from ..judge import Thresholds
-from ..prop_intraday import arrays_from_ledger, describe as describe_intraday, intraday_report
+from ..prop_intraday import arrays_from_ledger, describe as describe_intraday, historical_attempts, intraday_report, simulate_intraday
 from ..strategies import flatten_overnight
 from ..dossier import build_dossier
 from ..economics import load_assumptions, load_goal
@@ -1684,19 +1685,23 @@ class Lab:
         real = load_accounts(self.data / "accounts.json")
         return {"accounts": real, "demo": False} if real else {"accounts": demo_accounts(), "demo": True}
 
-    def trades(self, slug: str) -> dict | None:
-        """Entries and exits of a study's best candidate. The hidden block's trades are shown
-        only if the Judge already looked at it, exactly like the hidden block's charts."""
+    def trades(self, slug: str, account: str | None = None, micro: int | None = None) -> dict | None:
+        """Entries and exits of a study's best candidate, backtested at the CHOSEN number of contracts, with the stop and target of every trade
+        and the outcome of a prop evaluation on the chosen account (25k / 50k): PASSED, BUSTED or still open. The hidden block's trades are
+        shown only if the Judge already looked at it, exactly like the hidden block's charts."""
         d = load_study(self.work, slug)
         if d is None or not d["series"] or not d["series"].get("best_params"):
             return None
         rep, ser = d["report"], d["series"]
-        key = (slug, d.get("saved_at"))
+        sizing = {a: v.get("recommended") for a, v in ((rep.get("locked") or {}).get("sizing") or rep.get("sizing") or {}).get("accounts", {}).items()}
+        account = account if account in ("25k", "50k") else "50k"
+        n_micro = max(1, min(int(micro), 200)) if micro else int(sizing.get(account) or rep.get("base_contracts", self.contracts))
+        key = (slug, d.get("saved_at"), n_micro)
+        c = self.ctx(self.market_of(rep))
         if key not in self._trades_cache:
             params = dict(ser["best_params"]); tf = params.pop("tf")
-            c = self.ctx(self.market_of(rep))
             self._trades_cache[key] = extract_trades(c.bars(), TEMPLATES[rep["template"]].fn, params, tf,
-                                                     c.contract, self.contracts, exit=ser.get("exit"),
+                                                     c.contract, n_micro, exit=ser.get("exit"),
                                                      direction=ser.get("direction") or "both", schedule=ser.get("schedule"))
         allt = self._trades_cache[key]
         looked = "checks" in rep["locked"]
@@ -1705,11 +1710,36 @@ class Lab:
         for x in vis:                                    # R multiple: result over the initial risk (entry-stop distance)
             risk = abs(x["entry_px"] - x["stop"]) if x.get("stop") else 0
             x["r"] = round(x["side"] * (x["exit_px"] - x["entry_px"]) / risk, 2) if risk else None
+            x["contracts"] = n_micro
         return {"trades": vis, "n_hidden": len(allt) - len(vis), "locked_visible": looked, "tf": tf,
                 "params": {k: v for k, v in ser["best_params"].items() if k != "tf"}, "cut": ser["cut"], "exit": ser.get("exit"),
-                "summary": summarize(vis), "name": rep["name"], "market": self.market_of(rep),
-                "base_contracts": rep.get("base_contracts", self.contracts), "direction": ser.get("direction") or "both",
-                "sizing": {a: v.get("recommended") for a, v in ((rep.get("locked") or {}).get("sizing") or rep.get("sizing") or {}).get("accounts", {}).items()}}
+                "schedule": ser.get("schedule"), "summary": summarize(vis), "name": rep["name"], "market": self.market_of(rep),
+                "base_contracts": rep.get("base_contracts", self.contracts), "contracts": n_micro, "account": account,
+                "direction": ser.get("direction") or "both", "sizing": sizing, "sizes": list(SIZES_ALL),
+                "prop": self._prop_outcome(rep, ser, c, n_micro, account, looked)}
+
+    def _prop_outcome(self, rep: dict, ser: dict, c: "MarketCtx", n_micro: int, account: str, looked: bool) -> dict:
+        """Replay of the backtest through the account's rules, bar by bar with unrealised P&L: did THIS strategy at THIS size pass the evaluation
+        or burn the account? One attempt from the first visible session, plus all the overlapping historical attempts (not independent)."""
+        try:
+            rules = PRESETS[account]
+            bp = ser["best_params"]; params = {k: v for k, v in bp.items() if k != "tf"}
+            b = c.bars() if bp["tf"] == "1min" else resample(c.bars(), bp["tf"])
+            pos = flatten_overnight(version_fn(TEMPLATES[rep["template"]].fn, ser.get("direction"), ser.get("schedule"))(b, **params))
+            led = run_ledger(b, pos, c.contract, n_micro, 1.0, ser.get("exit"))
+            arr = arrays_from_ledger(b, led)
+            keep = [k for k, sess in enumerate(arr.sessions) if looked or str(sess)[:10] < str(ser["cut"])[:10]]
+            arr.bounds = [arr.bounds[k] for k in keep]; arr.sessions = [arr.sessions[k] for k in keep]
+            if not arr.bounds:
+                return {"status": "none", "account": account}
+            first = simulate_intraday(arr, rules)
+            hist = historical_attempts(arr, rules, rules.trailing.value, horizon=30)
+            status = {"passed": "passed", "busted": "busted"}.get(first["status"], "open")
+            return {"status": status, "account": account, "micro": n_micro, "sessions": first["sessions"], "start": str(arr.sessions[0])[:10],
+                    "breach": first.get("breach"), "final_balance": first.get("final_balance"), "rule": rules.trailing.value,
+                    "target": rules.profit_target, "max_drawdown": rules.max_drawdown, "hist": hist}
+        except Exception as e:
+            return {"status": "error", "account": account, "error": f"{type(e).__name__}: {str(e)[:160]}"}
 
     def indicators(self, slug: str, start: int | None = None, end: int | None = None) -> dict | None:
         """The indicator lines the strategy's best candidate really uses, on its own timeframe."""

@@ -233,7 +233,9 @@ def _exit_study(dev_bars_tf, cand, base_series, contract, contracts, slippage_ti
     best = max(cells, key=lambda c: c["sharpe"])
     chosen = (not informational) and best["sharpe"] >= base["sharpe"] + MIN_EXIT_GAIN and best["pnl"] > 0
     better = float(np.mean([c["sharpe"] >= base["sharpe"] for c in cells]))
+    stop_only = max((c for c in cells if c["rr"] is None), key=lambda c: c["sharpe"])        # a stop loss is MANDATORY for every strategy
     return {"baseline": base, "grid": cells, "best": {k: best[k] for k in ("stop_atr", "rr")},
+            "stop_only": {"stop_atr": stop_only["stop_atr"], "rr": None}, "stop_only_stats": stop_only,
             "best_stats": best, "chosen": bool(chosen), "frac_better_than_baseline": better,
             "n_trials": len(grid), "atr_n": 14, "informational": bool(informational)}
 
@@ -669,7 +671,8 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
     base_ser = series[best_i] if direction == "both" else daily_series({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, contract, contracts, slippage_ticks)
     exits_rep = _exit_study({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, base_ser, contract, contracts, slippage_ticks, dev_days, registry,
                             spec.name, eid, meta)
-    best_exit = exits_rep["best"] if exits_rep["chosen"] else None
+    best_exit = exits_rep["best"] if exits_rep["chosen"] else exits_rep["stop_only"]       # no fixed exit beats the strategy's own: it keeps ITS exit, but ALWAYS with a stop loss
+    exits_rep["mandatory_stop"] = not exits_rep["chosen"]
     base_dev_s = daily_series({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, contract, contracts, slippage_ticks, exit=best_exit).reindex(dev_days).fillna(0.0)
     sched_rep = _schedule_study(dev_bars, fcand, best_exit, base_dev_s, tfs_dev, contract, contracts, slippage_ticks, dev_days, registry, spec.name, eid, meta)
     schedule = sched_rep["applied"]

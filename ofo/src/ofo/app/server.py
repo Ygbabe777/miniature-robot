@@ -83,7 +83,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     d = lab.indicators(unquote(u.path[len("/api/indicators/"):]), g("from"), g("to"))
                     return self._json(d) if d else self._json({"error": "not found"}, 404)
                 if u.path.startswith("/api/trades/"):
-                    d = lab.trades(unquote(u.path[len("/api/trades/"):]))
+                    q = parse_qs(u.query)
+                    d = lab.trades(unquote(u.path[len("/api/trades/"):]), (q.get("account") or [None])[0], int(q["micro"][0]) if q.get("micro") else None)
                     return self._json(d) if d else self._json({"error": "not found"}, 404)
                 if u.path.startswith("/api/strategy/"):
                     d = lab.detail(unquote(u.path[len("/api/strategy/"):]))

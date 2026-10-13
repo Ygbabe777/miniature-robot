@@ -134,7 +134,7 @@ def choose_size(pool: SessionPool, rs, base_contracts: int, cfg: dict, policy: s
     """Size (micro-equivalents) chosen on DEVELOPMENT sessions: the one with the highest mean NPFV. It is only a size: the economics
     are then estimated on the unseen block at that size."""
     rows = []
-    for k in cfg["sizes"]:
+    for k in sorted(set(cfg["sizes"]) | set(range(1, 11))):       # every size 1..10 is tried, whatever an old rules/farming.json lists
         m = estimate(pool, rs, k / base_contracts, policy, cfg, n_outer=1, n_inner=int(cfg["n_select"]), seed=seed)
         rows.append({"micro": int(k), "npfv_mean": m["npfv"]["mean"], "p_first_payout": m["p_first_payout"], "p_account_failure": m["p_account_failure"]})
     ok = [r for r in rows if r["npfv_mean"] > -1e18]
