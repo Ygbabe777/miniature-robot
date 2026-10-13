@@ -51,3 +51,16 @@ def list_studies(work: str | Path) -> list[dict]:
         except (KeyError, ValueError):
             continue
     return sorted(rows, key=lambda r: r["saved_at"] or "", reverse=True)
+
+
+def update_report(work: str | Path, slug: str, mutate) -> bool:
+    """Atomically rewrite one study's report json with `mutate(report_dict)`. The series file is not touched."""
+    f = Path(work) / "reports" / f"{slugify(slug)}.json"
+    if not f.exists():
+        return False
+    d = json.loads(f.read_text())
+    mutate(d["report"])
+    tmp = Path(str(f) + ".tmp")
+    tmp.write_text(json.dumps(d, indent=1, default=str))
+    tmp.replace(f)
+    return True

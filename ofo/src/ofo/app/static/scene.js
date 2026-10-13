@@ -397,7 +397,7 @@
   let gearSpeed = 0.4, partSpeed = 0.3, optRunning = false, valUntil = 0, heatT = 0;
   const now = () => performance.now() / 1000;
   let bubblesOn = true;
-  const MAP = { researcher: 'research', scout: 'research', strategist: 'strategist', you: 'strategist', trader: 'trader', optimizer: 'optimizer', planner: 'optimizer', validator: 'validator', judge: 'judge', auditor: 'judge', lab: 'judge' };
+  const MAP = { risk: 'validator', researcher: 'research', scout: 'research', strategist: 'strategist', you: 'strategist', trader: 'trader', optimizer: 'optimizer', planner: 'optimizer', validator: 'validator', judge: 'judge', auditor: 'judge', lab: 'judge' };
   function speak(station, text, secs) {
     const r = robots[station]; if (!r || !text) return;
     r.bub.textContent = text.length > 150 ? text.slice(0, 147) + '...' : text;
@@ -440,6 +440,7 @@
     if (ev.agent === 'judge' && ev.type === 'verdict') { setAgentState('judge', 'done'); setAgentState('validator', 'done'); }
     const st = MAP[ev.agent];
     if (st && ev.type === 'web') speak(st, ({ search: '🔎 ', found: '📄 ', read: '📖 ', saved: '💾 ', error: '⚠ ' }[ev.data && ev.data.phase] || '') + (ev.data && ev.data.src ? ev.data.src + ': ' : '') + ev.message);
+    else if (st && ev.type === 'board') speak(st, '💬 ' + ev.message, 9);
     else if (st) speak(st, ({ working: '💭 ', verdict: '⚖ ', proposal: '💡 ', error: '⚠ ' }[ev.type] || '') + ev.message);
     const msg = ev.message || '';
     if (ev.agent === 'researcher' && ev.type === 'proposal') { current = spawn('research', 0x4aa3ff); goTo(current, 'optimizer'); }
@@ -566,7 +567,8 @@
     mouse.set((e.clientX / canvas.clientWidth) * 2 - 1, -(e.clientY / canvas.clientHeight) * 2 + 1);
     ray.setFromCamera(mouse, camera);
     const hit = ray.intersectObjects(pickables, false)[0];
-    if (hit && window.LabScene.onPick) window.LabScene.onPick(hit.object.userData.station);
+    if (hit && hit.object.userData.folder && window.LabScene.onFolder) window.LabScene.onFolder(hit.object.userData.folder);
+    else if (hit && window.LabScene.onPick) window.LabScene.onPick(hit.object.userData.station);
   });
 
   function restoreStates(events) {            // after a reload: replay the last 3 minutes of lifecycle events silently
@@ -577,6 +579,34 @@
       setAgentState(e.agent, e.type, now() - (Date.now() - ts) / 1000);
     });
   }
+  // ---------- dossiers (fascicoli) on the trader's desk: one folder per approved strategy, click to open ----------
+  const folderG = new T.Group(); scene.add(folderG);
+  vox(folderG, 10.0, 0, 13.35, 9.6, 1.0, 1.5, 0x2a2418); vox(folderG, 10.0, 1.0, 13.35, 9.9, 0.08, 1.8, 0x3b3222);        // the dossier table in front of the trader's desk
+  sign(folderG, 10.0, 1.75, 12.62, 4.2, 0.7, ['FASCICOLI'], '#050505', THEME.accent, 20, 0);
+  let folderMeshes = [];
+  function setFolders(list) {
+    for (let k = pickables.length - 1; k >= 0; k--) if (pickables[k].userData.folder) pickables.splice(k, 1);
+    folderMeshes.forEach(m => { folderG.remove(m); });
+    folderMeshes = [];
+    (list || []).slice(0, 6).forEach((f, i) => {
+      const g = new T.Group(); g.position.set(6.4 + i * 1.5, 1.05, 13.35); g.scale.setScalar(1.05); g.rotation.y = (i % 2 ? 0.07 : -0.05);
+      const dec = f.decisione, col = dec === 'live' ? 0x3fbf6a : dec === 'discarded' ? 0x6b6f78 : dec === 'hold' ? 0xd9a441 : 0xe3c27a;
+      const parts = [vox(g, 0, 0, 0, 1.3, 0.1, 1.8, col), vox(g, 0, 0.1, 0.02, 1.2, 0.07, 1.7, 0xf4f1e6), vox(g, -0.35, 0.1, -1.0, 0.55, 0.1, 0.22, col)];
+      if (!dec) parts.push(vox(g, 0.45, 0.17, 0.55, 0.28, 0.06, 0.28, 0xff3b4e, { mat: glow(0xff3b4e, 0.9) }));           // red seal: waiting for your decision
+      const lab = paint(256, 192, (c, w, h) => {
+        c.fillStyle = '#2a2418'; c.textAlign = 'center'; c.font = 'bold 22px monospace'; c.fillText('FASCICOLO', w / 2, 34);
+        c.font = 'bold 19px monospace'; const n = (f.nome || '').slice(0, 15), n2 = (f.nome || '').slice(15, 30);
+        c.fillText(n, w / 2, 86); c.fillText(n2, w / 2, 112);
+        c.font = '17px monospace'; c.fillText('LCB95 ' + (f.npfv_lcb95 == null ? 'n/d' : '$' + Math.round(f.npfv_lcb95)), w / 2, 160);
+      }, '#f4f1e6');
+      const pl = new T.Mesh(new T.PlaneGeometry(1.1, 0.82), new T.MeshBasicMaterial({ map: lab.tex }));
+      pl.rotation.x = -Math.PI / 2; pl.position.set(0, 0.19, 0.05); g.add(pl);
+      parts.push(pl);
+      g.traverse(o => { if (o.isMesh) { o.userData.folder = f.slug; pickables.push(o); } });
+      folderG.add(g); folderMeshes.push(g);
+    });
+  }
+
   // ---------- trader monitors ----------
   const L = { wait: ['OFO TRADING DESK', 'waiting for', 'approved strategies'], none: 'none yet' };
   function setTrader(names, labels) {
@@ -602,7 +632,7 @@
   }
   setTrader([]);
 
-  window.LabScene = { onEvent, speak, setTrader, setTraderChart, setAccounts, onPick: null, ready: true, robots, resize, camera, controls, restoreStates, setServer,
+  window.LabScene = { setFolders, folderCount: () => folderMeshes.length, onFolder: null, onEvent, speak, setTrader, setTraderChart, setAccounts, onPick: null, ready: true, robots, resize, camera, controls, restoreStates, setServer,
     setStateLabels(l) { stateLabels = Object.assign(stateLabels, l); },
     setBubbles(on) { bubblesOn = !!on; },
     states() { const t = now(), o = {}; Object.keys(AGENTS_OF).forEach(n => o[n] = robotState(n, t)); return o; } };

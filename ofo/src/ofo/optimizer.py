@@ -25,6 +25,9 @@ from .registry import DuplicateExperiment, TrialRegistry
 from .research import daily_series, walk_forward
 from .specs import StrategySpec
 from .stats import sharpe
+from . import farming as FM
+from .lifecycle import pool_from_ledger
+from .rulesets import load_farming_config, load_rulesets
 from .sizing import size_study
 from .timing import timing_report
 from .strategies import DIRECTIONS, TEMPLATES, TIMEFRAMES, directional, flatten_overnight
@@ -249,15 +252,27 @@ def guarded_full_series(bars, cand, exit, contract, contracts, slippage_ticks, d
     return s_full, rc, pos_full, full_tf[tf]
 
 
-TF_WEIGHTS = {"pass": 0.30, "profit_dd": 0.20, "win_days": 0.20, "frequency": 0.15, "win_rate": 0.10, "speed": 0.05}
-
-
-DIRECTION_MARGIN = 0.02      # a one-sided version must beat the two-sided one by this much of score
+DIRECTION_REL_MARGIN = 0.10  # a one-sided version must beat the two-sided one by 10% of NPFV (plus $1) ...
 DIRECTION_CHUNKS = 3         # ... and the dropped side must lose money in at least 2 of these equal slices of the development days
 
 
-def _profile(cand, bars_b, pnl, dev_days_str, rows_sharpe, contract, accounts, contracts, slippage_ticks, goal_days, goal_rate):
-    """Metrics and blended score of ONE concrete version of the strategy (a timeframe, a direction)."""
+def farming_context(farming: dict | None = None) -> dict:
+    """Rulesets + thresholds used to judge strategies as prop-farming candidates (rules/rulesets/*.json, rules/farming.json)."""
+    from pathlib import Path
+    if farming:
+        return farming
+    here = Path(__file__).resolve().parent.parent.parent / "rules"
+    for root in (here, Path("rules")):
+        if (root / "rulesets").is_dir():
+            allr = load_rulesets(root / "rulesets")
+            cfg = load_farming_config(root / "farming.json")
+            return {"cfg": cfg, "rulesets": [allr[i] for i in cfg["rulesets"] if i in allr]}
+    return {"cfg": load_farming_config("/nonexistent"), "rulesets": []}
+
+
+def _profile(cand, bars_b, pnl, dev_days_str, rows_sharpe, contract, accounts, contracts, slippage_ticks, goal_days, goal_rate, farm=None):
+    """Metrics and selection score of ONE concrete version of the strategy (a timeframe, a direction). The score is the mean
+    development NPFV over the rulesets (prop farming value of the whole account life), not a blend of ratios."""
     tm = timing_report(pnl, accounts, contracts, goal_days, goal_rate, "development")
     led = run_ledger(bars_b, flatten_overnight(cand["fn"](bars_b, **cand["params"])), contract, contracts, slippage_ticks, None)
     ds = set(dev_days_str)
@@ -272,11 +287,17 @@ def _profile(cand, bars_b, pnl, dev_days_str, rows_sharpe, contract, accounts, c
     pr = {a: r["p_pass_within"].get(str(goal_days)) for a, r in tm["accounts"].items()}
     med = {a: r["median_days"] for a, r in tm["accounts"].items()}
     net = float(pnl.sum()); pos = float((pnl > 0).mean())
-    comp = {"pass": float(np.mean([v or 0.0 for v in pr.values()])) if pr else 0.0,
-            "profit_dd": float(np.clip((net / dd) / 3.0, 0, 1)) if dd > 0 and net > 0 else 0.0,
-            "win_days": min(1.0, pos / 0.6), "frequency": min(1.0, days_with / 0.9), "win_rate": min(1.0, wr / 0.6),
-            "speed": float(np.mean([1 - min(m, 20) / 20 if m is not None else 0.0 for m in med.values()])) if med else 0.0}
-    score = sum(TF_WEIGHTS[k] * comp[k] for k in TF_WEIGHTS) if net > 0 and rows_sharpe > 0 else 0.0
+    score, comp = 0.0, {}
+    if farm and farm["rulesets"] and net > 0 and rows_sharpe > 0:
+        pool = pool_from_ledger(bars_b, led)
+        vals = []
+        for rs in farm["rulesets"]:
+            sz = FM.choose_size(pool, rs, contracts, farm["cfg"])
+            vals.append(max(r["npfv_mean"] for r in sz["table"]))
+        comp = {"npfv_dev_mean": float(np.mean(vals))}
+        score = max(0.0, comp["npfv_dev_mean"])
+    elif net > 0 and rows_sharpe > 0:
+        score = float(net)                                           # no ruleset available: plain development profit
     return {"sharpe": float(rows_sharpe), "net_pnl": net, "max_dd": dd, "profit_dd": (net / dd) if dd > 0 else None, "positive_days": pos,
             "losing_streak": int(streak), "n_trades": n_tr, "trades_per_day": n_tr / max(1, len(ds)), "days_with_trade": days_with,
             "trade_win_rate": wr, "pass_rate": pr, "median_days": med, "min_days": {a: r["min_days_seen"] for a, r in tm["accounts"].items()},
@@ -289,14 +310,13 @@ def _loses_in_most_slices(pnl) -> bool:
 
 
 def timeframe_study(cands, series, rows, dev_days, bars_by_tf, contract, contract_accounts, contracts, slippage_ticks,
-                    goal_days, goal_rate) -> dict:
+                    goal_days, goal_rate, farm=None) -> dict:
     """Best version of the strategy on EACH timeframe AND each direction (both sides / long only / short only), development
-    data only (entry-only exits), and the one that fits a prop-firm trader best. NOT profit alone: the score blends the chance
-    to pass a 25k and a 50k challenge inside the goal window (30%), profit / max drawdown (20%), share of winning days (20%),
-    share of sessions with at least one trade (15%), trade win rate (10%) and how fast a challenge is passed (5%). A version
-    that does not make money is never chosen while another one does.
+    data only (entry-only exits). The version that goes on is the one with the highest development NPFV: the expected net value of
+    a whole prop account life (evaluation, funded, payouts, failures, costs) averaged over the rulesets. No weighted blend of
+    Sharpe / profit factor / win rate. A version that does not make money is never chosen while another one does.
 
-    Direction: a one-sided version replaces the two-sided one only if it scores DIRECTION_MARGIN higher AND the side it drops
+    Direction: a one-sided version replaces the two-sided one only if its NPFV is DIRECTION_REL_MARGIN higher AND the side it drops
     loses money overall AND in at least 2 of 3 equal slices of the development days (so a lucky half cannot decide it).
     The two extra variants per timeframe are counted as trials by the caller."""
     out, ds = {}, [str(d)[:10] for d in dev_days]
@@ -312,10 +332,10 @@ def timeframe_study(cands, series, rows, dev_days, bars_by_tf, contract, contrac
             ser = series[bi] if d == "both" else daily_series({tf: b}, cd, contract, contracts, slippage_ticks)
             pnl = ser.reindex(dev_days).fillna(0.0).to_numpy()
             variants[d] = (_profile(cd, b, pnl, ds, sharpe(pnl) if len(pnl) > 2 else 0.0, contract, contract_accounts, contracts,
-                                    slippage_ticks, goal_days, goal_rate), pnl)
+                                    slippage_ticks, goal_days, goal_rate, farm), pnl)
         chosen = "both"
         for d, other in (("long", "short"), ("short", "long")):
-            beats = variants[d][0]["score"] >= variants["both"][0]["score"] + DIRECTION_MARGIN
+            beats = variants[d][0]["score"] >= variants["both"][0]["score"] * (1 + DIRECTION_REL_MARGIN) + 1.0
             drops_loser = variants[other][0]["net_pnl"] < 0 and _loses_in_most_slices(variants[other][1])
             if beats and drops_loser and variants[d][0]["score"] > variants[chosen][0]["score"]:
                 chosen = d
@@ -328,7 +348,7 @@ def timeframe_study(cands, series, rows, dev_days, bars_by_tf, contract, contrac
     if out:
         best = max(out, key=lambda k: (out[k]["score"], out[k]["sharpe"]))
     return {"timeframes": out, "best_tf": best, "best_direction": out[best]["direction"] if best else "both", "window_days": goal_days,
-            "in_sample": True, "weights": TF_WEIGHTS, "chosen_by": "score" if best and out[best]["score"] > 0 else "sharpe",
+            "in_sample": True, "criterion": "NPFV medio di sviluppo (vita completa dell'account, in-campione)", "chosen_by": "score" if best and out[best]["score"] > 0 else "sharpe",
             "n_extra_trials": 2 * len(out)}
 
 
@@ -336,7 +356,7 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
               registry: TrialRegistry, contracts: int = 2, slippage_ticks: float = 1.0,
               oos_fraction: float = 0.25, train_days: int = 120, test_days: int = 20,
               surface_th: SurfaceThresholds | None = None, progress=None, dedupe: bool = False,
-              market: str | None = None, judge_th=None, all_timeframes: bool = False) -> dict:
+              market: str | None = None, judge_th=None, all_timeframes: bool = False, farming: dict | None = None) -> dict:
     """Sweep every combination of `spec`, judge the surface, walk-forward the whole procedure, and only if everything
     survives take ONE look at the locked block.
 
@@ -364,8 +384,9 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     tfs_dev = {tf: resample(dev_bars, tf) for tf in spec.timeframes}
     goal_days = judge_th.eval_days if judge_th is not None else 5
     goal_rate = judge_th.min_pass_rate if judge_th is not None else 0.30
+    farm = farming_context(farming)
     by_tf = timeframe_study(cands, series, rows, dev_days, tfs_dev, contract, {k: PRESETS[k] for k in ("25k", "50k")}, contracts,
-                            slippage_ticks, goal_days, goal_rate)
+                            slippage_ticks, goal_days, goal_rate, farm)
     best_i = by_tf["timeframes"][by_tf["best_tf"]]["cand_index"] if by_tf["best_tf"] else max(range(len(cands)), key=lambda i: rows[i]["sharpe"])
     surf = surface_metrics(rows, list(spec.ranges), th, pick=best_i)
     direction = by_tf["best_direction"]
@@ -437,11 +458,28 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
                             "tf": tf, "exit": best_exit, "prop_model": "daily_simplified"}
         # The Judge above is DETERMINISTIC and uses the simplified daily account model. After its look, the same unseen
         # block is replayed bar by bar with unrealised P&L and intraday drawdown rules, for the owner to read.
+        led_full = None
         try:
             led_full = run_ledger(b_full, pos_full, contract, contracts, slippage_ticks, best_exit)
             report["locked"]["intraday"] = intraday_report(arrays_from_ledger(b_full, led_full, only_from=cut), rules)
         except Exception as e:                                           # informational: never lose a finished study
             report["locked"]["intraday"] = {"error": str(e)[:200]}
+        # PROP FARMING REVIEW (gates 1-7 of the factory): same unseen block, same look. It replaces the challenge-passing view as
+        # the basis of the final status; the legacy daily-model verdict stays visible as `judge_status`.
+        report["locked"]["judge_status"] = v.status
+        try:
+            led_full = led_full or run_ledger(b_full, pos_full, contract, contracts, slippage_ticks, best_exit)
+            pool_dev_f, pool_oos_f = FM.split_pool(pool_from_ledger(b_full, led_full), str(cut)[:10])
+            ctx = {"integrity_ok": bool(rc.get("ok")), "edge_ok": bool(v.checks.get("dsr")), "oos_positive": bool(locked.sum() > 0),
+                   "robust_ok": True, "forward": None}
+            fr = FM.review(pool_dev_f, pool_oos_f, farm["rulesets"], contracts, farm["cfg"], ctx, spec.template) if farm["rulesets"] else None
+            if fr is not None:
+                report["farming"] = json.loads(json.dumps(fr, default=lambda o: o.item() if hasattr(o, "item") else str(o)))
+                report["locked"]["status"] = fr["verdict"]
+                report["locked"]["failed_gate"] = fr["first_failed"]
+                report["locked"]["suited"] = fr["suited"]
+        except Exception as e:                                           # never lose a finished study: fall back to the legacy verdict
+            report["locked"]["farming_error"] = f"{type(e).__name__}: {str(e)[:200]}"
     else:
         why = [k for k, ok in surf["checks"].items() if not ok]
         if wf_pnl <= 0:
@@ -453,3 +491,27 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
             why.append(f"fragile_without_market_drift: surface fails {bad} once the trend is removed")
         report["locked"] = {"status": REJECTED, "reason": f"failed {why}; locked block not touched"}
     return report
+
+
+def farming_for_study(bars, report: dict, series: dict, contract, contracts: int, farm: dict | None = None, slippage_ticks: float = 1.0,
+                      forward: dict | None = None) -> dict:
+    """Review a study the Judge already looked at with the prop-farming criteria, WITHOUT changing a single out-of-sample number:
+    the final candidate (parameters, timeframe, direction, stop/target) is replayed on the full data through the execution ledger,
+    its session data are split at the study's own cut, and the same review used for new studies is applied."""
+    farm = farming_context(farm)
+    bp = dict(series["best_params"]); tf = bp.pop("tf")
+    fn = directional(TEMPLATES[report["template"]].fn, series.get("direction"))
+    b = bars if tf == "1min" else resample(bars, tf)
+    pos = flatten_overnight(fn(b, **bp))
+    exit_ = series.get("exit")
+    rc = reconcile(b, pos, contract, contracts, slippage_ticks, exit_)
+    led = run_ledger(b, pos, contract, contracts, slippage_ticks, exit_)
+    dev, oos = FM.split_pool(pool_from_ledger(b, led), str(series["cut"])[:10])
+    lk = report.get("locked") or {}
+    surf, q = report.get("surface") or {}, report.get("quality")
+    sd = report.get("surface_detrended")
+    ctx = {"integrity_ok": bool(rc["ok"]), "edge_ok": bool((lk.get("checks") or {}).get("dsr")), "oos_positive": float(lk.get("pnl") or 0.0) > 0,
+           "robust_ok": bool(surf.get("robust")) and float(report.get("wf_oos_pnl") or 0) > 0 and bool(sd is None or sd.get("robust")) and bool(q is None or q.get("ok")),
+           "forward": forward}
+    fr = FM.review(dev, oos, farm["rulesets"], contracts, farm["cfg"], ctx, report["template"])
+    return json.loads(json.dumps(fr, default=lambda o: o.item() if hasattr(o, "item") else str(o)))

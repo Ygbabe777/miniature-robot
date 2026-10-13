@@ -154,6 +154,9 @@
     $('#reqs').innerHTML = s.template_requests.length ? `<h2>${t('reqs_title')}</h2>` + s.template_requests.map(r => `<div class="card"><b>${esc(r.name)}</b><div class="meta">${esc(r.when)}</div>${esc(r.description)}</div>`).join('') : '';
     if (window.LabScene) LabScene.setTrader(s.strategies.filter(x => x.status === 'APPROVED').map(x => x.name), { wait: t('tr_wait'), desk: t('tr_desk'), ready: t('tr_ready'), head: t('tr_head'), none: t('tr_none') });
     trader.symbol = s.symbol; trader.setMarkets(s.markets, s.primary); trader.setStrategies(s.strategies);
+    renderFasc(s.fascicoli || []);
+    const rk = s.strategies.map(x => x.slug + x.status).join('|') + (s.farming_pending || 0); if (rk !== rankKey) { rankKey = rk; loadRanking(); }
+    farmPending(s.farming_pending || 0);
   }
   async function poll() { try { const s = await api('/api/state'); renderState(s); if (s.scout) renderScout(s.scout); if (s.autopilot) renderAutopilot(s.autopilot); if (s.obsidian) renderObsidian(s.obsidian); renderBudget(s.budget); } catch (e) {} }
 
@@ -232,6 +235,100 @@
         return `<div class="dossier"><h3 style="color:${x.fast_ok === false ? 'var(--warn)' : 'var(--up)'}">${esc(x.headline)}</h3><p>${esc(x.strategy_text)}</p>${x.comparison ? `<p><b>${esc(x.comparison)}</b></p>` : ''}${accts}${x.auditor ? `<p><b>${t('ready_aud')}:</b> ${esc(x.auditor)}</p>` : ''}<p class="cav">${esc(x.caveat)}</p></div>`;
       }).join('');
     } catch (e) {}
+  }
+
+
+  // ---------- prop farming: dossiers (fascicoli) on the trader's desk, ranking, farming box in the detail ----------
+  const usd = x => x == null ? 'n/d' : (x < 0 ? '-$' : '$') + Math.abs(Math.round(x)).toLocaleString('it-IT');
+  const gcls = st => ({ PASS: 'ok', FAIL: 'no', INSUFFICIENT: 'warn', PENDING: 'warn' }[st] || '');
+  const gname = st => ({ PASS: t('g_pass'), FAIL: t('g_fail'), INSUFFICIENT: t('g_insuf'), PENDING: t('g_pending') }[st] || st);
+  function gatesTable(gs) {
+    return `<table class="rrt"><tr><th>#</th><th>${t('fc_gate')}</th><th>${t('fc_status')}</th><th>${t('fc_why')}</th></tr>${gs.map(g => `<tr><td>${g.id}</td><td>${esc(g.name)}</td><td class="${gcls(g.status)}"><b>${gname(g.status)}</b></td><td style="text-align:left">${esc(g.reason)}</td></tr>`).join('')}</table>`;
+  }
+  function farmBox(fr) {
+    if (!fr || !fr.by_ruleset) return '';
+    const rows = Object.entries(fr.by_ruleset).map(([id, x]) => { const e = x.evaluation, m = e.metrics, n = m.npfv;
+      return `<tr class="${id === fr.best_ruleset ? 'best' : ''}"><th>${esc(id)}<br><small class="${e.ruleset.provenance === 'VERIFIED_RULESET' ? 'ok' : 'warn'}">${esc(e.ruleset.provenance)}</small></th><td>${t('v_' + x.gates.verdict)}</td><td>${e.micro}</td>
+        <td><b>${usd(n.lcb95)}</b></td><td>${usd(n.mean)}</td><td>${usd(n.median)}</td><td>${pct(m.p_first_payout)}</td><td>${pct(m.p_pass)}</td><td>${m.p_funded_survival == null ? '–' : pct(m.p_funded_survival)}</td><td>${m.e_payout_count.toFixed(1)}</td><td>${usd(m.e_total_cost)}</td><td>${pct(m.p_account_failure)}</td></tr>`; }).join('');
+    const best = fr.by_ruleset[fr.best_ruleset];
+    return `<div class="judge"><b>${t('pf_title')}</b><div class="sub">${t('pf_sub')}</div>
+      <div style="overflow-x:auto"><table class="rrt"><tr><th>Ruleset</th><th>${t('fc_verdict')}</th><th>${t('pf_size')}</th><th>NPFV LCB95</th><th>NPFV ${t('pf_mean')}</th><th>${t('pf_median')}</th><th>P(1° payout)</th><th>P(pass)</th><th>P(${t('pf_survive')})</th><th>${t('pf_npay')}</th><th>${t('pf_cost')}</th><th>P(${t('pf_fail')})</th></tr>${rows}</table></div>
+      ${best ? gatesTable(best.gates.gates) : ''}
+      <div class="sub">${esc(best ? best.evaluation.limits : '')}</div></div>`;
+  }
+  let fascKey = '', fascSeen = null, folderList = null;
+  function applyFolders() { if (folderList && window.LabScene && LabScene.setFolders) { LabScene.setFolders(folderList); folderList = null; } }
+  setInterval(applyFolders, 1000);
+  function renderFasc(list) {
+    const key = JSON.stringify(list.map(x => [x.slug, x.decisione]));
+    if (key === fascKey) return; fascKey = key;
+    folderList = list; applyFolders();
+    if (fascSeen !== null && list.length > fascSeen) { toast('📁 <b>' + t('fc_new') + '</b>', 8000); notify('right', 'strategies'); }
+    fascSeen = list.length;
+    const el = $('#fasclist');
+    el.innerHTML = list.length ? `<h2>${t('fc_title')} (${list.length})</h2>` + list.map(x => `<div class="row" data-fasc="${esc(x.slug)}"><div><b>${esc(x.nome)}</b><small>${esc(x.ruleset)} · NPFV LCB95 ${usd(x.npfv_lcb95)} · ${x.decisione ? t('fc_dec_' + x.decisione) : t('fc_dec_none')}</small></div><span class="badge b-APPROVED">📁</span></div>`).join('') : '';
+    el.querySelectorAll('[data-fasc]').forEach(r => r.onclick = () => openFasc(r.dataset.fasc));
+  }
+  const hookFolder = () => { if (window.LabScene) LabScene.onFolder = (slug) => openFasc(slug); };
+  hookFolder(); setInterval(hookFolder, 1500);
+  async function openFasc(slug) {
+    const f = await api('/api/fascicolo/' + encodeURIComponent(slug)); if (f.error) return;
+    let ov = $('#fasc'); if (!ov) { ov = document.createElement('div'); ov.id = 'fasc'; document.body.appendChild(ov); }
+    const r = f.risultati, n = r.npfv, L = f.logica_ingresso, dec = f.decisione && f.decisione.decision;
+    const kv = (k, v) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`;
+    const stress = Object.entries(r.stress || {}).map(([k, v]) => `<tr><td style="text-align:left">${esc(k.replace(/_/g, ' '))}</td><td>${usd(v.npfv_mean)}</td><td>${pct(v.p_first_payout)}</td><td>${pct(v.p_account_failure)}</td></tr>`).join('');
+    const pols = Object.entries(r.policies_dev || {}).map(([k, v]) => `<tr class="${k === r.policy ? 'best' : ''}"><td style="text-align:left">${k} — ${esc(v.label)}</td><td>${usd(v.npfv_lcb95)}</td><td>${usd(v.npfv_mean)}</td><td>${v.e_payout_count.toFixed(1)}</td><td>${pct(v.p_funded_failure)}</td></tr>`).join('');
+    const pf = f.portafoglio ? Object.entries(f.portafoglio).map(([k, p]) => `<tr><td>${k}</td><td>${usd(p.total_capital_spent_mean)}</td><td>${usd(p.npfv_total_mean)}</td><td>${usd(p.npfv_total_p05)}</td><td>${usd(p.independent_assumption.npfv_total_p05)}</td><td>${pct(p.p_all_fail)}</td><td>${p.mean_accounts_failed.toFixed(1)}</td></tr>`).join('') : '';
+    ov.innerHTML = `<div class="folder"><div class="ftab">${esc(f.nome)}</div><button class="fx" id="fasc-x">✕</button>
+      <div class="fbody">
+        <div class="fhead"><h1>${esc(f.nome)}</h1><span class="badge b-${f.stato}">${t('v_' + f.stato)}</span></div>
+        <div class="fsub">${esc(f.mercato)} · ${t('fc_suited')}: <b>${esc((f.ruleset_adatti || []).join(', ') || '–')}</b> · ${esc(f.creato)} · ${esc(f.archetipo ? f.archetipo.label : '')}</div>
+        ${(f.avvisi || []).map(a => `<div class="fwarn">⚠ ${esc(a)}</div>`).join('')}
+        <h2>${t('fc_logic')}</h2>
+        <p>${esc(L.descrizione)}</p>
+        <div class="kvs">${kv(t('fc_tf'), esc(L.timeframe))}${kv(t('fc_dir'), esc(L.direzione))}${kv(t('fc_params'), esc(Object.entries(L.parametri).map(([a, b]) => a + '=' + b).join(', ') || '–'))}${kv(t('fc_exit'), esc(L.uscite))}${kv(t('fc_size'), r.size_micro + ' micro')}${kv(t('fc_policy'), esc(r.policy + ' — ' + r.policy_label))}</div>
+        <p><i>${esc(L.ipotesi)}</i></p><p class="fsmall">${esc(L.regole_comuni)}</p>
+        <h2>${t('fc_results')}</h2>
+        <div class="kvs">${kv('NPFV LCB95', '<span style="color:var(--up)">' + usd(n.lcb95) + '</span>')}${kv('NPFV ' + t('pf_mean'), usd(n.mean))}${kv(t('pf_median'), usd(n.median))}${kv('UCB95', usd(n.ucb95))}
+          ${kv('P(1° payout)', pct(r.p_first_payout))}${kv('P(pass)', pct(r.p_pass))}${kv('P(' + t('pf_survive') + ')', r.p_funded_survival == null ? 'n/d' : pct(r.p_funded_survival))}${kv(t('fc_t1'), r.e_time_to_first_payout == null ? 'n/d' : r.e_time_to_first_payout.toFixed(0) + ' ' + t('fc_sess'))}
+          ${kv(t('pf_npay'), r.e_payout_count.toFixed(1))}${kv('P(2° / 3° payout)', pct(r.p_second_payout) + ' / ' + pct(r.p_third_payout))}${kv(t('pf_cost'), usd(r.e_total_cost))}${kv(t('fc_costfirst'), usd(r.cost_per_first_payout))}
+          ${kv(t('fc_eff'), r.payout_efficiency == null ? 'n/d' : r.payout_efficiency.toFixed(2) + '×')}${kv('P(' + t('pf_fail') + ')', pct(r.p_account_failure))}${kv(t('fc_es'), usd(r.npfv_es5))}${kv(t('fc_dd'), pct(r.drawdown_utilization))}</div>
+        <div class="fsmall">${t('fc_unc')}</div>
+        <h2>${t('fc_gates')}</h2>${gatesTable(f.barriere)}
+        <h2>${t('fc_why_h')}</h2><ul>${f.perche.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+        <h2>${t('fc_stress')}</h2><table class="rrt"><tr><th></th><th>NPFV</th><th>P(1° payout)</th><th>P(${t('pf_fail')})</th></tr>${stress}</table>
+        ${pols ? `<h2>${t('fc_pol')}</h2><table class="rrt"><tr><th></th><th>NPFV LCB95</th><th>NPFV</th><th>${t('pf_npay')}</th><th>P(${t('pf_fail')} funded)</th></tr>${pols}</table><div class="fsmall">${t('fc_pol_note')}</div>` : ''}
+        <h2>${t('fc_inval')}</h2><ul>${f.condizioni_invalidanti.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+        ${pf ? `<h2>${t('fc_port')}</h2><table class="rrt"><tr><th>N</th><th>${t('fc_capital')}</th><th>NPFV ${t('pf_mean')}</th><th>NPFV p05</th><th>p05 (${t('fc_indep')})</th><th>P(${t('fc_allfail')})</th><th>${t('fc_nfail')}</th></tr>${pf}</table><div class="fsmall">${t('fc_port_note')}</div>` : ''}
+        <h2>${t('fc_board')}</h2>${f.verbale.map(v => `<div class="say"><b>${esc(v.role)}</b> ${esc(v.text)}</div>`).join('')}
+        <div class="fsmall">${esc(f.limiti)}</div>
+        <div class="fdecide"><b>${t('fc_decide')}</b> ${dec ? '<span class="badge">' + t('fc_dec_' + dec) + '</span>' : ''}
+          <textarea id="fasc-note" placeholder="${t('fc_note')}">${esc((f.decisione && f.decisione.note) || '')}</textarea>
+          <button class="btn" data-d="live">🟢 ${t('fc_live')}</button><button class="btn" data-d="hold">🟡 ${t('fc_hold')}</button><button class="btn" data-d="discarded">⚪ ${t('fc_discard')}</button>
+          <div class="fsmall">${t('fc_live_note')}</div></div>
+      </div></div>`;
+    ov.hidden = false;
+    $('#fasc-x').onclick = () => { ov.hidden = true; };
+    ov.onclick = (e) => { if (e.target === ov) ov.hidden = true; };
+    ov.querySelectorAll('[data-d]').forEach(b => b.onclick = async () => {
+      if (b.dataset.d === 'live') { const g7 = (f.barriere.find(g => g.id === 7) || {}).status; if (g7 !== 'PASS' && !confirm(t('fc_confirm_live'))) return; }
+      await api('/api/fascicolo/decision', { method: 'POST', json: { slug: f.slug, decision: b.dataset.d, note: $('#fasc-note').value } });
+      fascKey = ''; poll(); openFasc(f.slug); });
+  }
+  async function loadRanking(rid) {
+    const d = await api('/api/ranking' + (rid ? '?ruleset=' + encodeURIComponent(rid) : '')), el = $('#ranking');
+    if (!d.evaluated) { el.innerHTML = ''; return; }
+    const rows = d.ranking.map((e, i) => `<tr><th>${i + 1}</th><td style="text-align:left">${esc(e.name)}${e.indistinguishable_from_top ? ' <small class="warn">≈</small>' : ''}</td><td><b>${usd(e.npfv.lcb95)}</b></td><td>${usd(e.npfv.mean)}</td><td>${pct(e.p_first_payout)}</td><td>${pct(e.p_pass)}</td><td>${e.p_funded_survival == null ? '–' : pct(e.p_funded_survival)}</td><td>${e.e_payout_count.toFixed(1)}</td><td>${e.e_time_to_first_payout == null ? '–' : e.e_time_to_first_payout.toFixed(0)}</td><td>${usd(e.e_total_cost)}</td><td>${pct(e.p_account_failure)}</td></tr>`).join('');
+    el.innerHTML = `<h2>${t('rk_title')}</h2><div class="srow"><select id="rk-sel">${d.rulesets.map(r => `<option ${r === d.ruleset ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select><span class="smeta">${d.evaluated} ${t('rk_eval')} · ${d.ranking.length} ${t('rk_ok')}</span></div>
+      ${d.ranking.length ? `<div style="overflow-x:auto"><table class="rrt"><tr><th>#</th><th></th><th>NPFV LCB95</th><th>NPFV</th><th>P(1° payout)</th><th>P(pass)</th><th>P(${t('pf_survive')})</th><th>${t('pf_npay')}</th><th>${t('fc_t1')}</th><th>${t('pf_cost')}</th><th>P(${t('pf_fail')})</th></tr>${rows}</table></div>` : ''}
+      <div class="smeta">${esc(d.note)}</div>`;
+    $('#rk-sel').onchange = (e) => loadRanking(e.target.value);
+  }
+  let rankKey = '';
+  function farmPending(n) {
+    const el = $('#farmreview'); if (!el) return;
+    el.innerHTML = n ? `<div class="card"><b>${t('fr_title')}</b><div class="meta">${t('fr_sub', { n })}</div><button class="btn small" id="fr-go">${t('fr_go')}</button></div>` : '';
+    if (n) $('#fr-go').onclick = async () => { await api('/api/farming/review', { method: 'POST', json: {} }); toast(t('fr_started'), 5000); };
   }
 
   // ---------- Trader tab: candlestick chart of the user's own historical data ----------
@@ -528,6 +625,7 @@
         ${L.p_pass != null ? `<div>${t('d_pass')}: <b>${pct(L.p_pass)}</b> (${t('d_interval')} ${pct(L.p_pass_ci95[0])}–${pct(L.p_pass_ci95[1])}) · ${t('d_bust')}: <b>${pct(L.p_bust)}</b> · ${t('d_pnl_block')}: <b class="${L.pnl >= 0 ? 'pos' : 'neg'}">${money(L.pnl)}</b></div>` : ''}</div>
       <div class="grid">${kpi(t('kp_med'), num(sur.median_sharpe, 3))}${kpi(t('kp_pos'), pct(sur.frac_positive))}${kpi(t('kp_plat'), num(sur.plateau_ratio, 2))}${kpi(t('kp_rob'), sur.robust ? t('yes') : t('no'), sur.robust ? 'pos' : 'neg')}${kpi(t('kp_wf'), money(rep.wf_oos_pnl), rep.wf_oos_pnl >= 0 ? 'pos' : 'neg')}</div>
       ${d.best_params ? `<div class="sub">${t('d_best', { p: esc(JSON.stringify(d.best_params)), n: rep.n_candidates })}</div>` : ''}
+      ${farmBox(rep.farming)}
       ${tfBox(rep.by_timeframe)}
       ${sizingBox(rep.locked && rep.locked.sizing ? rep.locked.sizing : rep.sizing)}
       ${timingBox(rep.locked && rep.locked.timing ? rep.locked.timing : rep.timing)}

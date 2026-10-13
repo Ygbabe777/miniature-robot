@@ -40,6 +40,9 @@ from ..data import resample
 from ..strategies import directional
 from ..trades import extract_trades, summarize
 from ..directives import Directives
+from .. import farming as FM, fascicolo as FC
+from ..optimizer import farming_context, farming_for_study
+from ..storage import update_report
 from ..scout import Scout
 from ..sources import agent_reach_status, config_problem, load_config, missing_channels
 from ..strategies import INDICATOR_HELP, TEMPLATES
@@ -354,9 +357,10 @@ class Lab:
                 while lp.queue:                   # planner proposals: the autopilot runs them, otherwise they wait
                     nxt, _ = lp.queue.pop(0)
                     self._add_pending(nxt, "planner", market)
+                self.farming_post(job["slug"])         # fascicolo + the board's discussion of the numbers (italian)
                 if res["verdict"] == "APPROVED":
                     self.make_dossier(job["slug"])
-                    self.deploy_ready()                # approved -> deployed (paper) with no click
+                    self.deploy_ready()                # approved -> paper forward validation (gate 7); LIVE stays the owner's decision
             except Exception as e:
                 job.update(status="error", error=str(e)[:300])
                 self.events.emit("lab", "error", f"{spec.name}: {e}")
@@ -720,7 +724,8 @@ class Lab:
                 "ready": len(self.dossiers()), "budget_mode": (self.governor().mode() if self.governor() else None),
                 "markets": [{"sym": k, "name": MARKETS[k]["name"], "micro": c.contract.symbol, "mini": MARKETS[k]["mini"].symbol,
                              "enabled": k in self.enabled_markets()} for k, c in self.mk.items()],
-                "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed"))}
+                "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed")),
+                "fascicoli": self.fascicoli(), "farming_pending": len(self.farming_pending())}
 
     def working_agents(self) -> set[str]:
         """Who is really busy right now. Derived from live activity counters and the agents' own
@@ -743,6 +748,179 @@ class Lab:
         return out
 
     # -- ready strategies -----------------------------------------------------------------
+    # -- prop farming: fascicolo, board, decisions, legacy re-review ----------------------------------
+    def _fasc_dir(self) -> Path:
+        d = self.data / "fascicoli"; d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def decisions(self) -> dict:
+        f = self.data / "decisions.json"
+        return json.loads(f.read_text()) if f.exists() else {}
+
+    def decide(self, slug: str, decision: str, note: str = "") -> dict:
+        """The owner's decision on an approved strategy. 'live' means YOU will trade it (OFO never sends orders): it keeps its paper
+        forward tracking so you can compare. Nothing is decided automatically."""
+        if decision not in ("live", "discarded", "hold"):
+            return {"error": "decisione non valida"}
+        d = self.decisions()
+        d[slug] = {"decision": decision, "note": note[:300], "at": time.strftime("%Y-%m-%d %H:%M")}
+        f = self.data / "decisions.json"; f.write_text(json.dumps(d, indent=1, ensure_ascii=False))
+        label = {"live": "LIVE (decisione tua, nessun ordine inviato da OFO)", "discarded": "scartata", "hold": "in attesa"}[decision]
+        self.events.emit("you", "decision", f"{slug}: {label}", {"slug": slug, "decision": decision})
+        return {"ok": True, "decision": d[slug]}
+
+    def farming_post(self, slug: str, discuss: bool = True) -> dict | None:
+        """After a study that reached the Judge's look: store the fascicolo and let the board discuss (messages derived from the numbers)."""
+        d = load_study(self.work, slug)
+        if not d or not (d["report"].get("farming")):
+            return None
+        rep = {**d["report"], "series": d["series"] or {}}
+        doc = FC.build(slug, rep)
+        if doc is None:
+            return None
+        (self._fasc_dir() / f"{slug}.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False, default=str))
+        if discuss:
+            def talk():
+                for line in doc["verbale"]:
+                    self.events.emit(line["agent"], "board", f"{line['role']}: {line['text']}", {"slug": slug})
+                    time.sleep(4.0)
+            threading.Thread(target=talk, daemon=True).start()
+        return doc
+
+    @staticmethod
+    def _stamp(directory: Path, pattern: str = "*.json") -> tuple:
+        return tuple((f.name, f.stat().st_mtime_ns) for f in sorted(directory.glob(pattern))) if directory.exists() else ()
+
+    def farming_pending(self) -> list[str]:
+        key = self._stamp(self.work / "reports")                  # the state is polled every few seconds: recompute only on change
+        c = getattr(self, "_fp_cache", None)
+        if c and c[0] == key:
+            return c[1]
+        out = self._farming_pending_uncached()
+        self._fp_cache = (key, out)
+        return out
+
+    def _farming_pending_uncached(self) -> list[str]:
+        out = []
+        for r in list_studies(self.work):
+            d = load_study(self.work, r["slug"])
+            if not d or not d.get("series"):
+                continue
+            rep = d["report"]
+            lk = rep.get("locked") or {}
+            if "checks" in lk and not rep.get("farming") and not lk.get("farming_review_error"):
+                out.append(r["slug"])
+        return out
+
+    def farming_review(self, slug: str) -> dict:
+        """Re-review a strategy the Judge already looked at, with the prop-farming criteria. The out-of-sample numbers are not
+        altered: the old verdict is kept as `legacy_status` and the review is logged as one more look at the unseen block."""
+        d = load_study(self.work, slug)
+        if d is None or not d.get("series") or not (d["report"].get("locked") or {}).get("checks"):
+            return {"error": "studio non rivedibile"}
+        rep, ser = d["report"], d["series"]
+        c = self.ctx(self.market_of(rep))
+        try:
+            fr = farming_for_study(c.bars(), rep, ser, c.contract, self.contracts, farming_context(), forward=None)
+        except Exception as e:
+            update_report(self.work, slug, lambda r: r["locked"].__setitem__("farming_review_error", f"{type(e).__name__}: {str(e)[:200]}"))
+            self.events.emit("lab", "error", f"revisione prop farming {slug}: {e}")
+            return {"error": str(e)[:200]}
+        def mut(r):
+            lk = r["locked"]
+            lk.setdefault("legacy_status", lk.get("status"))
+            lk["judge_status"] = lk["legacy_status"]
+            lk["status"], lk["failed_gate"], lk["suited"] = fr["verdict"], fr["first_failed"], fr["suited"]
+            lk["reviewed_with"] = "prop_farming_v1"; lk["reviewed_at"] = time.strftime("%Y-%m-%d %H:%M")
+            r["farming"] = fr
+        update_report(self.work, slug, mut)
+        self.registry.add_locked_look(f"farming_review:{slug}", fr["verdict"], oos_start=str(ser["cut"])[:10])
+        self.events.emit("judge", "verdict", f"{rep['name']}: {fr['verdict']} (rivista con il criterio prop farming)", {"slug": slug})
+        self.farming_post(slug, discuss=False)
+        if fr["verdict"] == "APPROVED":
+            self.make_dossier(slug); self.deploy_ready()
+        return {"slug": slug, "verdict": fr["verdict"], "was": d["report"]["locked"].get("status")}
+
+    def farming_review_all(self) -> dict:
+        """Background: one pending study at a time, so the Lab stays responsive."""
+        if getattr(self, "_farm_busy", False):
+            return {"started": False, "reason": "già in corso", "pending": len(self.farming_pending())}
+        pend = self.farming_pending()
+        if not pend:
+            return {"started": False, "pending": 0}
+        self._farm_busy = True
+        def work():
+            try:
+                with self.working("job"):
+                    for slug in pend:
+                        with self.run_lock:
+                            self.farming_review(slug)
+            finally:
+                self._farm_busy = False
+        threading.Thread(target=work, daemon=True).start()
+        return {"started": True, "pending": len(pend)}
+
+    def fascicoli(self) -> list[dict]:
+        key = (self._stamp(self._fasc_dir()), (self.data / "decisions.json").stat().st_mtime_ns if (self.data / "decisions.json").exists() else 0)
+        c = getattr(self, "_fc_cache", None)
+        if c and c[0] == key:
+            return c[1]
+        out = self._fascicoli_uncached()
+        self._fc_cache = (key, out)
+        return out
+
+    def _fascicoli_uncached(self) -> list[dict]:
+        dec, out = self.decisions(), []
+        for f in sorted(self._fasc_dir().glob("*.json")):
+            try:
+                x = json.loads(f.read_text())
+            except ValueError:
+                continue
+            if x.get("stato") != "APPROVED":
+                continue
+            n = x["risultati"]["npfv"]
+            out.append({"slug": x["slug"], "nome": x["nome"], "mercato": x["mercato"], "ruleset": x["ruleset_migliore"], "npfv_lcb95": n.get("lcb95"),
+                        "npfv_mean": n.get("mean"), "decisione": (dec.get(x["slug"]) or {}).get("decision"), "creato": x["creato"]})
+        return sorted(out, key=lambda r: -(r["npfv_lcb95"] or -1e18))
+
+    def fascicolo(self, slug: str) -> dict | None:
+        f = self._fasc_dir() / f"{slugify(slug)}.json"
+        if not f.exists():
+            return None
+        x = json.loads(f.read_text())
+        x["decisione"] = self.decisions().get(x["slug"])
+        dp = self.deployments.get(x["slug"]) or {}
+        fw = (dp.get("forward") or {})
+        mind = farming_context()["cfg"]["forward"]["min_days"]
+        st = {"live": "PENDING", "confirmed": "PASS", "retired": "FAIL"}.get(dp.get("status"), "PENDING")
+        g7 = {"id": 7, "name": "Validazione forward (paper)", "status": st, "reason":
+              (f"{fw.get('days', 0)} giorni di paper trading, stato {dp.get('status', 'non avviato')}" +
+               ("" if st != "PENDING" else f": servono almeno {mind} giorni") + (f" — {dp['reason']}" if dp.get("reason") else ""))}
+        x["barriere"] = [b for b in x["barriere"] if b["id"] != 7] + [g7]
+        x["forward"] = {"days": fw.get("days", 0), "status": dp.get("status"), "reason": dp.get("reason", "")}
+        return x
+
+    def ranking(self, ruleset_id: str | None = None) -> dict:
+        cfgr = farming_context()
+        ids = [r.id for r in cfgr["rulesets"]]
+        rid = ruleset_id if ruleset_id in ids else (ids[0] if ids else None)
+        entries = []
+        for r in list_studies(self.work):
+            d = load_study(self.work, r["slug"])
+            fr = (d or {}).get("report", {}).get("farming")
+            if not fr or rid not in (fr.get("by_ruleset") or {}):
+                continue
+            x = fr["by_ruleset"][rid]
+            m = x["evaluation"]["metrics"]
+            entries.append({"slug": r["slug"], "name": r["name"], "verdict": x["gates"]["verdict"], "npfv": m["npfv"],
+                            "p_first_payout": m["p_first_payout"], "p_pass": m["p_pass"], "p_funded_survival": m["p_funded_survival"],
+                            "e_payout_count": m["e_payout_count"], "e_time_to_first_payout": m["e_time_to_first_payout"],
+                            "e_total_cost": m["e_total_cost"], "p_account_failure": m["p_account_failure"],
+                            "provenance": x["evaluation"]["ruleset"]["provenance"], "first_failed": x["gates"]["first_failed"]})
+        out = FM.rank(entries)
+        out.update({"ruleset": rid, "rulesets": ids, "evaluated": len(entries), "rejected": [e for e in entries if e["verdict"] != "APPROVED"][:30]})
+        return out
+
     def make_dossier(self, slug: str) -> dict | None:
         d = load_study(self.work, slug)
         if d is None or not d.get("series"):
@@ -1002,6 +1180,8 @@ class Lab:
                         if n % 12 == 0:
                             self.deploy_ready()
                             self.forward_tick()
+                            if self.busy.get("research", 0) == 0:
+                                self.farming_review_all()
                             self.obsidian_sync()
                             if (self.obs["vault"] or self.ap["enabled"]) and self.busy["research"] == 0 and self.llm_allowed("researcher") and self._unread_ideas():
                                 threading.Thread(target=self._ingest_now, daemon=True).start()

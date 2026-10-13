@@ -253,14 +253,19 @@ def test_every_timeframe_is_tried_and_the_final_version_is_the_best_timeframe(tm
     assert rep["n_candidates"] == 5 * len(TIMEFRAMES)                        # and every one of them counts as a trial
     assert by["best_tf"] == rep["series"]["best_params"]["tf"]               # table and final candidate agree
     tfs = by["timeframes"]
-    assert tfs[by["best_tf"]]["score"] == max(v["score"] for v in tfs.values())   # chosen by the blended score, not by profit alone
+    assert tfs[by["best_tf"]]["score"] == max(v["score"] for v in tfs.values())   # chosen by development NPFV
     assert all({"max_dd", "n_trades", "days_with_trade", "trade_win_rate", "positive_days", "pass_rate"} <= set(v) for v in tfs.values())
     assert rep["sizing"]["accounts"]["25k"]["table"] and rep["base_contracts"] == 2
 
 
-def test_timeframe_score_weights_sum_to_one_and_pass_probability_leads(tmp_path):
-    from ofo.optimizer import TF_WEIGHTS
-    assert abs(sum(TF_WEIGHTS.values()) - 1.0) < 1e-9 and TF_WEIGHTS["pass"] > TF_WEIGHTS["profit_dd"]
+def test_timeframe_is_chosen_by_prop_farming_value_not_by_a_blend_of_ratios(tmp_path):
+    from ofo.optimizer import farming_context
+    farm = farming_context()
+    assert farm["rulesets"] and all(r.provenance for r in farm["rulesets"])
+    bars = synth(n_sessions=200, drift_ar=0.9, seed=7)
+    rep = run_study(bars, from_dict(SPEC), MNQ, PRESETS["50k"], TrialRegistry(tmp_path / "r.db"), all_timeframes=True)
+    by = rep["by_timeframe"]
+    assert "NPFV" in by["criterion"] and all("npfv_dev_mean" in v["components"] or v["score"] == 0 for v in by["timeframes"].values())
 
 
 def test_direction_variants_are_tried_counted_and_applied_consistently(tmp_path):

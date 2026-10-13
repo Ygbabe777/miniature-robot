@@ -1,0 +1,54 @@
+{
+ "id": "GENERIC_EOD_25K",
+ "version": "1.0",
+ "firm": "Generica (da sostituire con la tua prop)",
+ "provenance": "ASSUMED",
+ "verified_on": null,
+ "source": "valori segnaposto in stile Topstep: VERIFICA sul regolamento ufficiale e cambia 'provenance' in VERIFIED_RULESET o USER_SUPPLIED_RULESET",
+ "notes": "",
+ "account": {
+  "size": 25000,
+  "label": "25k"
+ },
+ "evaluation": {
+  "profit_target": 1500,
+  "max_loss": 1500,
+  "trailing": "eod",
+  "lock_at_start": true,
+  "daily_loss_limit": null,
+  "min_days": 2,
+  "consistency_pct": null,
+  "max_contracts_micro": 50
+ },
+ "funded": {
+  "max_loss": 1500,
+  "trailing": "eod",
+  "lock_at_start": true,
+  "daily_loss_limit": null,
+  "max_contracts_micro": 50,
+  "payout": {
+   "min_winning_days": 5,
+   "winning_day_min": 150,
+   "min_payout": 500,
+   "cap": 2000,
+   "profit_split": 0.9,
+   "buffer": 0,
+   "floor_after_payout": "unchanged",
+   "delay_days": 3
+  }
+ },
+ "rules": {
+  "overnight_allowed": false,
+  "flat_by": "16:45",
+  "news_restriction": null,
+  "copy_trading_allowed": true,
+  "max_accounts": null,
+  "scaling": null
+ },
+ "costs": {
+  "eval_monthly": 60,
+  "activation": 80,
+  "reset": 60,
+  "funded_monthly": 0
+ }
+}

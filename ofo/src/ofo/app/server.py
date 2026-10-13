@@ -45,6 +45,13 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                 if u.path == "/api/events":
                     after = int(parse_qs(u.query).get("after", ["0"])[0])
                     return self._json(lab.events_after(after))
+                if u.path == "/api/fascicoli":
+                    return self._json({"fascicoli": lab.fascicoli(), "pending_review": len(lab.farming_pending())})
+                if u.path.startswith("/api/fascicolo/"):
+                    d = lab.fascicolo(unquote(u.path[len("/api/fascicolo/"):]))
+                    return self._json(d) if d else self._json({"error": "not found"}, 404)
+                if u.path == "/api/ranking":
+                    return self._json(lab.ranking(parse_qs(u.query).get("ruleset", [None])[0]))
                 if u.path == "/api/directives":
                     return self._json({"directives": lab.directives.public()})
                 if u.path == "/api/web":
@@ -106,6 +113,10 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.set_budget(data.get("remaining_usd"), data.get("weekly_usd"), data.get("usd_per_million")) or {})
                 if u.path == "/api/markets":
                     return self._json(lab.set_markets(list(data.get("markets") or [])))
+                if u.path == "/api/farming/review":
+                    return self._json(lab.farming_review_all())
+                if u.path == "/api/fascicolo/decision":
+                    return self._json(lab.decide(str(data.get("slug", "")), str(data.get("decision", "")), str(data.get("note", ""))))
                 if u.path == "/api/sources":
                     return self._json(lab.set_source(str(data.get("name", "")), bool(data.get("enabled"))))
                 if u.path == "/api/directives":
