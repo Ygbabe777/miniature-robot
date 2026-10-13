@@ -381,7 +381,7 @@
         rightPriceScale: { borderColor: THEME.grid }, timeScale: { borderColor: THEME.grid, timeVisible: true, secondsVisible: false },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal }, width: el.clientWidth, height: el.clientHeight || 320
       });
-      cs = chart.addCandlestickSeries({ upColor: THEME.up, downColor: THEME.down, borderVisible: false, wickUpColor: THEME.up, wickDownColor: THEME.down });
+      cs = chart.addCandlestickSeries({ upColor: '#E7E9EC', downColor: '#44484D', borderUpColor: '#E7E9EC', borderDownColor: '#A6ABB1', borderVisible: true, wickUpColor: '#E7E9EC', wickDownColor: '#A6ABB1' });
       vs = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
       chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
       chart.subscribeCrosshairMove(p => {
@@ -446,7 +446,7 @@
         g.globalAlpha = focus >= 0 && !sel ? 0.35 : 1;
         if (sel || list.length <= 100) {                   // stop loss and take profit of EVERY trade in view, plus the trade box
           const lv = (p, c, tag) => { const y = Y(p); if (y === null) return; g.strokeStyle = c; g.setLineDash(sel ? [] : [5, 3]); g.lineWidth = sel ? 2 : 1.3; g.beginPath(); g.moveTo(xe, y); g.lineTo(Math.max(xx, xe + 24), y); g.stroke(); g.setLineDash([]);
-            const lab = tag + ' ' + p, wl = g.measureText(lab).width + 8, lx = Math.max(xx, xe + 24) + 3; g.fillStyle = c; g.fillRect(lx, y - 7, wl, 14); g.fillStyle = '#000'; g.fillText(lab, lx + 4, y); };
+            const lab = tag + ' ' + Number(p).toFixed(2), wl = g.measureText(lab).width + 8, lx = Math.max(xx, xe + 24) + 3; g.fillStyle = c; g.fillRect(lx, y - 7, wl, 14); g.fillStyle = '#000'; g.fillText(lab, lx + 4, y); };
           if (x.stop != null) lv(x.stop, THEME.down, 'SL'); if (x.target != null) lv(x.target, THEME.up, 'TP');
           g.fillStyle = col + '22'; g.fillRect(Math.min(xe, xx), Math.min(ye, yx), Math.max(2, Math.abs(xx - xe)), Math.max(2, Math.abs(yx - ye)));
         }
@@ -457,8 +457,8 @@
         g.closePath(); g.fill(); g.stroke();
         g.fillStyle = col; g.beginPath(); g.arc(xx, yx, sel ? 6 : 4.5, 0, 6.3); g.fill(); g.stroke();
         if (few || sel) {
-          g.fillStyle = '#e8e8ee';
-          g.fillText((up ? 'L ' : 'S ') + x.entry_px + ' ×' + nC(), xe + 9, ye + (up ? 12 : -12));
+          g.fillStyle = '#E7E9EC';
+          g.fillText((up ? 'L ' : 'S ') + Number(x.entry_px).toFixed(2) + ' ×' + nC(), xe + 9, ye + (up ? 12 : -12));
           g.fillStyle = col; g.fillText((win ? '+$' : '-$') + Math.abs(Math.round(pnlOf(x))) + ' · ' + reasonTxt(x) + (x.r != null ? ' · ' + x.r + 'R' : ''), xx + 8, yx + (win === up ? -12 : 12));
         }
       });
@@ -483,7 +483,7 @@
         <select id="tacct">${['25k', '50k'].map(a => `<option value="${a}" ${a === tAcct ? 'selected' : ''}>${t('tl_acct', { a })}</option>`).join('')}</select>
         <select id="tsize"><option value="" ${!tMicro ? 'selected' : ''}>${t('tl_size_rec2', { a: tAcct, n: (trades.sizing || {})[tAcct] || trades.base_contracts })}</option>${(trades.sizes || []).map(n => `<option value="${n}" ${tMicro === n ? 'selected' : ''}>${t('tl_size_n', { n })}</option>`).join('')}</select>
         <button data-csv="1">${t('tl_csv')}</button></div>
-        <table><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>${L.map((x, k) => `<tr class="tr ${x.i === focus ? 'sel' : ''}" data-i="${x.i}"><td>${k + 1}</td><td>${fmtT(x.entry_t)}</td><td class="${x.side > 0 ? 'up' : 'dn'}">${x.side > 0 ? 'L' : 'S'}</td><td>${x.entry_px}</td><td><b>${nC()}</b></td><td class="dn">${x.stop != null ? x.stop : '–'}</td><td class="up">${x.target != null ? x.target : t('tl_tp_strategy')}</td><td>${x.exit_px}</td><td>${reasonTxt(x)}</td><td class="${x.pnl >= 0 ? 'up' : 'dn'}">${x.pnl >= 0 ? '+' : '-'}$${Math.abs(Math.round(pnlOf(x)))}</td><td>${x.r == null ? '' : x.r}</td></tr>`).join('')}</table>`;
+        <table><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>${L.map((x, k) => `<tr class="tr ${x.i === focus ? 'sel' : ''}" data-i="${x.i}"><td>${k + 1}</td><td>${fmtT(x.entry_t)}</td><td class="${x.side > 0 ? 'up' : 'dn'}">${x.side > 0 ? 'L' : 'S'}</td><td>${Number(x.entry_px).toFixed(2)}</td><td><b>${nC()}</b></td><td class="dn">${x.stop != null ? Number(x.stop).toFixed(2) : '–'}</td><td class="up">${x.target != null ? Number(x.target).toFixed(2) : t('tl_tp_strategy')}</td><td>${Number(x.exit_px).toFixed(2)}</td><td>${reasonTxt(x)}</td><td class="${x.pnl >= 0 ? 'up' : 'dn'}">${x.pnl >= 0 ? '+' : '-'}$${Math.abs(Math.round(pnlOf(x)))}</td><td>${x.r == null ? '' : x.r}</td></tr>`).join('')}</table>`;
       box.querySelector('#tsize').onchange = (e) => { tMicro = e.target.value ? +e.target.value : null; reloadTrades(); };
       box.querySelector('#tacct').onchange = (e) => { tAcct = e.target.value; store.set('ofo_tacct', tAcct); tMicro = null; reloadTrades(); };
       box.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { tfilter = b.dataset.f; focus = -1; renderList(); drawOverlay(); });
@@ -525,7 +525,7 @@
       if (typeof loaded[0][0] === 'string') { lg.textContent = t('ind_daily'); return; }
       const d = await api(`/api/indicators/${encodeURIComponent(slug)}?from=${loaded[0][0]}&to=${loaded[loaded.length - 1][0] + 86400}`);
       if (!d.series || !d.series.length) return;
-      const cols = [THEME.accent, '#9a9aa2', THEME.warn, '#c9c9d0', '#6d6d75'];
+      const cols = [THEME.accent, '#A6ABB1', '#FFFFFF', '#7B8087', '#C4C8CD'];
       let html = '';
       d.series.forEach((s, i) => {
         const dashed = /sigma|zone/i.test(s.name), col = cols[i % cols.length];
@@ -653,7 +653,7 @@
     if (!sc || !sc.by_time) return '';
     if (!sc.n_trades) return `<div class="judge rrbox"><b>${t('sch_title')}</b><div class="sub">${esc(sc.note || t('sch_none'))}</div></div>`;
     const maxA = Math.max(1, ...sc.by_time.map(r => Math.abs(r.pnl)));
-    const tr = sc.by_time.map(r => { const a = Math.min(1, Math.abs(r.pnl) / maxA), bg = r.pnl >= 0 ? `rgba(80,200,120,${0.12 + 0.5 * a})` : `rgba(240,90,90,${0.12 + 0.5 * a})`;
+    const tr = sc.by_time.map(r => { const a = Math.min(1, Math.abs(r.pnl) / maxA), bg = r.pnl >= 0 ? `rgba(143,199,166,${0.12 + 0.5 * a})` : `rgba(217,139,139,${0.12 + 0.5 * a})`;
       const inW = sc.window && r.from >= sc.window.from && r.to <= sc.window.to;
       return `<tr style="${inW ? 'outline:2px solid #fff;' : ''}"><th>${r.from}–${r.to}</th><td>${r.n}</td><td>${pct(r.win_rate)}</td><td style="background:${bg}" class="${r.pnl >= 0 ? 'pos' : 'neg'}">${money(r.pnl)}</td><td>${money(r.avg)}</td></tr>`; }).join('');
     const cr = (sc.by_count || []).map(r => `<tr class="${sc.max_per_day && r.ordinal <= sc.max_per_day ? 'best' : ''}"><th>${r.n_th}</th><td>${r.n}</td><td>${pct(r.win_rate)}</td><td class="${r.pnl >= 0 ? 'pos' : 'neg'}">${money(r.pnl)}</td><td>${money(r.cum_pnl)}</td></tr>`).join('');
@@ -671,7 +671,7 @@
     const stops = [...new Set(ex.grid.map(c => c.stop_atr))], rrs = [...new Set(ex.grid.map(c => c.rr))];
     const cell = (s, r) => ex.grid.find(c => c.stop_atr === s && c.rr === r);
     const max = Math.max(...ex.grid.map(c => Math.abs(c.sharpe)), Math.abs(ex.baseline.sharpe)) || 1;
-    const best = ex.best, bg = v => { const a = Math.min(1, Math.abs(v) / max); return v >= 0 ? `rgba(80,200,120,${0.12 + 0.5 * a})` : `rgba(240,90,90,${0.12 + 0.5 * a})`; };
+    const best = ex.best, bg = v => { const a = Math.min(1, Math.abs(v) / max); return v >= 0 ? `rgba(143,199,166,${0.12 + 0.5 * a})` : `rgba(217,139,139,${0.12 + 0.5 * a})`; };
     const rows = stops.map(s => `<tr><th>${t('rr_stop', { s })}</th>${rrs.map(r => { const c = cell(s, r);
       const isBest = ex.chosen && best.stop_atr === s && best.rr === r;
       return `<td style="background:${bg(c.sharpe)};${isBest ? 'outline:2px solid #fff;' : ''}" title="${t('rr_cell', { w: pct(c.win_rate), n: c.n_trades, p: money(c.pnl) })}">${num(c.sharpe, 3)}<small class="${c.pnl >= 0 ? 'pos' : 'neg'}">${money(c.pnl)}</small></td>`; }).join('')}</tr>`).join('');

@@ -16,13 +16,13 @@ window.LabCharts = (function () {
 
   function equity(canvas, packs, show) {
     const sets = [];
-    const names = { wf_oos: [t('ch_wf'), C.blue], locked: [t('ch_lk'), null], dev_best: [t('ch_de'), '#6a6a72'] };
+    const names = { wf_oos: [t('ch_wf'), C.blue], locked: [t('ch_lk'), '#FFFFFF'], dev_best: [t('ch_de'), '#7B8087'] };
     const labels = [...new Set(show.flatMap(k => packs[k] ? packs[k].dates : []))].sort();
     show.forEach(k => {
       if (!packs[k]) return;
       const m = {}; packs[k].dates.forEach((d, i) => m[d] = packs[k].equity[i]);
       const last = packs[k].equity[packs[k].equity.length - 1];
-      const col = names[k][1] || (last >= 0 ? C.green : C.red);
+      const col = names[k][1] || C.blue;                       // equity lines are platinum/silver: colour is for states, not for decoration
       sets.push({ label: names[k][0], data: labels.map(d => m[d] ?? null), borderColor: col, backgroundColor: col, borderWidth: k === 'dev_best' ? 1.5 : 2.2, borderDash: k === 'dev_best' ? [5, 4] : [], pointRadius: 0, spanGaps: true, tension: 0 });
     });
     return make(canvas, fix({ type: 'line', data: { labels, datasets: sets }, options: base() }));
@@ -48,7 +48,7 @@ window.LabCharts = (function () {
   }
   function histogram(canvas, p) {
     const e = p.histogram.edges, mid = p.histogram.counts.map((_, i) => (e[i] + e[i + 1]) / 2);
-    return make(canvas, { type: 'bar', data: { labels: mid.map(m => Math.round(m)), datasets: [{ label: t('ch_days'), data: p.histogram.counts, backgroundColor: mid.map(m => m >= 0 ? a(C.green, 0.8) : a(C.red, 0.8)) }] }, options: base({ plugins: { legend: { display: false } } }) });
+    return make(canvas, { type: 'bar', data: { labels: mid.map(m => Math.round(m)), datasets: [{ label: t('ch_days'), data: p.histogram.counts, backgroundColor: mid.map(m => m >= 0 ? a(THEME.dim, 0.8) : a(C.red, 0.8)) }] }, options: base({ plugins: { legend: { display: false } } }) });
   }
   function rolling(canvas, p) {
     return make(canvas, { type: 'line', data: { labels: p.dates, datasets: [{ label: t('ch_rs'), data: p.rolling_sharpe, borderColor: C.purple, pointRadius: 0, borderWidth: 1.8, spanGaps: false }] }, options: base() });

@@ -5,6 +5,7 @@
   const overlay = document.getElementById('bubbles');
   const renderer = new T.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.toneMapping = T.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;          // soft highlight roll-off: platinum stays platinum instead of clipping to white
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = T.PCFSoftShadowMap;
   const scene = new T.Scene();
@@ -18,19 +19,50 @@
   controls.maxPolarAngle = Math.PI * 0.47;
   controls.minDistance = 14; controls.maxDistance = 95;
 
-  // dark room, coloured pools of light on every station
-  scene.add(new T.HemisphereLight(0x7f9fd6, 0x05070c, 0.78));
-  const sun = new T.DirectionalLight(0xcfe0ff, 0.5);
+  // ---------- MONOCHROME LUXURY: every colour the scene asks for is mapped to the OFO palette (obsidian > graphite > gunmetal > silver > platinum > white) ----------
+  // by LUMINANCE, lifted so walls, desks and screens stay readable (nothing turns pure black). Colour survives only for operational states (SEM).
+  const RAMP = [[0x12, 0x13, 0x15], [0x20, 0x22, 0x25], [0x4a, 0x4e, 0x54], [0xa6, 0xab, 0xb1], [0xe7, 0xe9, 0xec], [0xff, 0xff, 0xff]];       // obsidian/graphite/gunmetal lifted one step so the room stays readable
+  const PAL = new Set([0x050505, 0x101113, 0x1c1e21, 0x44484d, 0xa6abb1, 0xe7e9ec, 0xffffff]);          // already brand colours: kept exactly
+  const SEM = new Set([0x8fc7a6, 0xd98b8b, 0xd9c27f, 0xff6b6b]);
+  function monoRGB(r, g, b) {
+    const Y = Math.min(1, Math.max(0, (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255));
+    const t = Math.pow(Y, 0.74) * (RAMP.length - 1), i = Math.min(RAMP.length - 2, Math.floor(t)), f = t - i, a = RAMP[i], c = RAMP[i + 1];
+    return [a[0] + (c[0] - a[0]) * f, a[1] + (c[1] - a[1]) * f, a[2] + (c[2] - a[2]) * f];
+  }
+  function mono(c) {
+    if (typeof c !== 'number' || SEM.has(c) || PAL.has(c)) return c;
+    const o = monoRGB((c >> 16) & 255, (c >> 8) & 255, c & 255);
+    return (Math.round(o[0]) << 16) | (Math.round(o[1]) << 8) | Math.round(o[2]);
+  }
+  const cssProbe = document.createElement('canvas').getContext('2d'), cssCache = {};
+  function monoCss(v) {
+    if (typeof v !== 'string') return v;                                  // gradients / patterns are built from already-mapped colours
+    if (cssCache[v] !== undefined) return cssCache[v];
+    cssProbe.fillStyle = '#000'; cssProbe.fillStyle = v;                  // the browser normalises names, rgb(), hsl(), #abc to '#rrggbb' or 'rgba(r, g, b, a)'
+    const n = cssProbe.fillStyle; let r, g, b, a = 1, out = v;
+    const hx = /^#([0-9a-f]{6})$/i.exec(n), rg = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/.exec(n);
+    if (hx) { const k = parseInt(hx[1], 16); r = (k >> 16) & 255; g = (k >> 8) & 255; b = k & 255; }
+    else if (rg) { r = +rg[1]; g = +rg[2]; b = +rg[3]; a = rg[4] == null ? 1 : +rg[4]; }
+    if (r != null && !SEM.has((r << 16) | (g << 8) | b)) {
+      const o = monoRGB(r, g, b).map(Math.round);
+      out = a < 1 ? `rgba(${o[0]},${o[1]},${o[2]},${a})` : '#' + o.map(x => x.toString(16).padStart(2, '0')).join('');
+    }
+    return (cssCache[v] = out);
+  }
+
+  // dark room, cold white pools of light on every station
+  scene.add(new T.HemisphereLight(0xe9eef4, 0x2a2c30, 1.1));                               // cold white ambient, graphite ground bounce
+  const sun = new T.DirectionalLight(0xf6f9fd, 0.8);
   sun.position.set(22, 38, 18); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
   Object.assign(sun.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 120 });
   scene.add(sun);
-  const pool = (c, x, y, z, i) => { const l = new T.PointLight(c, i || 0.9, 17, 1.6); l.position.set(x, y, z); scene.add(l); return l; };
+  const pool = (c, x, y, z, i) => { const l = new T.PointLight(mono(c), i || 0.9, 17, 1.6); l.position.set(x, y, z); scene.add(l); return l; };
 
   // ---------- voxel helpers ----------
   const matCache = {}, geoCache = {};
-  const mat = (c, o) => { const k = c + JSON.stringify(o || {}); return matCache[k] || (matCache[k] = new T.MeshLambertMaterial(Object.assign({ color: c }, o || {}))); };
+  const mat = (c, o) => { const k = c + JSON.stringify(o || {}); return matCache[k] || (matCache[k] = new T.MeshLambertMaterial(Object.assign({ color: mono(c) }, o || {}))); };
   const geo = (w, h, d) => { const k = w + '/' + h + '/' + d; return geoCache[k] || (geoCache[k] = new T.BoxGeometry(w, h, d)); };
-  const glow = (c, i) => ({ emissive: c, emissiveIntensity: i == null ? 0.9 : i });
+  const glow = (c, i) => ({ emissive: mono(c), emissiveIntensity: i == null ? 0.9 : i });
   // x,z = centre on the floor, y = bottom
   function vox(parent, x, y, z, w, h, d, color, o) {
     o = o || {};
@@ -39,11 +71,17 @@
     m.castShadow = o.cast != null ? o.cast : (w * h * d > 0.6); m.receiveShadow = true;
     parent.add(m); return m;
   }
+  function monoCtx(g) {                      // every fill/stroke colour drawn on a sign or screen goes through the same palette
+    ['fillStyle', 'strokeStyle'].forEach(k => {
+      const d = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, k);
+      Object.defineProperty(g, k, { get() { return d.get.call(this); }, set(v) { d.set.call(this, monoCss(v)); }, configurable: true });
+    });
+  }
   function paint(w, h, draw, bg) {
     const c = document.createElement('canvas'); c.width = w; c.height = h;
-    const g = c.getContext('2d'); g.fillStyle = bg || '#05080d'; g.fillRect(0, 0, w, h); draw(g, w, h);
+    const g = c.getContext('2d'); monoCtx(g); g.fillStyle = bg || '#050505'; g.fillRect(0, 0, w, h); draw(g, w, h);
     const t = new T.CanvasTexture(c); t.magFilter = T.NearestFilter; t.minFilter = T.NearestFilter;
-    return { tex: t, canvas: c, g, redraw(fn, bgc) { g.fillStyle = bgc || bg || '#05080d'; g.fillRect(0, 0, w, h); fn(g, w, h); t.needsUpdate = true; } };
+    return { tex: t, canvas: c, g, redraw(fn, bgc) { g.fillStyle = bgc || bg || '#050505'; g.fillRect(0, 0, w, h); fn(g, w, h); t.needsUpdate = true; } };
   }
   function plane(parent, x, y, z, w, h, tt, rotY) {
     const m = new T.Mesh(new T.PlaneGeometry(w, h), new T.MeshBasicMaterial({ map: tt.tex }));
@@ -80,7 +118,34 @@
   vox(room, 0, 0, Z0 + 0.1, X1 - X0, 0.8, 0.3, 0x05070b); vox(room, X0 + 0.1, 0, 0, 0.3, 0.8, Z1 - Z0, 0x05070b);
   vox(room, 0, 10.3, Z0 + 0.2, X1 - X0, 0.25, 0.2, 0x8a8a90, { cast: false, mat: glow(0xcfcfd6, 0.7) });   // cyan trim
   vox(room, X0 + 0.2, 10.3, 0, 0.2, 0.25, Z1 - Z0, 0x8a8a90, { cast: false, mat: glow(0xcfcfd6, 0.7) });
-  sign(room, 0, 9.2, Z0 + 0.02, 11, 1.9, ['OFO  LAB'], '#050505', THEME.accent, 44);
+  const ofoSign = sign(room, 0, 9.2, Z0 + 0.02, 11, 1.9, ['OFO  LAB'], '#050505', THEME.accent, 44);
+  // ---------- the OFO emblem: backlit metal plaque on the main wall. The supplied logo (brand/icon.png), never redrawn. ----------
+  (function emblem() {
+    const img = new Image();
+    img.onload = () => {
+      const lc = document.createElement('canvas'); lc.width = img.width * 4; lc.height = img.height * 4;                // 4x smooth upscale of the supplied file
+      const lg = lc.getContext('2d'); lg.imageSmoothingEnabled = true; lg.imageSmoothingQuality = 'high';
+      lg.filter = 'brightness(1.9) contrast(1.15)'; lg.drawImage(img, 0, 0, lc.width, lc.height);                      // lit from behind: same artwork, more light
+      const tex = new T.CanvasTexture(lc); tex.anisotropy = 8; tex.magFilter = T.LinearFilter; tex.minFilter = T.LinearMipmapLinearFilter; tex.needsUpdate = true;
+      if (T.SRGBColorSpace) tex.colorSpace = T.SRGBColorSpace; else if (T.sRGBEncoding) tex.encoding = T.sRGBEncoding;
+      const W = 2.5, H = W * img.height / img.width, cx = 0, cy = 8.95, z = Z0 + 0.36;
+      const hc = document.createElement('canvas'); hc.width = hc.height = 256; const hg = hc.getContext('2d');
+      const hr = hg.createRadialGradient(128, 128, 6, 128, 128, 128); hr.addColorStop(0, 'rgba(255,255,255,0.5)'); hr.addColorStop(0.4, 'rgba(231,233,236,0.14)'); hr.addColorStop(1, 'rgba(231,233,236,0)');
+      hg.fillStyle = '#000'; hg.fillRect(0, 0, 256, 256); hg.fillStyle = hr; hg.fillRect(0, 0, 256, 256);
+      const halo = { tex: new T.CanvasTexture(hc) };
+      const hm = new T.Mesh(new T.PlaneGeometry(9, 6), new T.MeshBasicMaterial({ map: halo.tex, transparent: true, blending: T.AdditiveBlending, depthWrite: false }));
+      hm.position.set(cx, Math.min(cy, 8.2), Z0 + 0.04); room.add(hm);
+      vox(room, cx, cy - H / 2 - 0.14, z - 0.1, W + 0.5, H + 0.28, 0.14, 0x1c1e21, { cast: false });                       // dark steel slab
+      [[0, H / 2 + 0.17, W + 0.52, 0.05], [0, -H / 2 - 0.17, W + 0.52, 0.05]].forEach(([dx, dy, w, h]) => vox(room, cx + dx, cy + dy - h / 2, z - 0.02, w, h, 0.06, 0xa6abb1, { cast: false, mat: glow(0xa6abb1, 0.35) }));
+      [[-(W / 2 + 0.25), 0], [W / 2 + 0.25, 0]].forEach(([dx]) => vox(room, cx + dx, cy - H / 2 - 0.14, z - 0.02, 0.05, H + 0.28, 0.06, 0xa6abb1, { cast: false, mat: glow(0xa6abb1, 0.35) }));
+      const pm = new T.Mesh(new T.PlaneGeometry(W, H), new T.MeshBasicMaterial({ map: tex }));
+      pm.position.set(cx, cy, z); room.add(pm);
+      const lt = new T.PointLight(0xffffff, 0.9, 16, 1.4); lt.position.set(cx, cy, Z0 + 2.2); scene.add(lt);            // the plaque lights the wall in front of it
+      ofoSign.mesh.visible = false;
+    };
+    img.onerror = () => {};                                                                                           // no logo file: the text sign stays
+    img.src = 'brand/icon.png';
+  })();
   sign(room, X0 + 0.02, 8.2, -2, 8, 1.7, ['PROP PROJECT'], '#050505', THEME.dim, 30, Math.PI / 2);
   // clock
   const clock = paint(256, 256, (g, w, h) => {
@@ -158,6 +223,11 @@
     if (o.item === 'tablet') vox(armR, 0, -2.0, 0.5, 0.9, 0.7, 0.08, 0x2adfff, { cast: false, mat: glow(0x2adfff, 0.8) });
     if (o.item === 'flask') { vox(armR, 0, -2.2, 0.4, 0.5, 0.7, 0.5, 0x7dffb0, { cast: false, mat: Object.assign({ transparent: true, opacity: 0.85 }, glow(0x2aff8a, 0.9)) }); }
     if (o.item === 'gavel') { vox(armR, 0, -1.95, 0.5, 0.2, 0.2, 0.8, 0x8b5a2b, { cast: false }); vox(armR, 0, -2.05, 0.9, 0.5, 0.5, 0.5, 0xc58a46, { cast: false }); }
+    // silhouettes: agents are told apart by SHAPE, not by colour
+    if (o.antenna) { vox(head, 0.38, 0.65, 0, 0.1, 1.0, 0.1, 0xa6abb1, { cast: false }); vox(head, 0.38, 1.62, 0, 0.26, 0.26, 0.26, 0xffffff, { cast: false, mat: glow(0xffffff, 1.4) }); }
+    if (o.pauldron) [-1.3, 1.3].forEach(x => { vox(g, x, 2.72, 0, 0.95, 0.42, 1.05, o.trim || coat); vox(g, x, 3.1, 0, 0.7, 0.12, 0.8, 0xe7e9ec, { cast: false }); });
+    if (o.halo) { vox(head, 0, 1.62, 0, 1.15, 0.08, 0.08, 0xffffff, { cast: false, mat: glow(0xffffff, 1.2) }); vox(head, 0, 1.62, 0, 0.08, 0.08, 1.15, 0xffffff, { cast: false, mat: glow(0xffffff, 1.2) }); }
+    if (o.cap) { vox(head, 0, 0.72, 0.1, 1.5, 0.4, 1.45, 0x1c1e21); vox(head, 0, 0.66, 0.85, 1.3, 0.12, 0.5, 0xa6abb1, { cast: false }); }
     const tag = document.createElement('div'); tag.className = 'tag'; tag.textContent = label; overlay.appendChild(tag);
     const bub = document.createElement('div'); bub.className = 'bubble'; overlay.appendChild(bub);
     const r = { name, label, g, armL, armR, head, bulb, tag, bub, until: 0, bubUntil: 0, phase: Math.random() * 6, base: 0, state: 'idle', shown: '' };
@@ -208,7 +278,7 @@
   const drawHeat = () => heat.redraw((g, w, h) => { for (let i = 0; i < 16; i++) for (let j = 0; j < 10; j++) { const v = (Math.sin(i * 0.5 + performance.now() / 700) + Math.cos(j * 0.6)) / 4 + 0.5 + (Math.random() - 0.5) * 0.25; g.fillStyle = `hsl(${200 - v * 150},80%,${22 + v * 35}%)`; g.fillRect(8 + i * 15, 8 + j * 17, 13, 15); } });
   drawHeat();
   vox(optG, 2.3, 1.6, -9.0, 0.2, 2.6, 0.2, 0x15171d); vox(optG, 2.3, 4.0, -9.0, 2.7, 2.2, 0.2, 0x07080b); plane(optG, 2.3, 5.1, -8.88, 2.5, 1.9, heat, 0);
-  sign(optG, -2.2, 8.1, -13.85, 6.2, 1.2, ['OPTIMIZER'], '#050505', THEME.accent, 26);
+  sign(optG, -3.5, 8.1, -13.85, 4.4, 1.2, ['OPTIMIZER'], '#050505', THEME.accent, 26);
   tagStation(optG, 'optimizer');
 
   // --- VALIDATOR: bench with flasks + microscope, and the Monte Carlo glass chamber
@@ -350,12 +420,12 @@
   pool(0xdfe6f5, -9, 5, -8, 0.8); pool(0xf3e9dc, -1.7, 5, -8, 0.9); pool(0xdfe6f5, 6, 5, -8, 0.85);
   pool(0xfff2e0, 12, 5, -3, 0.7); pool(0xe9f2ff, 9, 5, 10, 0.8); pool(0xf0e6f0, -12, 5, 8, 0.7); pool(0xdfe6f5, -14, 4, -1, 0.5);
 
-  makeScientist('research', 'Researcher', { coat: 0xe9edf5, trim: 0xd5dbe8, accent: 0x4aa3ff, hair: 0x3a2a1c, item: 'clipboard' });
-  makeScientist('optimizer', 'Optimizer', { coat: 0xe3862a, trim: 0xc87420, accent: 0xffb03a, hair: 0x1c1410, goggles: true, glasses: false, skin: 0xc58d63, item: null });
-  makeScientist('validator', 'Validator', { coat: 0x8f6bd6, trim: 0x7656bb, accent: 0xb58cff, hair: 0xd8d8e8, hairStyle: 'tall', item: 'flask' });
-  makeScientist('judge', 'Judge', { coat: 0x13151d, trim: 0xd4af37, accent: 0xd4af37, hair: 0xb9b9c4, hairStyle: 'short', shirt: 0xe9edf5, pocket: 0x2a2e3b, item: 'gavel', skin: 0xd9a77e });
-  makeScientist('trader', 'Trader', { coat: 0x2fae63, trim: 0x258a4e, accent: 0x5ee27a, hair: 0x121212, headset: true, glasses: false, skin: 0x8d5b3a });
-  makeScientist('strategist', 'Strategist', { coat: 0xd9529c, trim: 0xb8417f, accent: 0xff7ac8, hair: 0x5a1f3a, hairStyle: 'bun', item: 'tablet', skin: 0xf0c8a5 });
+  makeScientist('research', 'Researcher', { coat: 0xe7e9ec, trim: 0xa6abb1, accent: 0xffffff, hair: 0x44484d, item: 'clipboard' });
+  makeScientist('optimizer', 'Optimizer', { coat: 0x44484d, trim: 0xa6abb1, accent: 0xe7e9ec, hair: 0x101113, goggles: true, glasses: false, skin: 0xc4a58a, item: null });
+  makeScientist('validator', 'Validator', { coat: 0xa6abb1, trim: 0xe7e9ec, accent: 0xffffff, hair: 0xe7e9ec, hairStyle: 'tall', antenna: true, item: 'flask' });
+  makeScientist('judge', 'Judge', { coat: 0x101113, trim: 0xe7e9ec, accent: 0xffffff, hair: 0xa6abb1, hairStyle: 'short', shirt: 0xe7e9ec, pocket: 0x44484d, pauldron: true, item: 'gavel', skin: 0xd9b89a });
+  makeScientist('trader', 'Trader', { coat: 0x1c1e21, trim: 0xa6abb1, accent: 0xe7e9ec, hair: 0x101113, headset: true, cap: true, glasses: false, skin: 0xa88a72 });
+  makeScientist('strategist', 'Strategist', { coat: 0x7b8087, trim: 0xe7e9ec, accent: 0xffffff, hair: 0x2a2d31, hairStyle: 'bun', halo: true, item: 'tablet', skin: 0xe3c6ad });
   // they stand at their stations but turn towards the belt (and the camera) to watch the strategies go by
   place(robots.research, -8.6, -6.7, -6.5, 0); place(robots.optimizer, -1.7, -6.5, -0.2, 0);
   place(robots.validator, 4.2, -6.7, 5.8, 0); place(robots.judge, 13.2, -5, 9.5, 2, 1.9);
@@ -408,7 +478,7 @@
     r.bubUntil = now() + (secs || 6); r.until = now() + 2.5; r.thoughtAt = now();
   }
   function setLamp(status, name) {
-    const col = status === 'APPROVED' ? 0x39ff7a : status === 'REJECTED' ? 0xff4b4b : 0xffd84a;
+    const col = status === 'APPROVED' ? 0x8fc7a6 : status === 'REJECTED' ? 0xd98b8b : 0xd9c27f;      // operational states only, muted
     lamp.material = new T.MeshLambertMaterial({ color: col, emissive: col, emissiveIntensity: 1.2 });
     lamp.userData.until = now() + 10; gavel.userData.hit = now();
     const hex = '#' + col.toString(16).padStart(6, '0');

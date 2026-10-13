@@ -861,3 +861,26 @@ def test_trader_tab_backtests_at_the_chosen_size_and_says_prop_passed_or_busted(
     big = lab.trades("trader_view", "25k", 60)["prop"]                                                       # an absurd size burns far more attempts than a small one
     assert big["hist"] and a["prop"]["hist"] and big["hist"]["p_bust"] >= a["prop"]["hist"]["p_bust"]
     assert big["status"] in ("passed", "busted", "open") and (big["status"] != "busted" or big["breach"]["kind"])
+
+
+def test_the_ui_uses_only_the_ofo_monochrome_palette_plus_the_four_state_colours():
+    """Brand identity: Void #050505 / Obsidian #101113 / Graphite #1C1E21 / Gunmetal #44484D / Liquid Silver #A6ABB1 / Platinum #E7E9EC / White.
+    Colour only for approved / rejected / warning / critical (and their dark backgrounds). scene.js maps its 3D colours at runtime."""
+    import re
+    from pathlib import Path
+    base = Path(__file__).resolve().parents[1] / "src/ofo/app/static"
+    ok = {"050505", "101113", "1c1e21", "44484d", "a6abb1", "e7e9ec", "ffffff", "000000",           # the palette (+ black for shadows)
+          "8fc7a6", "d98b8b", "d9c27f", "ff6b6b", "14201a", "241718", "221f15", "2a1212",          # approved / rejected / warning / critical (+ backgrounds)
+          "7b8087", "5a5f65", "c4c8cd"}                                                              # silver steps used for the agents in the log and chart lines
+    bad = {}
+    for fn in ("lab.css", "theme.css", "ui.js", "charts.js", "theme.js", "index.html"):
+        for h in re.findall(r"#([0-9a-fA-F]{3,8})\b", (base / fn).read_text(encoding="utf-8")):
+            if h.lower() == "feed":                                                                      # the element id #feed, not a colour
+                continue
+            if len(h) in (3, 4):
+                h = "".join(c * 2 for c in h)
+            k = h[:6].lower()
+            if len(h) in (6, 8) and k not in ok and not re.fullmatch(r"[0-9a-f]{6}", k) is None:
+                bad.setdefault(fn, set()).add(h)
+    assert not bad, bad
+    assert (base / "brand" / "icon.png").exists() and (base / "brand" / "icon.png").read_bytes()[:4] == b"\x89PNG"      # the supplied logo, used as it is

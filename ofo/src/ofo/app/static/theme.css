@@ -1,21 +1,24 @@
-/* ===== OFO brand theme: the ONLY place to change colours =====
-   OFO = Order Flow Organization: black, shades of grey, white.
-   Replace the hex values below with the exact brand codes and reload the page. */
+/* ===== OFO brand theme: MONOCHROME LUXURY / OBSIDIAN RESEARCH FACILITY. The ONLY place to change colours. =====
+   Palette (from the OFO logo): Void Black #050505 · Obsidian #101113 · Graphite #1C1E21 · Gunmetal #44484D · Liquid Silver #A6ABB1 · Platinum #E7E9EC · Pure White #FFFFFF
+   Colour is reserved for OPERATIONAL STATES (approved / rejected / warning / critical): discreet, accessible, never decorative. */
 :root{
-  --bg:#050505;        /* page / 3D background */
-  --panel:#0b0b0c;     /* side panels */
-  --panel2:#131315;    /* cards, inputs, tabs */
-  --line:#000000;      /* hard pixel borders */
-  --txt:#f2f2f2;       /* main text (brand white) */
-  --dim:#8a8a90;       /* secondary text (brand grey) */
-  --accent:#f2f2f2;    /* accent: buttons, active tab, logo (brand white) */
-  --accent-ink:#0a0a0a;/* text drawn on top of the accent */
-  --grid:#202024;      /* chart grid, soft borders */
-  --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;   /* font */
-  /* meaning colours: kept separate on purpose (profit/loss, verdicts). Set them to greys
-     if you want a strictly monochrome look. */
-  --up:#3ddc84; --down:#ff5c5c; --warn:#d8b24a;
-  /* one grey per agent in the log */
-  --a-researcher:#f2f2f2; --a-strategist:#cfcfd4; --a-optimizer:#aaaab1; --a-planner:#8d8d94;
-  --a-validator:#70707a; --a-judge:#ffffff; --a-auditor:#bcbcc2; --a-lab:#ff5c5c;
+  --void:#050505; --obsidian:#101113; --graphite:#1C1E21; --gunmetal:#44484D; --silver:#A6ABB1; --platinum:#E7E9EC; --white:#FFFFFF;
+  --bg:var(--void);            /* page / 3D background */
+  --panel:var(--obsidian);     /* side panels */
+  --panel2:var(--graphite);    /* cards, inputs, tabs */
+  --line:var(--void);          /* deepest edge */
+  --edge:rgba(166,171,177,.28);        /* thin metallic border */
+  --edge-strong:var(--gunmetal);
+  --txt:var(--platinum);       /* main text */
+  --dim:var(--silver);         /* secondary text */
+  --accent:var(--platinum);    /* buttons, active tab */
+  --accent-ink:var(--void);    /* text drawn on the accent */
+  --grid:#1C1E21;              /* chart grid, soft borders */
+  --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
+  /* operational states ONLY */
+  --up:#8FC7A6; --down:#D98B8B; --warn:#D9C27F; --critical:#FF6B6B;
+  --up-bg:#14201A; --down-bg:#241718; --warn-bg:#221F15; --critical-bg:#2A1212;
+  /* the agents in the log: silver steps, told apart by name and position, not by colour */
+  --a-researcher:#E7E9EC; --a-strategist:#FFFFFF; --a-optimizer:#A6ABB1; --a-planner:#7B8087;
+  --a-validator:#5A5F65; --a-judge:#FFFFFF; --a-auditor:#C4C8CD; --a-lab:#D98B8B;
 }
