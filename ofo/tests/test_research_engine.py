@@ -677,17 +677,52 @@ def test_schedule_study_finds_the_profitable_window_and_the_useful_trade_cap():
     assert schedule_study([])["window"] is None and schedule_study([])["n_trades"] == 0
 
 
-def test_every_study_shows_the_rr_table_and_the_schedule_even_when_rejected_at_the_screening(tmp_path):
+def test_every_study_shows_the_rr_table_and_the_schedule_even_when_rejected_at_the_screening(tmp_path, monkeypatch):
+    from ofo import optimizer as O
+    real_surface = O.surface_metrics
+
+    def never_robust(rows, names, th, pick=None, axes=None):
+        out = dict(real_surface(rows, names, th, pick=pick, axes=axes))
+        out["robust"] = False; out["checks"] = {"median_sharpe_positive": False}
+        return out
+    monkeypatch.setattr(O, "surface_metrics", never_robust)                                   # every surface fails the gates, with any exit
     reg = TrialRegistry(tmp_path / "r.db")
-    bars = synth(n_sessions=300, drift_ar=-0.9, seed=11)                                    # no edge: rejected at the screening
-    rep = run_study(bars, from_dict(SPEC), MNQ, PRESETS["50k"], reg, dedupe=True)
-    if rep["locked"]["status"] == "REJECTED" and "screening" in str(rep.get("gate_failed")):
-        assert rep["exits"] and rep["exits"]["informational"] and len(rep["exits"]["grid"]) == 28 and rep["exits"]["chosen"] is False
-        assert any(c["sharpe"] < 0 for c in rep["exits"]["grid"]) or True                    # losing cells are part of the table, not filtered
-        assert rep["schedule"] and rep["schedule"]["informational"] and rep["schedule"]["applied"] is None
-        assert rep["series"].get("schedule") is None
-        u = reg.usage(group="stage")
-        assert "validation" not in u or u["validation"]["trials"] == 0                      # nothing was SELECTED, so no validation trials
+    rep = run_study(synth(n_sessions=300, drift_ar=0.0, seed=11), from_dict(SPEC), MNQ, PRESETS["50k"], reg, dedupe=True)
+    assert rep["locked"]["status"] == "REJECTED" and str(rep["gate_failed"]).startswith("screening")
+    assert rep["exits"] and len(rep["exits"]["grid"]) == 28 and "baseline" in rep["exits"]        # all R:R cells AND the strategy's own exit, side by side
+    assert rep["rescue"] is not None and rep["rescue"]["robust"] is False                      # the rescue was tried (or nothing beat the own exit): rejection stands
+    assert rep["schedule"] and rep["schedule"]["informational"] and rep["schedule"]["applied"] is None
+    assert rep["series"].get("schedule") is None and rep["series"].get("exit") is None
+    assert reg.usage(group="stage")["screening"]["trials"] >= rep["trials"]["executed"] + 28  # the 28 exit combinations were COUNTED (they are a selection)
+
+
+def test_a_fixed_stop_target_exit_can_rescue_a_strategy_rejected_with_its_own_exit(tmp_path, monkeypatch):
+    """The R:R exit counts as a real exit alternative: if it makes the surface robust the study goes on (and must end with that exit chosen)."""
+    from ofo import optimizer as O
+    calls = {"n": 0}
+    real_surface = O.surface_metrics
+
+    def fake_surface(rows, names, th, pick=None, axes=None):
+        out = dict(real_surface(rows, names, th, pick=pick, axes=axes))
+        calls["n"] += 1
+        if calls["n"] == 1:
+            out["robust"] = False; out["checks"] = {"median_sharpe_positive": False}          # with the strategy's own exit: rejected
+        else:
+            out["robust"] = True                                                              # with the fixed exit: robust
+        return out
+    real_exit = O._exit_study
+
+    def fake_exit(*a, **k):
+        r = real_exit(*a, **k)
+        r["chosen"] = True; r["best"] = {"stop_atr": 1.5, "rr": 1.0}                           # a fixed 1:1 exit "wins"
+        return r
+    monkeypatch.setattr(O, "surface_metrics", fake_surface)
+    monkeypatch.setattr(O, "_exit_study", fake_exit)
+    reg = TrialRegistry(tmp_path / "r.db")
+    rep = run_study(synth(n_sessions=300, drift_ar=0.0, seed=21), from_dict(SPEC), MNQ, PRESETS["50k"], reg, dedupe=True)
+    assert rep["rescue"]["robust"] is True and rep["rescue"]["exit"] == {"stop_atr": 1.5, "rr": 1.0}
+    assert "screening" not in str(rep.get("gate_failed"))                                      # not rejected at the screening any more
+    assert rep["exits"] is not None and "validated" in rep
 
 
 def test_a_study_that_validates_carries_its_schedule_into_the_digest_and_the_replays(tmp_path):

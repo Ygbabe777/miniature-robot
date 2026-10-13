@@ -215,7 +215,7 @@ def spec_fingerprint(spec: StrategySpec, contract: Contract, contracts: int, sli
 
 
 def _exit_study(dev_bars_tf, cand, base_series, contract, contracts, slippage_ticks, dev_days, registry, name, experiment_id, meta=None,
-                informational=False):
+                informational=False, stage="validation"):
     """Which stop distance and reward:risk fit the best candidate? Judged on DEVELOPMENT data only (the bars handed in
     contain nothing else, trade statistics included) and counted in the trial registry (every cell is a trial)."""
     grid = exit_grid()
@@ -229,7 +229,7 @@ def _exit_study(dev_bars_tf, cand, base_series, contract, contracts, slippage_ti
     if informational:                      # shown for every study, but nothing is selected from it: evaluations, not trials
         registry.add_trials(0, f"exits_info:{name}", experiment_id=experiment_id, kind="compute", stage="screening", n_evals=len(grid), **(meta or {}))
     else:
-        registry.add_trials(len(grid), f"exits:{name}", experiment_id=experiment_id, kind="exits", stage="validation", **(meta or {}))
+        registry.add_trials(len(grid), f"exits:{name}", experiment_id=experiment_id, kind="exits", stage=stage, **(meta or {}))
     best = max(cells, key=lambda c: c["sharpe"])
     chosen = (not informational) and best["sharpe"] >= base["sharpe"] + MIN_EXIT_GAIN and best["pnl"] > 0
     better = float(np.mean([c["sharpe"] >= base["sharpe"] for c in cells]))
@@ -600,27 +600,58 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         report["compute_s"] = round(time.time() - t_start, 1)
         return report
 
+    rescue = None
     if not surf["robust"]:
         why = [k for k, ok in surf["checks"].items() if not ok]
+        # EXIT RESCUE. The strategy was screened with ITS OWN exit. A fixed stop + target (R:R 1:1, 2:1, 0.5:1 ...) is an exit too, often a better
+        # one: it is tried on the best candidate (28 combinations, counted as trials) and, if one beats the strategy's own exit, ALL candidates are
+        # re-screened with it (counted again). Only if that surface is robust does the study go on; otherwise the rejection stands.
+        try:
+            cand0, tf0 = cands[best_i], cands[best_i]["tf"]
+            tfd0 = {tf0: resample(dev_bars, tf0)}
+            ex0 = _exit_study(tfd0, cand0, series[best_i], contract, contracts, slippage_ticks, dev_days, registry, spec.name, eid, meta, stage="screening")
+            ex0["rescue_tried"] = bool(ex0["chosen"])
+            base_report["exits"] = ex0
+            if ex0["chosen"]:
+                bx = ex0["best"]
+                tfs_all = {tf: resample(dev_bars, tf) for tf in spec.timeframes}
+                series_x = {i: daily_series(tfs_all, c, contract, contracts, slippage_ticks, exit=bx) for i, c in enumerate(cands)}
+                rows_x = [{**c["params"], "tf": c["tf"], "sharpe": sharpe(series_x[i].reindex(dev_days).fillna(0.0))} for i, c in enumerate(cands)]
+                registry.add_trials(len(cands), f"exit_rescreen:{spec.name}", experiment_id=eid, dataset_fp=dfp, market=market, kind="exits",
+                                    stage="screening", **meta)
+                keyx = lambda j: (cands[j]["tf"], SR.key_of({n: rows_x[j][n] for n in axes}, axes))
+                psx = SR.plateau_scores({keyx(j): rows_x[j]["sharpe"] for j in range(len(cands))}, axes)
+                bi_x = max(range(len(cands)), key=lambda j: (psx[keyx(j)], rows_x[j]["sharpe"]))
+                surf_x = surface_metrics(rows_x, list(spec.ranges), th, pick=bi_x, axes=axes)
+                base_report["rescue"] = {"exit": bx, "surface": surf_x, "robust": bool(surf_x["robust"]), "n_trials": len(cands),
+                                         "note": "stessa ricerca, uscita fissa stop/target invece dell'uscita della strategia (in-campione, contata come prove)"}
+                if surf_x["robust"]:
+                    rescue = {"exit": bx, "surf": surf_x, "rows": rows_x, "best_i": bi_x}
+            else:
+                base_report["rescue"] = {"exit": None, "robust": False, "note": "nessuna combinazione stop/target batte l'uscita della strategia"}
+        except Exception as e:                                # a diagnostic must never turn a clean rejection into a failed study
+            base_report["rescue"] = {"error": f"{type(e).__name__}: {str(e)[:120]}", "robust": False}
+            say("optimizer", "idle", f"uscite alternative non calcolate: {type(e).__name__}")
+    if not surf["robust"] and rescue is None:
         base_report["gate_failed"] = "screening: " + ", ".join(why)
         base_report["timing"] = timing_report(series[best_i].reindex(dev_days).fillna(0.0).to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts,
                                               goal_days, goal_rate, "development")      # every study reports days-to-pass (screening candidate, entry-only)
         base_report["series"] = {"cut": str(cut)[:10], "wf_oos": pair(wf0), "dev_best": [], "locked": None,
                                  "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}, "direction": "both", "exit": None}
-        try:                                                  # the R:R table and the schedule are shown for EVERY study; here nothing is selected from them
+        try:                                                  # the schedule table is shown for every study; here nothing is selected from it
             cand0, tf0 = cands[best_i], cands[best_i]["tf"]
             tfd0 = {tf0: resample(dev_bars, tf0)}
-            base_dev0 = series[best_i].reindex(dev_days).fillna(0.0)
-            base_report["exits"] = _exit_study(tfd0, cand0, series[best_i], contract, contracts, slippage_ticks, dev_days, registry, spec.name, eid, meta,
-                                               informational=True)
-            base_report["schedule"] = _schedule_study(dev_bars, cand0, None, base_dev0, tfd0, contract, contracts, slippage_ticks, dev_days, registry,
-                                                      spec.name, eid, meta, informational=True)
-        except Exception as e:                                # a diagnostic must never turn a clean rejection into a failed study
-            base_report["exits"] = base_report["schedule"] = None
-            say("optimizer", "idle", f"tabelle informative non calcolate: {type(e).__name__}")
+            base_report["schedule"] = _schedule_study(dev_bars, cand0, None, series[best_i].reindex(dev_days).fillna(0.0), tfd0, contract, contracts,
+                                                      slippage_ticks, dev_days, registry, spec.name, eid, meta, informational=True)
+        except Exception as e:
+            base_report["schedule"] = None
+            say("optimizer", "idle", f"tabella oraria non calcolata: {type(e).__name__}")
         base_report["locked"] = {"status": REJECTED, "reason": f"failed {why}; locked block not touched"}
         say("validator", "done", "screening gate failed")
         return finish(base_report)
+    if rescue is not None:                                    # the surface is judged with the exit that rescued it; the rest of the protocol is unchanged
+        surf, rows, best_i = rescue["surf"], rescue["rows"], rescue["best_i"]
+        say("optimizer", "working", "uscita fissa stop/target: la strategia prosegue")
 
     # ---------------- stage 3: validation ----------------
     stages.start("validation", "timeframe, direzione e uscite")
@@ -657,7 +688,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
     sizing = size_study(final_dev.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, basis="development")
     quality = quality_checks(tfs_dev, fcand, best_exit, contract, contracts, slippage_ticks, dev_days, th)
     ablation = ablation_study(fcand, spec.template, tfs_dev, best_exit, contract, contracts, slippage_ticks, dev_days, registry, eid, spec.name, meta)
-    val_ok = bool(surf["robust"] and wf_pnl > 0 and quality["ok"] and plan["target_met"])
+    val_ok = bool(surf["robust"] and wf_pnl > 0 and quality["ok"] and plan["target_met"] and (rescue is None or best_exit is not None))      # a rescue must end with an exit chosen
     stages.end(28 + by_tf["n_extra_trials"] + sched_rep["n_trials"] + len(wf), "walk-forward annidato positivo, qualità, finestre OOS pianificate", val_ok,
                wf_windows=plan["windows"], wf_target_met=plan["target_met"])
     report = {**base_report, "quality": quality, "timing": timing, "by_timeframe": by_tf, "sizing": sizing, "ablation": ablation, "validated": val_ok,
@@ -666,7 +697,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
               "series": {"cut": str(cut)[:10], "wf_oos": pair(wf), "dev_best": pair(final_dev), "locked": None,
                          "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}, "direction": direction, "exit": best_exit,
                          "schedule": schedule},
-              "exits": exits_rep, "schedule": sched_rep}
+              "exits": exits_rep, "schedule": sched_rep, "rescue": base_report.get("rescue")}
     say("validator", "done", "validation finished")
 
     # ---------------- stage 4: robustness ----------------

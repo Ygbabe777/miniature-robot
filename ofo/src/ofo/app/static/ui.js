@@ -651,20 +651,20 @@
       <div style="overflow-x:auto"><table class="rrt"><tr><th>${t('sch_ord')}</th><th>${t('sch_n')}</th><th>${t('sch_wr')}</th><th>${t('sch_pnl')}</th><th>${t('sch_cum')}</th></tr>${cr}</table></div>
       <div class="sub">${t('sch_note')}</div></div>`;
   }
-  function rrBox(ex) {
+  function rrBox(ex, rescue) {
     if (!ex) return '';
     const stops = [...new Set(ex.grid.map(c => c.stop_atr))], rrs = [...new Set(ex.grid.map(c => c.rr))];
     const cell = (s, r) => ex.grid.find(c => c.stop_atr === s && c.rr === r);
-    const max = Math.max(...ex.grid.map(c => Math.abs(c.sharpe))) || 1;
-    const best = ex.best;
-    const rows = stops.map(s => `<tr><th>${s}× ATR</th>${rrs.map(r => { const c = cell(s, r), a = Math.min(1, Math.abs(c.sharpe) / max);
-      const bg = c.sharpe >= 0 ? `rgba(80,200,120,${0.12 + 0.5 * a})` : `rgba(240,90,90,${0.12 + 0.5 * a})`;
+    const max = Math.max(...ex.grid.map(c => Math.abs(c.sharpe)), Math.abs(ex.baseline.sharpe)) || 1;
+    const best = ex.best, bg = v => { const a = Math.min(1, Math.abs(v) / max); return v >= 0 ? `rgba(80,200,120,${0.12 + 0.5 * a})` : `rgba(240,90,90,${0.12 + 0.5 * a})`; };
+    const rows = stops.map(s => `<tr><th>${t('rr_stop', { s })}</th>${rrs.map(r => { const c = cell(s, r);
       const isBest = ex.chosen && best.stop_atr === s && best.rr === r;
-      return `<td style="background:${bg};${isBest ? 'outline:2px solid #fff;' : ''}" title="${t('rr_cell', { w: pct(c.win_rate), n: c.n_trades, p: money(c.pnl) })}">${num(c.sharpe, 3)}</td>`; }).join('')}</tr>`).join('');
-    const chosen = ex.informational ? t('rr_info') : ex.chosen ? t('rr_chosen', { s: best.stop_atr, r: best.rr == null ? t('rr_none') : '1:' + best.rr })
-      : t('rr_not_chosen');
-    return `<div class="judge rrbox"><b>${t('rr_title')}</b><div class="sub">${chosen}</div>
-      <table class="rrt"><tr><th></th>${rrs.map(r => `<th>${r == null ? t('rr_none') : 'R ' + r}</th>`).join('')}</tr>${rows}</table>
+      return `<td style="background:${bg(c.sharpe)};${isBest ? 'outline:2px solid #fff;' : ''}" title="${t('rr_cell', { w: pct(c.win_rate), n: c.n_trades, p: money(c.pnl) })}">${num(c.sharpe, 3)}<small class="${c.pnl >= 0 ? 'pos' : 'neg'}">${money(c.pnl)}</small></td>`; }).join('')}</tr>`).join('');
+    const own = `<tr><th>${t('rr_own')}</th><td colspan="${rrs.length}" style="background:${bg(ex.baseline.sharpe)};${!ex.chosen ? 'outline:2px solid #fff;' : ''}">${num(ex.baseline.sharpe, 3)} <small class="${ex.baseline.pnl >= 0 ? 'pos' : 'neg'}">${money(ex.baseline.pnl)}</small> ${!ex.chosen ? '← ' + t('rr_best_label') : ''}</td></tr>`;
+    const chosen = ex.chosen ? t('rr_chosen', { s: best.stop_atr, r: best.rr == null ? t('rr_none') : best.rr + ':1' }) : t('rr_not_chosen');
+    const resc = rescue && rescue.robust ? `<div class="sub ok">${t('rr_rescued')}</div>` : (rescue && ex.rescue_tried ? `<div class="sub">${t('rr_notrescued')}</div>` : '');
+    return `<div class="judge rrbox"><b>${t('rr_title')}</b><div class="sub">${chosen}</div>${resc}
+      <table class="rrt"><tr><th></th>${rrs.map(r => `<th>${r == null ? t('rr_none') : 'R:R ' + r + ':1'}</th>`).join('')}</tr>${own}${rows}</table>
       <div class="sub">${t('rr_note', { b: num(ex.baseline.sharpe, 3), f: pct(ex.frac_better_than_baseline), n: ex.n_trials })}</div></div>`;
   }
   async function openDetail(slug) {
@@ -689,7 +689,7 @@
       ${tfBox(rep.by_timeframe)}
       ${sizingBox(rep.locked && rep.locked.sizing ? rep.locked.sizing : rep.sizing)}
       ${timingBox(rep.locked && rep.locked.timing ? rep.locked.timing : rep.timing)}
-      ${rrBox(rep.exits)}
+      ${rrBox(rep.exits, rep.rescue)}
       ${scheduleBox(rep.schedule)}
       <div class="seg" id="seg">${keys.map(k => `<button data-k="${k}" class="${k === cur ? 'on' : ''}">${title[k]}</button>`).join('')}</div>
       <div id="warn"></div><div class="grid" id="kpis"></div>
