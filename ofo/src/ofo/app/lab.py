@@ -411,9 +411,9 @@ class Lab:
         with self.working("job"), self.run_lock:  # one STUDY at a time (they are CPU heavy); nothing else ever holds this lock for long
             self._holder = {"kind": "study", "name": spec.name, "job": job["id"], "since": time.time()}
             try:
+                job["status"], job["stage"], job["stage_detail"] = "running", "starting", "carico i dati e preparo il motore"   # first study of a market loads the whole 1-min file: say so
                 lp = self.loop(market)
                 lp.judge_th = self.judge_thresholds()
-                job["status"], job["stage"] = "running", "starting"
                 lp.on_stage = lambda name, detail="": job.update(stage=name, stage_detail=detail, stage_at=time.time())
                 try:
                     res = lp.process(spec, 0)
