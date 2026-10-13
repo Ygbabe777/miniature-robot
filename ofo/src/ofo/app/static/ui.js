@@ -16,7 +16,9 @@
 
   // ---------- tabs ----------
   let trader = null;
+  let curTab = 'chat'; const tabN = { chat: 0, strategies: 0, trader: 0 };
   function tab(name) {
+    curTab = name; tabN[name] = 0; try { paintDots(); } catch (e) {}
     document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
     ['chat', 'strategies', 'trader'].forEach(n => $('#tab-' + n).hidden = n !== name);
     if (name === 'chat') $('#chatin').focus();
@@ -65,6 +67,38 @@
   $('#sugg').querySelectorAll('button').forEach(b => b.onclick = () => send(b.textContent));
   if (!history.length) addMsg('assistant', t('greeting')); else history.slice(-6).forEach(h => addMsg(h.role === 'user' ? 'user' : 'a', h.content));
 
+
+  // ---------- hide/show side panels, red-dot notifications, thought bubbles toggle ----------
+  const panels = { left: { el: $('#left'), h: $('#lh'), dot: $('#lh-dot'), n: 0 }, right: { el: $('#right'), h: $('#rh'), dot: $('#rh-dot'), n: 0 } };
+  function paintDots() {
+    Object.values(panels).forEach(p => { const hid = p.el.classList.contains('hidden'); p.dot.textContent = p.n > 9 ? '9+' : p.n; p.dot.classList.toggle('on', hid && p.n > 0); });
+    document.querySelectorAll('.tabs button[data-tab]').forEach(b => {
+      let d = b.querySelector('.rdot'); if (!d) { d = document.createElement('i'); d.className = 'rdot'; b.appendChild(d); }
+      const n = tabN[b.dataset.tab] || 0; d.textContent = n > 9 ? '9+' : n; d.classList.toggle('on', n > 0 && b.dataset.tab !== curTab);
+    });
+  }
+  function notify(side, tabName) {                                   // something new: count it unless the user is already looking at it
+    const p = panels[side], hid = p.el.classList.contains('hidden');
+    if (side === 'left') { if (hid) p.n++; }
+    else {
+      if (hid) p.n++;
+      if (tabName && (hid || tabName !== curTab)) tabN[tabName]++;
+    }
+    paintDots();
+  }
+  function setHidden(side, hid) {
+    const p = panels[side]; p.el.classList.toggle('hidden', hid); p.h.textContent = side === 'left' ? (hid ? '▶' : '◀') : (hid ? '◀' : '▶');
+    p.h.appendChild(p.dot); if (!hid) { p.n = 0; if (side === 'right') tabN[curTab] = 0; }
+    store.set('ofo_hide_' + side, hid); paintDots(); setTimeout(() => { if (window.LabScene) LabScene.resize(); }, 280);
+  }
+  $('#lh').onclick = () => setHidden('left', !panels.left.el.classList.contains('hidden'));
+  $('#rh').onclick = () => setHidden('right', !panels.right.el.classList.contains('hidden'));
+  let bubOn = store.get('ofo_bubbles', true);
+  $('#bh').onclick = () => { bubOn = !bubOn; store.set('ofo_bubbles', bubOn); $('#bh').style.opacity = bubOn ? 1 : .45; if (window.LabScene) LabScene.setBubbles(bubOn); };
+  ['left', 'right'].forEach(sd => { if (store.get('ofo_hide_' + sd, false)) setHidden(sd, true); });
+  $('#bh').style.opacity = bubOn ? 1 : .45; if (window.LabScene) LabScene.setBubbles(bubOn);
+  document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return; if (e.key === '[') $('#lh').click(); if (e.key === ']') $('#rh').click(); });
+
   // ---------- ideas / upload ----------
   const drop = $('#drop'), fileIn = $('#file');
   drop.onclick = () => fileIn.click();
@@ -88,12 +122,17 @@
     d.innerHTML = `<small>${esc(AGENTS[e.agent] || e.agent)} · ${esc(e.type)} · ${esc((e.t || '').slice(11, 19))}</small>${esc(e.message)}`;
     const f = $('#feed'); f.insertBefore(d, f.firstChild); while (f.children.length > 150) f.removeChild(f.lastChild);
   }
+  function noteEvent(e) {
+    if (e.type === 'verdict' || e.type === 'autostart' || e.type === 'template_request') notify('right', 'strategies');
+    if (e.type === 'verdict' || e.type === 'download' || e.type === 'autostart' || e.type === 'budget' || e.type === 'proposal') notify('left');
+    if (e.agent === 'strategist' && (e.type === 'proposal' || e.type === 'message')) notify('right', 'chat');
+  }
   async function pollEvents() {
     try {
       const r = await api('/api/events?after=' + evNext);
       if (evNext === 0 && window.LabScene) LabScene.restoreStates(r.events);
       if (evNext === 0 && r.events.length > 60) r.events = r.events.slice(-60);
-      r.events.forEach(e => { addFeed(e); if (window.LabScene && (evNext > 0 || r.events.length < 8)) LabScene.onEvent(e); });
+      r.events.forEach(e => { addFeed(e); if (evNext > 0) noteEvent(e); if (window.LabScene && (evNext > 0 || r.events.length < 8)) LabScene.onEvent(e); });
       evNext = r.next;
     } catch (e) {}
   }

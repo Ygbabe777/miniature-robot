@@ -165,3 +165,18 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 #webfeed a{color:inherit}
 .wdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#555;vertical-align:middle}
 .wdot.on{background:#3ddc97;box-shadow:0 0 6px #3ddc97}
+
+.bubble{max-width:270px;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;font-size:11.5px}
+.bubble.old{opacity:.55}
+.bubble::after{content:"";position:absolute;left:50%;bottom:-9px;margin-left:-6px;border:6px solid transparent;border-top-color:#000}
+#left,#right{transition:transform .25s ease}
+#left.hidden{transform:translateX(-110%)}#right.hidden{transform:translateX(110%)}
+.phandle{position:fixed;top:72px;z-index:30;background:var(--panel);color:var(--txt);border:3px solid var(--line);box-shadow:3px 3px 0 #000a;
+  width:30px;height:38px;font:inherit;font-size:14px;cursor:pointer;padding:0}
+#lh{left:0}#rh{right:0}#bh{right:44px;width:auto;padding:0 8px;font-size:12px}
+.rdot{position:absolute;top:-7px;right:-7px;min-width:17px;height:17px;border-radius:9px;background:#ff3b4e;color:#fff;font-size:10px;line-height:17px;
+  text-align:center;font-style:normal;border:2px solid #000;display:none;padding:0 3px;box-sizing:border-box}
+.rdot.on{display:block;animation:rpulse 1.6s infinite}
+@keyframes rpulse{50%{transform:scale(1.18)}}
+.tabs button{position:relative}
+.tabs button .rdot{top:3px;right:3px}

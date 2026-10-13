@@ -396,11 +396,12 @@
   // ---------- events ----------
   let gearSpeed = 0.4, partSpeed = 0.3, optRunning = false, valUntil = 0, heatT = 0;
   const now = () => performance.now() / 1000;
+  let bubblesOn = true;
   const MAP = { researcher: 'research', scout: 'research', strategist: 'strategist', you: 'strategist', trader: 'trader', optimizer: 'optimizer', planner: 'optimizer', validator: 'validator', judge: 'judge', auditor: 'judge', lab: 'judge' };
   function speak(station, text, secs) {
     const r = robots[station]; if (!r || !text) return;
-    r.bub.textContent = text.length > 110 ? text.slice(0, 107) + '...' : text;
-    r.bubUntil = now() + (secs || 6); r.until = now() + 2.5;
+    r.bub.textContent = text.length > 150 ? text.slice(0, 147) + '...' : text;
+    r.bubUntil = now() + (secs || 6); r.until = now() + 2.5; r.thoughtAt = now();
   }
   function setLamp(status, name) {
     const col = status === 'APPROVED' ? 0x39ff7a : status === 'REJECTED' ? 0xff4b4b : 0xffd84a;
@@ -438,7 +439,8 @@
     if (ev.type === 'study_started') setAgentState('optimizer', 'working');          // older logs without lifecycle events
     if (ev.agent === 'judge' && ev.type === 'verdict') { setAgentState('judge', 'done'); setAgentState('validator', 'done'); }
     const st = MAP[ev.agent];
-    if (st) speak(st, ev.message);
+    if (st && ev.type === 'web') speak(st, ({ search: '🔎 ', found: '📄 ', read: '📖 ', saved: '💾 ', error: '⚠ ' }[ev.data && ev.data.phase] || '') + (ev.data && ev.data.src ? ev.data.src + ': ' : '') + ev.message);
+    else if (st) speak(st, ({ working: '💭 ', verdict: '⚖ ', proposal: '💡 ', error: '⚠ ' }[ev.type] || '') + ev.message);
     const msg = ev.message || '';
     if (ev.agent === 'researcher' && ev.type === 'proposal') { current = spawn('research', 0x4aa3ff); goTo(current, 'optimizer'); }
     if (ev.agent === 'optimizer' && ev.type === 'study_started') { optRunning = true; if (!current) current = spawn('optimizer', 0xffb03a); else goTo(current, 'optimizer'); }
@@ -479,7 +481,9 @@
       r.tag.className = 'tag st-' + r.state;
       r.tag.style.display = vis ? 'block' : 'none'; r.tag.style.left = sx + 'px'; r.tag.style.top = sy + 'px';
       r.bub.style.left = sx + 'px'; r.bub.style.top = (sy - 22) + 'px';
-      r.bub.classList.toggle('on', vis && now() < r.bubUntil);
+      const age = now() - (r.thoughtAt || -1e9), fresh = age < 30;       // the last thought stays up: bright while fresh, dim for 5 min, then gone (or while working)
+      r.bub.classList.toggle('on', bubblesOn && vis && !!r.bub.textContent && (age < 300 || r.state === 'working'));
+      r.bub.classList.toggle('old', !fresh && r.state !== 'working');
     });
   }
   function frame() {
@@ -600,6 +604,7 @@
 
   window.LabScene = { onEvent, speak, setTrader, setTraderChart, setAccounts, onPick: null, ready: true, robots, resize, camera, controls, restoreStates, setServer,
     setStateLabels(l) { stateLabels = Object.assign(stateLabels, l); },
+    setBubbles(on) { bubblesOn = !!on; },
     states() { const t = now(), o = {}; Object.keys(AGENTS_OF).forEach(n => o[n] = robotState(n, t)); return o; } };
   frame();
 })();

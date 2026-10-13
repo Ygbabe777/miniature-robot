@@ -199,3 +199,7 @@ minimo (le tue chiavi non arrivano mai al processo figlio), timeout, tetto sull'
 - **Tentativi**: il dossier mostra la probabilità cumulata di passare almeno una evaluation al 1°, 2°, 3°… account, per 25k e per 50k, con costo atteso e costo se falliscono tutti.
 - **Giorni minimi** (`timing.py`): per ogni strategia, per 25k e 50k, i giorni minimi/mediani/p10–p90 per passare, la probabilità entro 1/2/3/5/10 giorni e il minimo storico. In studio (in-campione) e sul blocco non visto dopo il Giudice. Gli studi vecchi non hanno `timing`: rilanciali.
 - **Trader**: ingressi (triangolo al prezzo reale), uscite (cerchio con P&L e motivo stop/target/segnale), linee SL/TP, lista trade cliccabile con ◀ ▶, filtri e export CSV, multiplo R.
+
+## Pannelli, notifiche e vignette
+- I pannelli laterali si nascondono con le linguette ◀ ▶ (o i tasti `[` e `]`); lo stato è ricordato. Un pallino rosso con il conteggio avvisa di novità (verdetti, strategie avviate, download, budget) sulla linguetta e sulla scheda interessata.
+- Sopra ogni agente una vignetta mostra l'ultimo pensiero/ricerca (💭 💡 ⚖ 🔎 📖 💾): luminosa se recente, attenuata dopo 30 s, sparisce dopo 5 min se l'agente è fermo. Il tasto 💬 le nasconde.
