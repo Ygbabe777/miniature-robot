@@ -295,3 +295,29 @@ def test_the_whole_chain_paper_to_queue_works_with_a_model_that_omits_the_card(t
     assert names == ["ORB 15-45"] and next(iter(lab.pending.values()))["spec"].hypothesis_missing
     st = lab.researcher_status()
     assert st["unread"] == 0 and st["recent"][-1]["proposals"] == 1 and st["queue"] == 1
+
+
+def test_a_running_study_reports_its_stage_and_the_optimizer_is_the_one_working_while_it_optimises(tmp_path):
+    """'A test is running but the optimizer is idle': the Lab now says which stage a study is in, who waits for whom, and keeps
+    the optimizer lit while it chooses timeframe/direction/exits."""
+    from ofo.app.lab import Lab
+    csv = tmp_path / "b.csv.gz"; synth(n_sessions=520, drift_ar=0.9, seed=5).to_csv(csv)
+    lab = Lab(str(csv), data_dir=str(tmp_path / "d"), ideas_dir=str(tmp_path / "i"))
+    seen, agents = [], []
+    sid = lab._add_pending(from_dict(SPEC), "paper")["id"]
+    job = lab.start(sid)
+    import time
+    for _ in range(600):
+        j = lab.jobs[job["id"]]
+        seen.append((j["status"], j.get("stage"))); agents.append(frozenset(lab.working_agents()))
+        if j["status"] in ("done", "error"):
+            break
+        time.sleep(0.2)
+    assert lab.jobs[job["id"]]["status"] == "done"
+    stages = [s for st, s in seen if st == "running" and s]
+    assert "screening" in stages                                                          # the UI can show the stage
+    assert any("optimizer" in a for a in agents)                                           # and the optimizer is shown working
+    assert not any(a == frozenset() for st, a in zip(seen, agents) if st[0] == "running")  # never a running study with nobody working
+    ev = [(e["agent"], e["type"]) for e in lab.events.tail(400)]
+    if ("validator", "working") in ev:
+        assert ev.index(("optimizer", "working")) < ev.index(("validator", "working"))

@@ -130,7 +130,7 @@ class Lab:
         self.ideas.mkdir(parents=True, exist_ok=True)
         self._fetch, self._scout, self._scout_running = fetch, None, False
         self._channels = channels or []              # sources.build_channels(...): web / github / rss / exa / youtube / reddit / x
-        self.busy = {"research": 0, "job": 0, "chat": 0}          # real activity, not event timeouts
+        self.busy = {"research": 0, "job": 0, "chat": 0, "review": 0}          # real activity, not event timeouts
         self.ap_file = self.data / "autopilot.json"
         first = not self.ap_file.exists()
         self.ap = {"v": 2, "markets": None, "enabled": True, "max_trials_per_day": 30000, "max_trials_total": 300000, "day": "", "trials_today": 0}
@@ -411,7 +411,12 @@ class Lab:
             try:
                 lp = self.loop(market)
                 lp.judge_th = self.judge_thresholds()
-                res = lp.process(spec, 0)
+                job["status"], job["stage"] = "running", "starting"
+                lp.on_stage = lambda name, detail="": job.update(stage=name, stage_detail=detail, stage_at=time.time())
+                try:
+                    res = lp.process(spec, 0)
+                finally:
+                    lp.on_stage = None
                 job.update(status="done", slug=slugify(spec.name), verdict=res["verdict"])
                 while lp.queue:                   # planner proposals: the autopilot runs them, otherwise they wait
                     nxt, _ = lp.queue.pop(0)
@@ -883,6 +888,8 @@ class Lab:
                     out.add(a)
             if not out & {"optimizer", "validator", "judge", "planner", "auditor"}:
                 out.add("optimizer")
+        if b.get("review", 0) > 0:
+            out.add("judge")                                          # the prop-farming re-review of an old study is the Judge's work, not the Optimizer's
         if b["chat"] > 0:
             out.add("strategist")
         if b.get("forward", 0) > 0:
@@ -996,8 +1003,10 @@ class Lab:
         self._farm_busy = True
         def work():
             try:
-                with self.working("job"):
+                with self.working("review"):
                     for slug in pend:
+                        while any(j["status"] in ("queued", "running") for j in self.jobs.values()):
+                            time.sleep(2.0)                           # a study the owner is waiting for always goes first
                         with self.run_lock:
                             self.farming_review(slug)
             finally:
@@ -1355,6 +1364,7 @@ class Lab:
                 "strategies": list_studies(self.work), "template_requests": reqs,
                 "templates": {k: t.doc for k, t in TEMPLATES.items() if not t.control}, "symbol": self.contract.symbol,
                 "primary": self.primary, "markets": [{"sym": k, "name": MARKETS[k]["name"], "micro": c.contract.symbol} for k, c in self.mk.items()],
+                "engine_busy_with": ("revisione prop farming" if getattr(self, "_farm_busy", False) else None),
                 "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state(),
                 "autopilot": self.autopilot_state(), "budget": self.budget_state(), "obsidian": self.obsidian_state(),
                 "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed"))}

@@ -432,11 +432,16 @@ def timeframe_study(cands, series, rows, dev_days, bars_by_tf, contract, contrac
 
 class _Stages:
     """Per-stage record of one study: seconds, units and the gate each stage applied (the lab's elimination statistics)."""
-    def __init__(self):
-        self.rows, self._t = [], None
+    def __init__(self, on_stage=None):
+        self.rows, self._t, self.on_stage = [], None, on_stage
 
-    def start(self, name: str) -> None:
+    def start(self, name: str, detail: str = "") -> None:
         self._t = (name, time.time())
+        if self.on_stage:
+            try:
+                self.on_stage(name, detail)                  # the Lab shows which stage the running study is in
+            except Exception:
+                pass
 
     def end(self, units: int, gate: str | None = None, passed: bool | None = None, **kw) -> None:
         name, t0 = self._t
@@ -467,7 +472,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                oos_fraction: float | None = None, train_days: int | None = None, test_days: int | None = None,
                surface_th: SurfaceThresholds | None = None, progress=None, dedupe: bool = False,
                market: str | None = None, judge_th=None, all_timeframes: bool = False, farming: dict | None = None,
-               research: dict | None = None, _holder: dict | None = None) -> dict:
+               research: dict | None = None, _holder: dict | None = None, on_stage=None) -> dict:
     """The five-stage protocol of one study.
 
       1 HYPOTHESIS  the spec is already validated (whitelisted template, bounded parameters, hypothesis card)
@@ -486,7 +491,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         spec = dataclasses.replace(spec, timeframes=rcfg_mod.execution_timeframes(rcfg))
     oos_fraction = rcfg["holdout_fraction"] if oos_fraction is None else oos_fraction
     say = progress or (lambda agent, state, msg="": None)
-    stages = _Stages()
+    stages = _Stages(on_stage)
     key = _session_key(bars)
     sessions = sorted(key.unique())
     cut = sessions[int(len(sessions) * (1 - oos_fraction))]
@@ -507,10 +512,10 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
     if _holder is not None:
         _holder["eid"] = eid
     meta = {"family": family, "config_version": cfg_v, "code_version": code_v}
-    stages.start("hypothesis"); stages.end(0, "spec validata (template in whitelist, parametri entro i limiti, scheda ipotesi)", True, family=family)
+    stages.start("hypothesis", spec.name); stages.end(0, "spec validata (template in whitelist, parametri entro i limiti, scheda ipotesi)", True, family=family)
 
     # ---------------- stage 2: screening ----------------
-    stages.start("screening")
+    stages.start("screening", f"{spec.n_candidates} candidati")
     say("optimizer", "working", f"screening of up to {spec.n_candidates} candidates")
     cands, series, slog = _sweep(dev_bars, spec, contract, contracts, slippage_ticks, rcfg, dev_days)
     registry.set_executed(eid, len(cands))                       # planned trials were registered up front; unexecuted ones are released
@@ -569,7 +574,8 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         return finish(base_report)
 
     # ---------------- stage 3: validation ----------------
-    stages.start("validation")
+    stages.start("validation", "timeframe, direzione e uscite")
+    say("optimizer", "working", "timeframe, direction and exits by development NPFV")       # the Optimizer's own work: choosing the best version
     farm = farming_context(farming)
     tfs_dev = {tf: resample(dev_bars, tf) for tf in spec.timeframes}
     by_tf = timeframe_study(cands, series, rows, dev_days, tfs_dev, contract, {k: PRESETS[k] for k in ("25k", "50k")}, contracts,
@@ -584,6 +590,8 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
     exits_rep = _exit_study({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, base_ser, contract, contracts, slippage_ticks, dev_days, registry,
                             spec.name, eid, meta)
     best_exit = exits_rep["best"] if exits_rep["chosen"] else None
+    say("optimizer", "done", "best version chosen")
+    say("validator", "working", "nested walk-forward and quality checks")
     wf, picks = nested_walk_forward(tfs_dev, cands, series, dev_days, contract, contracts, slippage_ticks, train_days, test_days)
     wf_kind = "nested"
     registry.add_trials(0, f"walk_forward:{spec.name}", experiment_id=eid, kind="compute", stage="validation", n_evals=max(1, len(wf) // max(1, test_days)),
@@ -609,7 +617,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
     # ---------------- stage 4: robustness ----------------
     surf_d = None
     if val_ok:
-        stages.start("robustness")
+        stages.start("robustness", "beta check")
         t_b = time.time()
         cands_d = cands
         bars_d = {tf: resample(detrend(dev_bars), tf) for tf in spec.timeframes}
@@ -623,7 +631,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
 
     if val_ok and surf_d["robust"]:
         # ---------------- stage 5: audit + the single look at the locked block ----------------
-        stages.start("audit")
+        stages.start("audit", "audit e blocco bloccato")
         say("judge", "working", "audit, reproducibility and the look at the hidden block")
         cand, tf = fcand, fcand["tf"]
         s_full, rc, pos_full, b_full = guarded_full_series(bars, cand, best_exit, contract, contracts, slippage_ticks, dev_days, final_dev, spec.name)
