@@ -329,6 +329,7 @@
   }
   let rankKey = '';
   function engineWhy(e) {
+    if (e && e.stuck) return t('job_wait_stuck', { w: e.stuck.where.slice().reverse().join(' ← ') || '?', s: e.stuck.secs });
     if (!e || !e.busy) return t('job_wait_free');
     const m = e.elapsed_s != null ? Math.max(0, Math.round(e.elapsed_s / 60)) : 0;
     if (e.kind === 'review') return t('job_wait_review', { n: e.name, m });

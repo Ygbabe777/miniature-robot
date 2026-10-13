@@ -133,6 +133,7 @@ class Lab:
         self.ideas.mkdir(parents=True, exist_ok=True)
         self._fetch, self._scout, self._scout_running = fetch, None, False
         self._connecting = False
+        self._job_threads: dict = {}
         self._channels = channels or []              # sources.build_channels(...): web / github / rss / exa / youtube / reddit / x
         self.busy = {"research": 0, "job": 0, "chat": 0, "review": 0, "hypo": 0}          # real activity, not event timeouts
         self.ap_file = self.data / "autopilot.json"
@@ -408,7 +409,10 @@ class Lab:
         self.jobs[job["id"]] = job
         self._running_specs[job["id"]] = {"spec": spec, "origin": item.get("origin", "paper"), "market": market}
         self._persist_queue()
-        threading.Thread(target=self._run_job, args=(job, spec, market), daemon=True).start()
+        job["queued_at"] = time.time()
+        th = threading.Thread(target=self._run_job, args=(job, spec, market), daemon=True, name=f"job-{job['id']}")
+        self._job_threads[job["id"]] = th
+        th.start()
         return job
 
     def _run_job(self, job: dict, spec: StrategySpec, market: str | None = None) -> None:
@@ -617,10 +621,33 @@ class Lab:
         """Who holds the (one-study-at-a-time) engine: a study with its stage and elapsed time, a review, or nobody."""
         h = self._holder
         if not h:
-            return {"busy": self.run_lock.locked(), "kind": None}
+            return {"busy": self.run_lock.locked(), "kind": None, "stuck": self._stuck_job()}
         job = self.jobs.get(h.get("job", ""), {})
         return {"busy": True, "kind": h["kind"], "name": h["name"], "elapsed_s": int(time.time() - h["since"]), "stage": job.get("stage"),
                 "stage_detail": job.get("stage_detail")}
+
+    STUCK_AFTER_S = 20
+
+    def _stuck_job(self) -> dict | None:
+        """A job still 'queued' while nobody holds the engine for more than 20 s is a bug, not a wait. Say where its thread is blocked
+        (or that it died) so the cause is visible in the page and the terminal instead of a silent 'about to start'."""
+        import sys
+        import traceback
+        for jid, job in list(self.jobs.items()):
+            if job.get("status") != "queued" or time.time() - job.get("queued_at", time.time()) < self.STUCK_AFTER_S or self.run_lock.locked():
+                continue
+            th = self._job_threads.get(jid)
+            if th is not None and not th.is_alive():
+                job.update(status="error", error="il thread del test è terminato prima di partire (vedi il terminale)")
+                self.events.emit("lab", "error", f"{job['name']}: thread del test terminato senza partire")
+                continue
+            fr = sys._current_frames().get(th.ident) if th is not None else None
+            where = [f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in (traceback.extract_stack(fr)[-4:] if fr else [])]
+            if not job.get("_stuck_reported"):
+                job["_stuck_reported"] = True
+                print(f"[OFO] test «{job['name']}» fermo in coda con il motore libero. Il suo thread è qui: " + " <- ".join(reversed(where)), flush=True)
+            return {"job": job["name"], "alive": th is not None, "where": where, "secs": int(time.time() - job["queued_at"])}
+        return None
 
     def research_report(self) -> dict:
         """The research engine in numbers: budget, trials per family, candidates per stage, elimination per gate, cost per test,
@@ -1565,7 +1592,7 @@ class Lab:
                 "calls_per_hour": self.pool.calls_per_hour if self.pool else None,
                 "calls_last_minute": self.pool.calls_last_minute() if self.pool else None,
                 "calls_per_minute": self.pool.calls_per_minute if self.pool else None,
-                "ideas": ideas, "pending": pending, "jobs": list(self.jobs.values())[-10:],
+                "ideas": ideas, "pending": pending, "jobs": [{k: v for k, v in j.items() if not k.startswith("_")} for j in list(self.jobs.values())[-10:]],   # a snapshot taken NOW: live dicts could turn "done" after the study list was read
                 "strategies": list_studies(self.work), "template_requests": reqs,
                 "templates": {k: t.doc for k, t in TEMPLATES.items() if not t.control}, "symbol": self.contract.symbol,
                 "primary": self.primary, "markets": [{"sym": k, "name": MARKETS[k]["name"], "micro": c.contract.symbol} for k, c in self.mk.items()],

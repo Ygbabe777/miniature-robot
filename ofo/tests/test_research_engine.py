@@ -498,3 +498,56 @@ def test_starter_strategies_in_the_queue_do_not_stop_the_researcher_from_proposi
     assert lab.seed_specs() > 4                                                    # the classic families fill the queue
     st = lab.hypothesis_status(now=10_000.0)
     assert st["ready"] and st["queued"] == 0                                       # only the Researcher's OWN proposals count
+
+
+def test_a_browser_that_disconnects_mid_answer_makes_no_noise_and_a_real_failure_prints_its_cause(tmp_path, capsys):
+    import threading, urllib.request, urllib.error, socket
+    from ofo.app.server import make_server
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    lab.state = lambda: (_ for _ in ()).throw(RuntimeError("boom-from-state"))
+    srv = make_server(lab, port=8794); threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        s = socket.create_connection(("127.0.0.1", 8794)); s.sendall(b"GET /api/state HTTP/1.1\r\nHost: x\r\nX-OFO: 1\r\n\r\n"); s.close()   # hangs up at once
+        r = urllib.request.Request("http://127.0.0.1:8794/api/state", headers={"X-OFO": "1"})
+        try:
+            urllib.request.urlopen(r, timeout=10)
+        except urllib.error.HTTPError as e:
+            assert e.code == 500
+    finally:
+        srv.shutdown()
+    out = capsys.readouterr()
+    assert "boom-from-state" in out.out and "Traceback" in out.out                  # the real cause is printed
+    assert "ConnectionAbortedError" not in out.err and "BrokenPipe" not in out.err   # the disconnect is silent
+
+
+def test_a_test_stuck_in_the_queue_with_a_free_engine_says_where_it_is_blocked(tmp_path):
+    """Reported for days: 'waiting for the engine (about to start)'. A silent wait is now a visible diagnosis."""
+    import threading, time
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    lab.STUCK_AFTER_S = 0.5
+    release, orig = threading.Event(), lab.working
+
+    def blocked_registration(kind):                                              # something keeps the job thread from ever registering
+        release.wait(60)
+        return orig(kind)
+    lab.working = blocked_registration
+    sid = lab._add_pending(from_dict({**SPEC, "name": "stuck one"}), "paper")["id"]
+    job = lab.start(sid)
+    time.sleep(1.2)
+    eng = lab.engine_state()
+    assert eng["busy"] is False and eng["stuck"]["job"] == "stuck one" and eng["stuck"]["alive"]
+    assert any("blocked_registration" in w for w in eng["stuck"]["where"])      # it names the place
+    release.set()
+    for _ in range(300):
+        if lab.jobs[job["id"]]["status"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    assert lab.jobs[job["id"]]["status"] == "done" and lab.engine_state().get("stuck") is None
+
+
+def test_the_state_snapshot_of_jobs_is_a_copy_not_a_live_view(tmp_path):
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    lab.jobs["j"] = {"id": "j", "name": "x", "status": "running", "_stuck_reported": True}
+    snap = lab.state()["jobs"][-1]
+    lab.jobs["j"]["status"] = "done"
+    assert snap["status"] == "running" and "_stuck_reported" not in snap
