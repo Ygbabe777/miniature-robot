@@ -71,9 +71,8 @@ class BudgetGovernor:
     def _save(self) -> None:
         self.s["cfg"] = {k: self.cfg[k] for k in DEFAULTS}
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = Path(str(self.path) + ".tmp")
-        tmp.write_text(json.dumps(self.s, indent=1))
-        tmp.replace(self.path)
+        from .storage import atomic_write
+        atomic_write(self.path, json.dumps(self.s, indent=1))
 
     def tokens_total(self) -> int:
         return sum(u["prompt"] + u["completion"] for u in self.s["usage"].values())

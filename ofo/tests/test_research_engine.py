@@ -576,3 +576,61 @@ def test_state_answers_while_the_lab_lock_is_held(tmp_path):
         assert not t.is_alive() and "jobs" in out["s"] and "engine" in out["s"]
     finally:
         lab.lock.release()
+
+
+def test_atomic_write_survives_windows_style_sharing_violations_and_many_writers(tmp_path, monkeypatch):
+    """Found with the owner's /api/diag: a job 'queued' with NO thread, because writing data/queue.json raised inside start() (Windows
+    refuses replace() on a file another thread/process holds, or when two writers share one '.tmp')."""
+    import threading
+    from pathlib import Path
+    from ofo import storage
+    target = tmp_path / "queue.json"
+    real, calls = Path.replace, {"n": 0}
+
+    def flaky(self, dst):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+        return real(self, dst)
+    monkeypatch.setattr(Path, "replace", flaky)
+    storage.atomic_write(target, '{"a": 1}')                                      # retried, not raised
+    monkeypatch.setattr(Path, "replace", real)
+    assert json.loads(target.read_text()) == {"a": 1}
+    errs = []
+
+    def writer(k):
+        try:
+            for i in range(30):
+                storage.atomic_write(target, json.dumps({"k": k, "i": i, "pad": "x" * 4000}))
+        except Exception as e:
+            errs.append(e)
+    ts = [threading.Thread(target=writer, args=(k,)) for k in range(8)]
+    [t.start() for t in ts]; [t.join() for t in ts]
+    assert not errs and "pad" in json.loads(target.read_text())                   # always a whole, valid file
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_a_study_still_starts_when_the_queue_file_cannot_be_written_and_a_failed_start_is_an_error_not_a_ghost(tmp_path, monkeypatch):
+    import time
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    from ofo.app import lab as labmod
+
+    def deny(*a, **k):
+        raise PermissionError(13, "denied")
+    monkeypatch.setattr(labmod, "atomic_write", deny)                              # the queue file is unwritable (like on the owner's PC)
+    sid = lab._add_pending(from_dict({**SPEC, "name": "still runs"}), "paper")["id"]
+    job = lab.start(sid)
+    assert job["status"] in ("queued", "running", "done")
+    for _ in range(300):
+        if lab.jobs[job["id"]]["status"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    assert lab.jobs[job["id"]]["status"] == "done"
+    assert any("coda non salvata" in e["message"] for e in lab.events.tail())      # said, not silent
+    (tmp_path / "b").mkdir()
+    lab2 = _lab_with_researcher(tmp_path / "b", {"strategies": [], "concepts": []})
+    monkeypatch.setattr(lab2, "_run_job", lambda *a, **k: None)
+    monkeypatch.setattr(labmod.threading.Thread, "start", lambda self: (_ for _ in ()).throw(RuntimeError("can't start new thread")))
+    sid2 = lab2._add_pending(from_dict({**SPEC, "name": "ghost"}), "paper")["id"]
+    j2 = lab2.start(sid2)
+    assert j2["status"] == "error" and "avvio non riuscito" in j2["error"]         # never 'queued' for ever

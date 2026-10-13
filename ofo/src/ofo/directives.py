@@ -46,7 +46,8 @@ class Directives:
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = Path(str(self.path) + ".tmp"); tmp.write_text(json.dumps(self.items, indent=1, ensure_ascii=False)); tmp.replace(self.path)
+        from .storage import atomic_write
+        atomic_write(self.path, json.dumps(self.items, indent=1, ensure_ascii=False))
 
     def add(self, text: str, kind: str | None = None) -> dict:
         text = " ".join(str(text).split())[:400]

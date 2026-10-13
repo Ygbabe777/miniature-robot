@@ -3,8 +3,33 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import re
+import threading
+import time
 from pathlib import Path
+
+_PATH_LOCKS: dict[str, threading.Lock] = {}
+_PL = threading.Lock()
+
+
+def atomic_write(path: str | Path, text: str) -> None:
+    """Write a file so a reader never sees half of it, safely from many threads and on Windows. A fixed '<name>.tmp' shared by two writers,
+    or a replace() while the browser/antivirus/another thread has the target open, raises PermissionError on Windows (never on Linux):
+    here every writer has its own temp name, writers of one file take turns, and the replace is retried."""
+    path = Path(path)
+    with _PL:
+        lk = _PATH_LOCKS.setdefault(str(path), threading.Lock())
+    with lk:
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        for i in range(25):
+            try:
+                tmp.replace(path)
+                return
+            except PermissionError:
+                time.sleep(0.04 * (i + 1))
+        tmp.replace(path)                         # last try raises for real
 
 
 def slugify(name: str) -> str:
@@ -16,10 +41,7 @@ def save_study(work: str | Path, report: dict, planner: dict | None = None, audi
     slug = slugify(rep["name"])
     d = Path(work) / "reports"
     d.mkdir(parents=True, exist_ok=True)
-    def atomic(path, text):                       # the UI reads these files while a study is being saved: never a half-written file
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(text)
-        tmp.replace(path)
+    atomic = atomic_write                         # the UI reads these files while a study is being saved: never a half-written file
     if report.get("series"):
         atomic(d / f"{slug}_series.json", json.dumps(report["series"], default=str))
     atomic(d / f"{slug}.json", json.dumps(
@@ -64,7 +86,5 @@ def update_report(work: str | Path, slug: str, mutate) -> bool:
         return False
     d = json.loads(f.read_text())
     mutate(d["report"])
-    tmp = Path(str(f) + ".tmp")
-    tmp.write_text(json.dumps(d, indent=1, default=str))
-    tmp.replace(f)
+    atomic_write(f, json.dumps(d, indent=1, default=str))
     return True

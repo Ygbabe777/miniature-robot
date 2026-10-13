@@ -26,7 +26,7 @@ from ..prop import PRESETS
 from ..registry import TrialRegistry
 from ..agents.loop import _fingerprint
 from ..specs import StrategySpec, from_dict
-from ..storage import list_studies, load_study, slugify
+from ..storage import atomic_write, list_studies, load_study, slugify
 from .. import deploy as dep
 from .. import knowledge, obsidian
 from ..ledger import run_ledger
@@ -245,9 +245,10 @@ class Lab:
         with self.lock:
             items = [{"id": i, "origin": v["origin"], "market": v.get("market"), "spec": dataclasses.asdict(v["spec"])} for i, v in self.pending.items()]
             run = [{"id": i, "origin": v["origin"], "market": v.get("market"), "spec": dataclasses.asdict(v["spec"])} for i, v in self._running_specs.items()]
-        tmp = Path(str(self.queue_file) + ".tmp")
-        tmp.write_text(json.dumps({"pending": items, "running": run}, ensure_ascii=False, default=str))
-        tmp.replace(self.queue_file)
+        try:
+            atomic_write(self.queue_file, json.dumps({"pending": items, "running": run}, ensure_ascii=False, default=str))
+        except OSError as e:                      # the queue file is a convenience: failing to save it must NEVER stop a study from starting
+            self.events.emit("lab", "error", f"coda non salvata su disco ({type(e).__name__}: {str(e)[:120]}): continuo comunque")
 
     def _load_queue(self) -> None:
         """Pending proposals AND the study that was running when the process ended come back (the registry has marked it failed)."""
@@ -407,12 +408,18 @@ class Lab:
         job = {"id": uuid.uuid4().hex[:8], "name": spec.name, "market": market, "status": "queued", "slug": None,
                "verdict": None, "error": None, "n_candidates": spec.n_candidates}
         self.jobs[job["id"]] = job
-        self._running_specs[job["id"]] = {"spec": spec, "origin": item.get("origin", "paper"), "market": market}
-        self._persist_queue()
         job["queued_at"] = time.time()
-        th = threading.Thread(target=self._run_job, args=(job, spec, market), daemon=True, name=f"job-{job['id']}")
-        self._job_threads[job["id"]] = th
-        th.start()
+        self._running_specs[job["id"]] = {"spec": spec, "origin": item.get("origin", "paper"), "market": market}
+        try:
+            self._persist_queue()
+            th = threading.Thread(target=self._run_job, args=(job, spec, market), daemon=True, name=f"job-{job['id']}")
+            self._job_threads[job["id"]] = th
+            th.start()
+        except Exception as e:                    # never leave a job 'queued' with no thread behind it
+            job.update(status="error", error=f"avvio non riuscito: {type(e).__name__}: {str(e)[:200]}")
+            self._running_specs.pop(job["id"], None)
+            self.events.emit("lab", "error", f"{spec.name}: {job['error']}")
+            self.events.alert("judge", f"start_failed:{spec.name}", f"Il test «{spec.name}» non è partito: {job['error']}")
         return job
 
     def _run_job(self, job: dict, spec: StrategySpec, market: str | None = None) -> None:
