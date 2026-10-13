@@ -219,3 +219,9 @@ SSRN non offre un'API e i suoi PDF richiedono login e accettazione dei termini: 
 
 ## Diagnosi delle fonti web
 `python scripts/check_sources.py` prova ogni canale da questo PC e stampa l'errore esatto (nessuna chiave nell'output): controlla `config/sources.json` (un `True` maiuscolo o una virgola in più lo rende JSON non valido: ora lo segnala invece di bloccarsi), quali programmi sono installati (`yt-dlp`, `mcporter`...) e una ricerca di prova per canale. Il pannello "Internet in tempo reale" ha il tasto ⤢ per una vista grande.
+
+## Parla al Researcher, fonti selezionabili, PDF richiesti, long-only / short-only
+- **Parla al Researcher** (pannello sinistro): scrivi "cerca …" (una volta), "continua …" (a ogni ricerca), "smetti …" (non cercarlo più e scarta gli articoli che ne parlano) o una nota libera. Scout e filtri sono deterministici; le istruzioni finiscono anche nel prompt del Researcher, ma non cambiano mai cosa accetta il Giudice.
+- **Fonti**: nel pannello "Internet in tempo reale" spunti arXiv, Semantic Scholar, SSRN, GitHub, RSS, Exa, YouTube, Reddit, X. Quelle senza lo strumento installato sono grigie col comando per installarlo. La scelta è salvata. Un errore di una fonte non ferma più le altre.
+- **PDF richiesti**: quando il Researcher ha bisogno di un PDF (SSRN senza copia gratuita) compare una notifica (avviso + pallino rosso) con il link e il tasto "Carica PDF": il file viene associato all'articolo e letto.
+- **Direzione**: per ogni timeframe l'Optimizer prova anche solo-long e solo-short. Una versione a un lato sostituisce quella a due lati solo se supera il punteggio di almeno 0,02 E il lato scartato perde soldi nel complesso e in almeno 2 fasi su 3 dei giorni di sviluppo. Le varianti extra contano come tentativi nel Deflated Sharpe. La direzione è applicata ovunque (Trader, dossier, deployment paper).

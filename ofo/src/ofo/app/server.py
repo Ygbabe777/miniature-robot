@@ -106,6 +106,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.set_budget(data.get("remaining_usd"), data.get("weekly_usd"), data.get("usd_per_million")) or {})
                 if u.path == "/api/markets":
                     return self._json(lab.set_markets(list(data.get("markets") or [])))
+                if u.path == "/api/sources":
+                    return self._json(lab.set_source(str(data.get("name", "")), bool(data.get("enabled"))))
                 if u.path == "/api/directives":
                     return self._json(lab.tell_researcher(str(data.get("text", "")), data.get("kind")))
                 if u.path == "/api/directives/remove":

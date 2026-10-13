@@ -37,10 +37,11 @@ from ..dossier import build_dossier
 from ..economics import load_assumptions, load_goal
 from ..accounts import demo_accounts, load_accounts
 from ..data import resample
+from ..strategies import directional
 from ..trades import extract_trades, summarize
 from ..directives import Directives
 from ..scout import Scout
-from ..sources import agent_reach_status, config_problem, missing_channels
+from ..sources import agent_reach_status, config_problem, load_config, missing_channels
 from ..strategies import INDICATOR_HELP, TEMPLATES
 
 
@@ -391,7 +392,8 @@ class Lab:
             llm = self.llm.get("scout", self.llm.get("researcher")) if isinstance(self.llm, dict) else \
                 (None if isinstance(self.llm, NoLLM) else self.llm)
             self._scout = Scout(self.data / "scout", self.ideas, llm, self.events, fetch=self._fetch, language=self.language,
-                                channels=self._channels, directives=self.directives)
+                                channels=self._channels, directives=self.directives,
+                                source_defaults=load_config("config/sources.json")["channels"])
         self._scout.language = self.language
         return self._scout
 
@@ -452,6 +454,23 @@ class Lab:
             threading.Thread(target=go, daemon=True).start()
         return c["data"]
 
+    def _sources_view(self) -> list[dict]:
+        """Every source the owner can pick, with whether it can run on this computer (tool installed) and its switch."""
+        sc = self.scout()
+        out = [{**x, "available": True, "hint": ""} for x in sc.sources()]
+        have = {x["name"] for x in out}
+        for m in self._missing_channels() + [{"name": n, "hint": h} for n, h in
+                                              __import__("ofo.sources", fromlist=["HINTS"]).HINTS.items()]:
+            if m["name"] not in have:
+                have.add(m["name"]); out.append({"name": m["name"], "enabled": False, "available": False, "hint": m["hint"], "needs_account": m["name"] in ("reddit", "twitter")})
+        return out
+
+    def set_source(self, name: str, enabled: bool) -> dict:
+        ok = self.scout().set_source(str(name), bool(enabled))
+        if ok:
+            self.events.emit("scout", "info", f"source {name}: {'ON' if enabled else 'OFF'}")
+        return {"ok": ok, "sources": self._sources_view()}
+
     def tell_researcher(self, text: str, kind: str | None = None) -> dict:
         """The owner writes to the Researcher: what to search, keep searching, stop searching, or a general note."""
         try:
@@ -478,7 +497,7 @@ class Lab:
         sc = self.scout()
         return {"total": total, "running": self._scout_running, "health": sc.state.get("health", {}),
                 "channels": ["arxiv", "semanticscholar", "ssrn"] + [c.name for c in sc.channels],
-                "missing": self._missing_channels(), "config_error": config_problem("config/sources.json"), "agent_reach": self._agent_reach(), "items": [x for x in items if x["i"] >= after][-limit:]}
+                "sources": self._sources_view(), "missing": self._missing_channels(), "config_error": config_problem("config/sources.json"), "agent_reach": self._agent_reach(), "items": [x for x in items if x["i"] >= after][-limit:]}
 
     def scout_state(self) -> dict:
         st = self.scout().public_state(self._scout_running)
@@ -750,7 +769,7 @@ class Lab:
             bp = rep["series"]["best_params"]
             params = {k: v for k, v in bp.items() if k != "tf"}
             b = c.bars() if bp["tf"] == "1min" else resample(c.bars(), bp["tf"])
-            pos = flatten_overnight(TEMPLATES[rep["template"]].fn(b, **params))
+            pos = flatten_overnight(directional(TEMPLATES[rep["template"]].fn, rep["series"].get("direction"))(b, **params))
             led = run_ledger(b, pos, c.contract, self.contracts, 1.0, rep["series"].get("exit"))
             arr = arrays_from_ledger(b, led, only_from=pd.Timestamp(rep["series"]["cut"]))
             for acct, entry in dos["accounts"].items():
@@ -1048,7 +1067,8 @@ class Lab:
             params = dict(ser["best_params"]); tf = params.pop("tf")
             c = self.ctx(self.market_of(rep))
             self._trades_cache[key] = extract_trades(c.bars(), TEMPLATES[rep["template"]].fn, params, tf,
-                                                     c.contract, self.contracts, exit=ser.get("exit"))
+                                                     c.contract, self.contracts, exit=ser.get("exit"),
+                                                     direction=ser.get("direction") or "both")
         allt = self._trades_cache[key]
         looked = "checks" in rep["locked"]
         vis = allt if looked else [t for t in allt if t["session"] < ser["cut"]]
@@ -1059,7 +1079,7 @@ class Lab:
         return {"trades": vis, "n_hidden": len(allt) - len(vis), "locked_visible": looked, "tf": tf,
                 "params": {k: v for k, v in ser["best_params"].items() if k != "tf"}, "cut": ser["cut"], "exit": ser.get("exit"),
                 "summary": summarize(vis), "name": rep["name"], "market": self.market_of(rep),
-                "base_contracts": rep.get("base_contracts", self.contracts),
+                "base_contracts": rep.get("base_contracts", self.contracts), "direction": ser.get("direction") or "both",
                 "sizing": {a: v.get("recommended") for a, v in ((rep.get("locked") or {}).get("sizing") or rep.get("sizing") or {}).get("accounts", {}).items()}}
 
     def indicators(self, slug: str, start: int | None = None, end: int | None = None) -> dict | None:

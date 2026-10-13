@@ -209,3 +209,7 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 #directives .dk{font-size:9.5px;text-transform:uppercase;padding:0 4px;border:1px solid #555}
 #directives .dk.search{color:#8ab4ff}#directives .dk.keep{color:#3ddc97}#directives .dk.stop{color:#ff5c6c}#directives .dk.note{color:#e8c36a}
 #directives .x{margin-left:auto;background:none;border:0;color:inherit;cursor:pointer}
+
+.srcs{display:grid;grid-template-columns:1fr;gap:1px}.src{display:flex;gap:6px;align-items:center;padding:1px 0;cursor:pointer}.src.off{opacity:.55;cursor:default}
+.src i{font-style:normal}.src i.ok{color:#3ddc97}.src i.bad{color:#ff5c6c}.src i.na{color:#8a8a94}
+#webbig .srcs{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}

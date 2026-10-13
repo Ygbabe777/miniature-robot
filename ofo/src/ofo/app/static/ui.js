@@ -374,6 +374,7 @@
         const s = trades.summary;
         h += s.n ? `<div><b>${esc(trades.name)}</b> — ${t('t_trades', { n: s.n, w: pct(s.win_rate), p: money(s.pnl) })}${trades.exit ? ' · ' + t('rr_short', { s: trades.exit.stop_atr, r: trades.exit.rr == null ? t('rr_none') : '1:' + trades.exit.rr }) : ''}</div>` : `<div>${t('t_notrades')}</div>`;
         if (trades.n_hidden) h += `<div>${t('t_hidden', { n: trades.n_hidden })}</div>`;
+        if (trades.direction && trades.direction !== 'both') h += `<div><b>${t('dr_' + trades.direction)}</b></div>`;
         h += `<div>${t('t_legend')}</div>`;
       }
       h += `<div>${t('t_note', { s: symbol })}</div>`;
@@ -473,14 +474,18 @@
     const names = Object.keys(bt.timeframes), accts = [...new Set(names.flatMap(k => Object.keys(bt.timeframes[k].pass_rate || {})))];
     const rows = names.map(k => {
       const v = bt.timeframes[k], best = k === bt.best_tf, md = a => v.median_days && v.median_days[a] != null ? v.median_days[a].toFixed(0) : '–';
-      return `<tr class="${best ? 'best' : ''}"><th>${esc(k)}${best ? ' ★' : ''}</th><td><b>${(v.score * 100).toFixed(0)}</b></td><td>${v.sharpe.toFixed(3)}</td><td class="${v.net_pnl >= 0 ? 'pos' : 'neg'}">${money(v.net_pnl)}</td>
+      return `<tr class="${best ? 'best' : ''}"><th>${esc(k)}${best ? ' ★' : ''}</th><td>${t('dr_' + (v.direction || 'both'))}</td><td><b>${(v.score * 100).toFixed(0)}</b></td><td>${v.sharpe.toFixed(3)}</td><td class="${v.net_pnl >= 0 ? 'pos' : 'neg'}">${money(v.net_pnl)}</td>
         <td>${money(v.max_dd)}</td><td>${v.profit_dd == null ? '–' : v.profit_dd.toFixed(2)}</td><td>${v.trades_per_day.toFixed(1)}</td><td>${pct(v.days_with_trade)}</td><td>${pct(v.trade_win_rate)}</td><td>${pct(v.positive_days)}</td>
         ${accts.map(a => `<td>${v.pass_rate[a] == null ? '–' : pct(v.pass_rate[a])}</td>`).join('')}${accts.map(a => `<td>${md(a)}</td>`).join('')}<td>${esc(Object.entries(v.best_params).map(([a, b]) => a + '=' + b).join(' '))}</td></tr>`;
     }).join('');
     return `<div class="judge"><b>${t('tfs_title')}</b><div class="sub">${t('tfs_sub', { tf: esc(bt.best_tf || '–') })}</div>
-      <div style="overflow-x:auto"><table class="rrt"><tr><th></th><th>${t('tfs_score')}</th><th>Sharpe</th><th>P&L</th><th>${t('tfs_dd')}</th><th>${t('tfs_pdd')}</th><th>${t('tfs_tpd')}</th><th>${t('tfs_dwt')}</th><th>${t('tfs_wr')}</th><th>${t('tfs_pos')}</th>
+      <div style="overflow-x:auto"><table class="rrt"><tr><th></th><th>${t('dr_title')}</th><th>${t('tfs_score')}</th><th>Sharpe</th><th>P&L</th><th>${t('tfs_dd')}</th><th>${t('tfs_pdd')}</th><th>${t('tfs_tpd')}</th><th>${t('tfs_dwt')}</th><th>${t('tfs_wr')}</th><th>${t('tfs_pos')}</th>
       ${accts.map(a => `<th>${t('tfs_pass', { a, d: bt.window_days })}</th>`).join('')}${accts.map(a => `<th>${t('tfs_med_days')} ${a}</th>`).join('')}<th>${t('tfs_params')}</th></tr>${rows}</table></div>
-      <div class="sub">${t('tfs_note')}</div></div>`;
+      ${dirDetail(bt)}<div class="sub">${t('tfs_note')}</div></div>`;
+  }
+  function dirDetail(bt) {
+    const v = bt.timeframes[bt.best_tf]; if (!v || !v.by_direction) return '';
+    return `<div class="sub"><b>${t('dr_title')} (${esc(bt.best_tf)})</b>: ` + ['both', 'long', 'short'].map(d => { const x = v.by_direction[d]; return `${t('dr_' + d)} ${money(x.net_pnl)} · DD ${money(x.max_dd)} · ${x.n_trades} trade · ${pct(x.trade_win_rate)}` + (d === v.direction ? ' ★' : ''); }).join(' | ') + `</div>`;
   }
   function sizingBox(sz) {
     if (!sz || !sz.accounts) return '';
@@ -611,16 +616,21 @@
   let webKey = '';
   function renderHealth(d) {
     const h = d.health || {}, ar = d.agent_reach || {};
-    const row = n => { const x = h[n];
-      if (!x) return `<span class="hs na">${esc(n)}: ${t('hl_untested')}</span>`;
-      if (x.last_error) return `<span class="hs bad" title="${esc(x.last_error)}">${esc(n)}: ✘ ${esc(x.last_error.slice(0, 60))}</span>`;
-      return `<span class="hs ok">${esc(n)}: ✔ ${x.last_n == null ? '' : x.last_n + ' ' + t('web_found')}</span>`; };
+    const status = n => { const x = h[n];
+      if (!x) return `<i class="na">${t('hl_untested')}</i>`;
+      if (x.last_error) return `<i class="bad" title="${esc(x.last_error)}">✘ ${esc(x.last_error.slice(0, 60))}</i>`;
+      return `<i class="ok">✔ ${x.last_n == null ? '' : x.last_n + ' ' + t('web_found')}</i>`; };
+    const row = x => `<label class="src ${x.available ? '' : 'off'}" title="${esc(x.hint || '')}"><input type="checkbox" data-src="${esc(x.name)}" ${x.enabled ? 'checked' : ''} ${x.available ? '' : 'disabled'}> <b>${esc(x.name)}</b>
+      ${x.available ? status(x.name) : `<i class="bad">${t('hl_missing')}</i>`}${x.needs_account ? ` <i class="na">${t('src_account')}</i>` : ''}</label>`;
     const cfgErr = d.config_error ? `<div class="hs bad">${esc(d.config_error)}</div>` : '';
     const miss = (d.missing || []).map(m => `<div class="hs bad">${esc(m.name)}: ${t('hl_missing')} — <code>${esc(m.hint)}</code></div>`).join('');
     const arT = ar.installed === null || ar.installed === undefined ? t('hl_ar_check') : ar.installed ? t('hl_ar_yes') : t('hl_ar_no');
-    const html = cfgErr + `<div class="hline">${(d.channels || []).map(row).join('')}</div>${miss}<div class="hs na">Agent Reach: ${arT}</div>`;
+    const html = cfgErr + `<div class="hs na"><b>${t('src_title')}</b></div><div class="srcs">${(d.sources || []).map(row).join('')}</div>${miss}<div class="hs na">Agent Reach: ${arT}</div>`;
     if ($('#webhealth').dataset.k !== html) { $('#webhealth').dataset.k = html; $('#webhealth').innerHTML = html; }
   }
+  document.addEventListener('change', async (e) => {
+    const n = e.target && e.target.dataset && e.target.dataset.src; if (!n) return;
+    await api('/api/sources', { method: 'POST', json: { name: n, enabled: e.target.checked } }); webKey = ''; pollWeb(); });
   async function pollWeb() {
     let d; try { d = await api('/api/web'); } catch (e) { return; }
     $('#web-dot').className = 'wdot' + (d.running ? ' on' : '');

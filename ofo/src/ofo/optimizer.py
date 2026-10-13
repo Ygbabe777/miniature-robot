@@ -27,7 +27,7 @@ from .specs import StrategySpec
 from .stats import sharpe
 from .sizing import size_study
 from .timing import timing_report
-from .strategies import TEMPLATES, TIMEFRAMES, flatten_overnight
+from .strategies import DIRECTIONS, TEMPLATES, TIMEFRAMES, directional, flatten_overnight
 
 ENGINE_VERSION = "2"      # bump when the study methodology changes: old experiments stay in the history, re-tests are allowed
 
@@ -252,50 +252,84 @@ def guarded_full_series(bars, cand, exit, contract, contracts, slippage_ticks, d
 TF_WEIGHTS = {"pass": 0.30, "profit_dd": 0.20, "win_days": 0.20, "frequency": 0.15, "win_rate": 0.10, "speed": 0.05}
 
 
+DIRECTION_MARGIN = 0.02      # a one-sided version must beat the two-sided one by this much of score
+DIRECTION_CHUNKS = 3         # ... and the dropped side must lose money in at least 2 of these equal slices of the development days
+
+
+def _profile(cand, bars_b, pnl, dev_days_str, rows_sharpe, contract, accounts, contracts, slippage_ticks, goal_days, goal_rate):
+    """Metrics and blended score of ONE concrete version of the strategy (a timeframe, a direction)."""
+    tm = timing_report(pnl, accounts, contracts, goal_days, goal_rate, "development")
+    led = run_ledger(bars_b, flatten_overnight(cand["fn"](bars_b, **cand["params"])), contract, contracts, slippage_ticks, None)
+    ds = set(dev_days_str)
+    tr = [t for t in led.trades if t["entry_session"][:10] in ds]
+    n_tr = len(tr)
+    days_with = len({t["entry_session"][:10] for t in tr}) / max(1, len(ds))
+    wr = float(np.mean([t["pnl"] > 0 for t in tr])) if n_tr else 0.0
+    c = np.cumsum(pnl); dd = float(np.max(np.maximum.accumulate(np.concatenate([[0.0], c]))[1:] - c)) if len(c) else 0.0
+    streak = cur = 0
+    for v in pnl:
+        cur = cur + 1 if v < 0 else 0; streak = max(streak, cur)
+    pr = {a: r["p_pass_within"].get(str(goal_days)) for a, r in tm["accounts"].items()}
+    med = {a: r["median_days"] for a, r in tm["accounts"].items()}
+    net = float(pnl.sum()); pos = float((pnl > 0).mean())
+    comp = {"pass": float(np.mean([v or 0.0 for v in pr.values()])) if pr else 0.0,
+            "profit_dd": float(np.clip((net / dd) / 3.0, 0, 1)) if dd > 0 and net > 0 else 0.0,
+            "win_days": min(1.0, pos / 0.6), "frequency": min(1.0, days_with / 0.9), "win_rate": min(1.0, wr / 0.6),
+            "speed": float(np.mean([1 - min(m, 20) / 20 if m is not None else 0.0 for m in med.values()])) if med else 0.0}
+    score = sum(TF_WEIGHTS[k] * comp[k] for k in TF_WEIGHTS) if net > 0 and rows_sharpe > 0 else 0.0
+    return {"sharpe": float(rows_sharpe), "net_pnl": net, "max_dd": dd, "profit_dd": (net / dd) if dd > 0 else None, "positive_days": pos,
+            "losing_streak": int(streak), "n_trades": n_tr, "trades_per_day": n_tr / max(1, len(ds)), "days_with_trade": days_with,
+            "trade_win_rate": wr, "pass_rate": pr, "median_days": med, "min_days": {a: r["min_days_seen"] for a, r in tm["accounts"].items()},
+            "components": comp, "score": float(score)}
+
+
+def _loses_in_most_slices(pnl) -> bool:
+    chunks = np.array_split(np.asarray(pnl, dtype=float), DIRECTION_CHUNKS)
+    return sum(float(ch.sum()) < 0 for ch in chunks) >= 2
+
+
 def timeframe_study(cands, series, rows, dev_days, bars_by_tf, contract, contract_accounts, contracts, slippage_ticks,
                     goal_days, goal_rate) -> dict:
-    """Best version of the strategy on EACH timeframe (development data, entry-only exits) and the timeframe that fits a
-    prop-firm trader best. NOT profit alone: the score blends the chance to pass a 25k and a 50k challenge inside the goal
-    window (30%), profit / max drawdown (20%), share of winning days (20%), share of sessions with at least one trade (15%),
-    trade win rate (10%) and how fast a challenge is passed (5%). A timeframe that does not make money is never chosen while
-    another one does. Development data only, so the hidden block cannot influence the choice."""
+    """Best version of the strategy on EACH timeframe AND each direction (both sides / long only / short only), development
+    data only (entry-only exits), and the one that fits a prop-firm trader best. NOT profit alone: the score blends the chance
+    to pass a 25k and a 50k challenge inside the goal window (30%), profit / max drawdown (20%), share of winning days (20%),
+    share of sessions with at least one trade (15%), trade win rate (10%) and how fast a challenge is passed (5%). A version
+    that does not make money is never chosen while another one does.
+
+    Direction: a one-sided version replaces the two-sided one only if it scores DIRECTION_MARGIN higher AND the side it drops
+    loses money overall AND in at least 2 of 3 equal slices of the development days (so a lucky half cannot decide it).
+    The two extra variants per timeframe are counted as trials by the caller."""
     out, ds = {}, [str(d)[:10] for d in dev_days]
     for tf in TIMEFRAMES:
         idx = [i for i, c in enumerate(cands) if c["tf"] == tf]
         if not idx:
             continue
         bi = max(idx, key=lambda i: rows[i]["sharpe"])
-        pnl = series[bi].reindex(dev_days).fillna(0.0).to_numpy()
-        tm = timing_report(pnl, contract_accounts, contracts, goal_days, goal_rate, "development")
         b = bars_by_tf[tf]
-        led = run_ledger(b, flatten_overnight(cands[bi]["fn"](b, **cands[bi]["params"])), contract, contracts, slippage_ticks, None)
-        tr = [t for t in led.trades if t["entry_session"][:10] in set(ds)]
-        n_tr = len(tr)
-        days_with = len({t["entry_session"][:10] for t in tr}) / max(1, len(ds))
-        wr = float(np.mean([t["pnl"] > 0 for t in tr])) if n_tr else 0.0
-        c = np.cumsum(pnl); dd = float(np.max(np.maximum.accumulate(np.concatenate([[0.0], c]))[1:] - c)) if len(c) else 0.0
-        streak = cur = 0
-        for v in pnl:
-            cur = cur + 1 if v < 0 else 0; streak = max(streak, cur)
-        pr = {a: r["p_pass_within"].get(str(goal_days)) for a, r in tm["accounts"].items()}
-        med = {a: r["median_days"] for a, r in tm["accounts"].items()}
-        net = float(pnl.sum()); pos = float((pnl > 0).mean())
-        comp = {"pass": float(np.mean([v or 0.0 for v in pr.values()])) if pr else 0.0,
-                "profit_dd": float(np.clip((net / dd) / 3.0, 0, 1)) if dd > 0 and net > 0 else 0.0,
-                "win_days": min(1.0, pos / 0.6), "frequency": min(1.0, days_with / 0.9), "win_rate": min(1.0, wr / 0.6),
-                "speed": float(np.mean([1 - min(m, 20) / 20 if m is not None else 0.0 for m in med.values()])) if med else 0.0}
-        score = sum(TF_WEIGHTS[k] * comp[k] for k in TF_WEIGHTS) if net > 0 and rows[bi]["sharpe"] > 0 else 0.0
-        out[tf] = {"best_params": dict(cands[bi]["params"]), "cand_index": int(bi), "sharpe": float(rows[bi]["sharpe"]), "net_pnl": net,
-                   "max_dd": dd, "profit_dd": (net / dd) if dd > 0 else None, "positive_days": pos, "losing_streak": int(streak),
-                   "n_trades": n_tr, "trades_per_day": n_tr / max(1, len(ds)), "days_with_trade": days_with, "trade_win_rate": wr,
-                   "n_combos": len(idx), "median_sharpe": float(np.median([rows[i]["sharpe"] for i in idx])),
-                   "pass_rate": pr, "median_days": med, "min_days": {a: r["min_days_seen"] for a, r in tm["accounts"].items()},
-                   "components": comp, "score": float(score)}
+        variants = {}
+        for d in DIRECTIONS:
+            cd = {**cands[bi], "fn": directional(cands[bi]["fn"], d), "direction": d}
+            ser = series[bi] if d == "both" else daily_series({tf: b}, cd, contract, contracts, slippage_ticks)
+            pnl = ser.reindex(dev_days).fillna(0.0).to_numpy()
+            variants[d] = (_profile(cd, b, pnl, ds, sharpe(pnl) if len(pnl) > 2 else 0.0, contract, contract_accounts, contracts,
+                                    slippage_ticks, goal_days, goal_rate), pnl)
+        chosen = "both"
+        for d, other in (("long", "short"), ("short", "long")):
+            beats = variants[d][0]["score"] >= variants["both"][0]["score"] + DIRECTION_MARGIN
+            drops_loser = variants[other][0]["net_pnl"] < 0 and _loses_in_most_slices(variants[other][1])
+            if beats and drops_loser and variants[d][0]["score"] > variants[chosen][0]["score"]:
+                chosen = d
+        prof = variants[chosen][0]
+        out[tf] = {"best_params": dict(cands[bi]["params"]), "cand_index": int(bi), "direction": chosen, "n_combos": len(idx),
+                   "median_sharpe": float(np.median([rows[i]["sharpe"] for i in idx])), **prof,
+                   "by_direction": {d: {k: variants[d][0][k] for k in ("sharpe", "net_pnl", "max_dd", "n_trades", "trade_win_rate", "score")}
+                                    for d in DIRECTIONS}}
     best = None
     if out:
         best = max(out, key=lambda k: (out[k]["score"], out[k]["sharpe"]))
-    return {"timeframes": out, "best_tf": best, "window_days": goal_days, "in_sample": True, "weights": TF_WEIGHTS,
-            "chosen_by": "score" if best and out[best]["score"] > 0 else "sharpe"}
+    return {"timeframes": out, "best_tf": best, "best_direction": out[best]["direction"] if best else "both", "window_days": goal_days,
+            "in_sample": True, "weights": TF_WEIGHTS, "chosen_by": "score" if best and out[best]["score"] > 0 else "sharpe",
+            "n_extra_trials": 2 * len(out)}
 
 
 def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules: PropRules,
@@ -334,9 +368,13 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
                             slippage_ticks, goal_days, goal_rate)
     best_i = by_tf["timeframes"][by_tf["best_tf"]]["cand_index"] if by_tf["best_tf"] else max(range(len(cands)), key=lambda i: rows[i]["sharpe"])
     surf = surface_metrics(rows, list(spec.ranges), th, pick=best_i)
+    direction = by_tf["best_direction"]
+    fcand = {**cands[best_i], "fn": directional(cands[best_i]["fn"], direction), "direction": direction}   # the version that goes on
+    registry.add_trials(by_tf["n_extra_trials"], f"direction:{spec.name}", experiment_id=eid, dataset_fp=dfp, market=market, kind="direction")
+    base_ser = series[best_i] if direction == "both" else daily_series({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, contract, contracts, slippage_ticks)
     say("optimizer", "done", "sweep finished")
     say("validator", "working", "walk-forward and market-drift check")
-    exits_rep = _exit_study({cands[best_i]["tf"]: tfs_dev[cands[best_i]["tf"]]}, cands[best_i], series[best_i], contract,
+    exits_rep = _exit_study({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, base_ser, contract,
                             contracts, slippage_ticks, dev_days, registry, spec.name, eid)
     best_exit = exits_rep["best"] if exits_rep["chosen"] else None
     # Walk-forward. For a surface that already looks robust it is NESTED (parameters, timeframe and stop/target are all
@@ -348,14 +386,14 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
         wf, _ = walk_forward(series, train_days, test_days)
         wf_kind, picks = "entry_only", []
     wf_pnl = float(wf.sum()) if len(wf) else 0.0
-    final_dev = daily_series({cands[best_i]["tf"]: tfs_dev[cands[best_i]["tf"]]}, cands[best_i], contract, contracts,
+    final_dev = daily_series({fcand["tf"]: tfs_dev[fcand["tf"]]}, fcand, contract, contracts,
                              slippage_ticks, exit=best_exit).reindex(dev_days).fillna(0.0)
     # How fast could this strategy pass a 25k and a 50k challenge? For EVERY study, on development data only (in-sample).
     timing = timing_report(final_dev.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, goal_rate, "development")
     sizing = size_study(final_dev.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, basis="development")
     quality = None
     if surf["robust"]:
-        quality = quality_checks(tfs_dev, cands[best_i], best_exit, contract, contracts, slippage_ticks, dev_days, th)
+        quality = quality_checks(tfs_dev, fcand, best_exit, contract, contracts, slippage_ticks, dev_days, th)
     pair = lambda ser: [[str(d)[:10], float(v)] for d, v in ser.items()]
     report = {"name": spec.name, "template": spec.template, "rationale": spec.rationale,
               "source": spec.source, "n_candidates": len(cands), "surface": surf, "quality": quality, "timing": timing, "by_timeframe": by_tf, "sizing": sizing, "base_contracts": contracts,
@@ -366,7 +404,7 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
               # chart data. dev_best is IN-SAMPLE (best of N combinations): the UI labels it so.
               "series": {"cut": str(cut)[:10], "wf_oos": pair(wf),
                          "dev_best": pair(final_dev), "locked": None,
-                         "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}, "exit": best_exit},
+                         "best_params": {**cands[best_i]["params"], "tf": cands[best_i]["tf"]}, "direction": direction, "exit": best_exit},
               "exits": exits_rep}
     # Beta check: only for surfaces that already look robust (it re-runs the dev sweep on a detrended copy).
     surf_d = None
@@ -379,7 +417,7 @@ def run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules:
     say("validator", "done", "validation finished")
     if surf["robust"] and wf_pnl > 0 and surf_d["robust"] and quality["ok"]:
         say("judge", "working", "looking at the hidden block")
-        cand, tf = cands[best_i], cands[best_i]["tf"]
+        cand, tf = fcand, fcand["tf"]
         s_full, rc, pos_full, b_full = guarded_full_series(bars, cand, best_exit, contract, contracts, slippage_ticks, dev_days, final_dev, spec.name)
         report["ledger_check"] = rc
         locked_days = [d for d in sessions if d >= cut]

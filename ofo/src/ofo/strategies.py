@@ -246,3 +246,18 @@ GRIDS = {
     "mean_reversion": (mean_reversion, [{"window": w, "z": z} for w in (20, 50) for z in (1.5, 2.0, 2.5)]),
 }
 TIMEFRAMES = ("5min", "15min", "30min", "60min")
+
+
+DIRECTIONS = ("both", "long", "short")
+
+
+def directional(fn, direction: str | None):
+    """The same strategy restricted to one side: 'long' keeps only the long positions, 'short' only the short ones."""
+    if direction in (None, "both"):
+        return fn
+
+    def restricted(bars, **params):
+        pos = fn(bars, **params)
+        return pos.clip(lower=0.0) if direction == "long" else pos.clip(upper=0.0)
+    restricted.__name__ = f"{getattr(fn, '__name__', 'strategy')}_{direction}_only"
+    return restricted

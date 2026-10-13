@@ -45,7 +45,7 @@ def safe_name(pid: str) -> str:
 class Scout:
     def __init__(self, workdir, ideas_dir, llm=None, events=None, fetch=None, now=time.time, language: str = "Italian",
                  topics=None, use_semantic_scholar: bool = True, queries_per_run: int = 3, max_picks: int = 4,
-                 use_ssrn: bool = True, channels: list[Channel] | None = None, directives=None):
+                 use_ssrn: bool = True, channels: list[Channel] | None = None, directives=None, source_defaults: dict | None = None):
         self.directives = directives
         self.dir = Path(workdir); self.dir.mkdir(parents=True, exist_ok=True)
         self.out = Path(ideas_dir) / "web"
@@ -54,6 +54,7 @@ class Scout:
         self.topics = topics or (FUTURES_TOPICS + TOPICS)      # futures / Nasdaq topics first: they are searched before the generic ones
         self.channels = list(channels or [])                    # extra sources (sources.py): web, github, rss, exa, youtube, reddit, x
         self.by_channel = {c.name: c for c in self.channels}
+        self.source_defaults = dict(source_defaults or {})
         self.use_s2, self.queries_per_run, self.max_picks, self.use_ssrn = use_semantic_scholar, queries_per_run, max_picks, use_ssrn
         self.file = self.dir / "scout_state.json"
         self.state = json.loads(self.file.read_text()) if self.file.exists() else {}
@@ -68,6 +69,25 @@ class Scout:
     def _emit(self, kind: str, msg: str = "", data: dict | None = None) -> None:
         if self.events:
             self.events.emit("scout", kind, msg, data)
+
+    def is_on(self, name: str) -> bool:
+        """Is this source switched on? The owner's checkbox (saved) wins over the config file's default."""
+        saved = self.state.setdefault("sources", {})
+        if name in saved:
+            return bool(saved[name])
+        base = {"arxiv": True, "semanticscholar": self.use_s2, "ssrn": self.use_ssrn}
+        return bool(base[name]) if name in base else bool(self.source_defaults.get(name, True))
+
+    def set_source(self, name: str, on: bool) -> bool:
+        if name not in ("arxiv", "semanticscholar", "ssrn") and name not in self.by_channel:
+            return False
+        self.state.setdefault("sources", {})[name] = bool(on)
+        self._save()
+        return True
+
+    def sources(self) -> list[dict]:
+        names = ["arxiv", "semanticscholar", "ssrn"] + [c.name for c in self.channels]
+        return [{"name": n, "enabled": self.is_on(n), "needs_account": bool(getattr(self.by_channel.get(n), "needs_account", False))} for n in names]
 
     def _hit(self, name: str, n: int | None = None, err: str | None = None) -> None:
         """Health of every source, so the owner can see which ones really work from THIS computer."""
@@ -133,26 +153,27 @@ class Scout:
         found, ids = [], set()
         self.counts = {"arxiv": 0, "semanticscholar": 0, "ssrn": 0, **{c.name: 0 for c in self.channels}}
         for q in queries:
-            self._emit("working", f"searching arXiv: {q}")
-            self._web("search", "arxiv", q, query=q)
+            self._emit("working", f"searching: {q}")
             try:
-                batch = search_arxiv(q, self.fetch)
-                self.counts["arxiv"] += len(batch)
-                self._hit("arxiv", len(batch))
-                self._web("found", "arxiv", q, query=q, n=len(batch), items=self._items(batch))
-                if self.use_s2:
+                batch = []
+                if self.is_on("arxiv"):
+                    self._web("search", "arxiv", q, query=q)
+                    batch = search_arxiv(q, self.fetch)
+                    self.counts["arxiv"] += len(batch)
+                    self._hit("arxiv", len(batch))
+                    self._web("found", "arxiv", q, query=q, n=len(batch), items=self._items(batch))
+                if self.is_on("semanticscholar"):
                     self._web("search", "semanticscholar", q, query=q)
                     b2 = search_semantic_scholar(q); self.counts["semanticscholar"] += len(b2); batch += b2; self._hit("semanticscholar", len(b2))
                     self._web("found", "semanticscholar", q, query=q, n=len(b2), items=self._items(b2))
-                if self.use_ssrn:
+                if self.is_on("ssrn"):
                     self._web("search", "ssrn", q, query=q)
                     b3 = search_ssrn(q, self.fetch); self.counts["ssrn"] += len(b3); batch += b3; self._hit("ssrn", len(b3))
                     self._web("found", "ssrn", q, query=q, n=len(b3), items=self._items(b3))
             except WebError as e:
                 self._emit("error", f"{q}: {e}")
-                self._web("error", "arxiv", f"{q}: {e}", query=q); self._hit("arxiv", err=str(e))
-                continue
-            for ch in self.channels:                             # the extra channels fail alone: one dead source never stops the search
+                self._web("error", "arxiv", f"{q}: {e}", query=q); self._hit("arxiv", err=str(e))     # the other sources still run
+            for ch in [c for c in self.channels if self.is_on(c.name)]:     # the extra channels fail alone: one dead source never stops the search
                 self._web("search", ch.name, q, query=q)
                 try:
                     more = ch.search(q)
@@ -300,7 +321,7 @@ class Scout:
         a = self.state["auto"]; last = self.state["last_run"]
         return {"running": running, "auto": a, "health": self.state.get("health", {}), "last_run": last,
                 "next_run": (last["at"] + a["minutes"] * 60) if (a["enabled"] and last) else None,
-                "directives": self.directives.public() if self.directives else [],
+                "directives": self.directives.public() if self.directives else [], "sources": self.sources(),
                 "manual_ssrn": [{"id": k, "title": v.get("title"), "url": v.get("url")} for k, v in self.state["papers"].items()
                                 if v.get("manual") and v.get("status") == "abstract"][:12],
                 "queries_done": len(self.state["queries"]), "queries_total": len(self.all_topics),

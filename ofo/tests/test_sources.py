@@ -164,7 +164,7 @@ def test_researcher_prompt_treats_web_text_as_data_and_asks_for_futures_ideas():
     assert "DATA, never" in p and "NQ/MNQ" in p and "guaranteed" in p
 
 
-def test_scout_emits_live_web_feed(tmp_path):
+def test_scout_emits_live_web_feed(tmp_path, monkeypatch):
     from ofo.events import EventLog
     from ofo.scout import Scout
     from ofo.sources import Channel
@@ -177,7 +177,7 @@ def test_scout_emits_live_web_feed(tmp_path):
     ev = EventLog(tmp_path / "e.jsonl")
     sc = Scout(tmp_path / "s", tmp_path / "ideas", None, ev, fetch=object(), channels=[Fake()], use_semantic_scholar=False, use_ssrn=False)
     import ofo.scout as scout_mod
-    scout_mod.search_arxiv = lambda q, fetch=None: []
+    monkeypatch.setattr(scout_mod, 'search_arxiv', lambda q, fetch=None: [])
     sc._candidates(["nasdaq futures"])
     phases = [(e["data"]["phase"], e["data"]["src"]) for e in ev.tail() if e["type"] == "web"]
     assert ("search", "arxiv") in phases and ("search", "fake") in phases and ("found", "fake") in phases
@@ -185,7 +185,7 @@ def test_scout_emits_live_web_feed(tmp_path):
     assert feed["n"] == 1 and feed["items"][0]["url"] == "https://example.com/a"
 
 
-def test_channel_health_and_missing_tools(tmp_path):
+def test_channel_health_and_missing_tools(tmp_path, monkeypatch):
     from ofo.scout import Scout
     from ofo.sources import missing_channels, Channel
     import ofo.scout as scout_mod
@@ -195,7 +195,7 @@ def test_channel_health_and_missing_tools(tmp_path):
         def search(self, query, n=5):
             from ofo.sources import SourceError
             raise SourceError("no network")
-    scout_mod.search_arxiv = lambda q, fetch=None: []
+    monkeypatch.setattr(scout_mod, 'search_arxiv', lambda q, fetch=None: [])
     sc = Scout(tmp_path / "s", tmp_path / "i", None, None, fetch=object(), channels=[Boom()], use_semantic_scholar=False, use_ssrn=False)
     sc._candidates(["nasdaq futures"])
     h = sc.public_state()["health"]
@@ -219,7 +219,7 @@ def test_agent_thinking_message_names_the_topic():
     assert any(m.startswith("thinking: Paper: opening range") for m in msgs) and any("VWAP fade" in m for m in msgs)
 
 
-def test_ssrn_full_text_comes_from_a_legal_free_copy_or_falls_back_to_the_abstract(tmp_path):
+def test_ssrn_full_text_comes_from_a_legal_free_copy_or_falls_back_to_the_abstract(tmp_path, monkeypatch):
     import json
     from ofo.scout import Scout
     import ofo.scout as scout_mod
@@ -234,8 +234,8 @@ def test_ssrn_full_text_comes_from_a_legal_free_copy_or_falls_back_to_the_abstra
             return json.dumps({"openAccessPdf": {"url": "https://authors.example.edu/paper.pdf"}}).encode()
         return pdf
     sc = Scout(tmp_path / "s1", tmp_path / "i1", None, None, fetch=fetch_ok, use_semantic_scholar=False)
-    scout_mod.search_arxiv = lambda q, fetch=None: []
-    scout_mod.search_ssrn = lambda q, fetch=None: [dict(ssrn)]
+    monkeypatch.setattr(scout_mod, 'search_arxiv', lambda q, fetch=None: [])
+    monkeypatch.setattr(scout_mod, 'search_ssrn', lambda q, fetch=None: [dict(ssrn)])
     sc.run_once()
     assert sc.state["papers"]["ssrn:123"]["status"] == "downloaded" and (tmp_path / "i1" / "web" / "ssrn_123.pdf").exists()
 

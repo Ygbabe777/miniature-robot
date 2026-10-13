@@ -333,8 +333,11 @@ def load_config(path: str | Path | None) -> dict:
     return cfg
 
 
-def build_channels(config_path: str | Path | None = None, fetch=None, runner=None) -> list[Channel]:
+def build_channels(config_path: str | Path | None = None, fetch=None, runner=None, include_all: bool = False) -> list[Channel]:
+    """include_all: build every channel whose tool is installed, whatever the file says; the app's checkboxes then switch them."""
     cfg = load_config(config_path)
+    if include_all:
+        cfg["channels"] = {k: True for k in cfg["channels"]}
     on, kw = cfg["channels"], {"fetch": fetch, "runner": runner, "max_chars": cfg["max_doc_chars"]}
     chans: list[Channel] = []
     if on.get("github"):

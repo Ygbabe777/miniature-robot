@@ -261,3 +261,29 @@ def test_every_timeframe_is_tried_and_the_final_version_is_the_best_timeframe(tm
 def test_timeframe_score_weights_sum_to_one_and_pass_probability_leads(tmp_path):
     from ofo.optimizer import TF_WEIGHTS
     assert abs(sum(TF_WEIGHTS.values()) - 1.0) < 1e-9 and TF_WEIGHTS["pass"] > TF_WEIGHTS["profit_dd"]
+
+
+def test_direction_variants_are_tried_counted_and_applied_consistently(tmp_path):
+    import pandas as pd
+    from ofo.optimizer import DIRECTION_CHUNKS, _loses_in_most_slices
+    from ofo.strategies import directional
+    pos = pd.Series([1.0, -1.0, 0.0, 1.0, -1.0])
+    f = lambda b, **k: pos
+    assert directional(f, "long")(None).tolist() == [1, 0, 0, 1, 0] and directional(f, "short")(None).tolist() == [0, -1, 0, 0, -1]
+    assert directional(f, "both") is f
+    assert _loses_in_most_slices([-1] * 14 + [5] * 6) and not _loses_in_most_slices([3] * 10 + [-1] * 10)
+    bars = synth(n_sessions=200, drift_ar=0.9, seed=7)
+    reg = TrialRegistry(tmp_path / "r.db")
+    rep = run_study(bars, from_dict(SPEC), MNQ, PRESETS["50k"], reg, all_timeframes=True)
+    by = rep["by_timeframe"]
+    d = rep["series"]["direction"]
+    assert d in ("both", "long", "short") and by["timeframes"][by["best_tf"]]["direction"] == d
+    assert set(by["timeframes"][by["best_tf"]]["by_direction"]) == {"both", "long", "short"}
+    kinds = [e for e in reg.experiments() if e.get("kind") == "direction"]
+    assert kinds and kinds[0]["n_trials"] == by["n_extra_trials"]                    # the extra variants count as trials
+    from ofo.trades import extract_trades
+    from ofo.strategies import TEMPLATES
+    params = dict(rep["series"]["best_params"]); tf = params.pop("tf")
+    tr = extract_trades(bars, TEMPLATES["breakout"].fn, params, tf, MNQ, 2, direction=d)
+    if d != "both":
+        assert all((t["side"] > 0) == (d == "long") for t in tr)                      # a long-only strategy never shorts
