@@ -398,3 +398,47 @@ def test_two_studies_run_one_after_the_other_and_the_waiting_one_says_who_it_wai
             break
         time.sleep(0.3)
     assert [lab.jobs[j["id"]]["status"] for j in (a, b)] == ["done", "done"] and lab.engine_state()["kind"] is None
+
+
+def test_the_engine_tests_strategies_while_the_researcher_is_busy_researching(tmp_path):
+    """Reported: the Researcher kept 'working' and Optimizer/Validator/Judge were never called. Researching must not stop testing."""
+    lab = _lab_with_researcher(tmp_path, {"strategies": [], "concepts": []})
+    lab.ap["enabled"] = True
+    lab.busy["research"] = 1                                                      # the Scout/Researcher is in the middle of a long search
+    started = []
+    lab.start = lambda sid: started.append(sid) or {"id": "x"}
+    assert not lab.pending
+    assert lab.autopilot_tick() is True and len(started) == 1                      # starters are seeded and the first one is handed to the engine
+    d = lab.researcher_doing()                                                     # and what the Researcher does is visible, not a black box
+    assert "reading" in d["now"] and isinstance(d["events"], list)
+
+
+def test_the_researcher_rereads_the_obsidian_notes_before_proposing_but_never_quotes_verdicts(tmp_path):
+    """The vault is the agents' brain: the owner's words steer the hypotheses; strategy notes (verdicts, locked results) stay out."""
+    from ofo import obsidian
+    vault = tmp_path / "vault"; vault.mkdir()
+    root = obsidian.ensure_vault(vault)
+    (root / "Idee" / "Mie.md").write_text("Penso che dopo uno sweep dei minimi con volume alto il rientro sia piu affidabile.", encoding="utf-8")
+    (root / "Strategie").mkdir(exist_ok=True)
+    (root / "Strategie" / "ORB x.md").write_text("---\ntags: [ofo]\n---\n# ORB x\nVerdetto: APPROVED OOS sharpe 9.99\n" + obsidian.END + "\n## Le mie note\nmi piace la regola del range stretto", encoding="utf-8")
+    prop = {"name": "Sweep dal vault", "template": "sweep_reclaim", "timeframes": ["5min"], "hypothesis": CARD,
+            "ranges": {"sweep_atr": [0.2, 0.3], "reclaim_bars": [2, 3], "level_set": [2], "ctx": [0]},
+            "rationale": "MECCANISMO ... EVIDENZA ... QUANDO NON FUNZIONA ..."}
+    lab = _lab_with_researcher(tmp_path, {"strategies": [prop], "concepts": []})
+    lab.obs["vault"] = str(vault)
+    text, n = lab.vault_brief()
+    assert n >= 2 and "sweep dei minimi con volume alto" in text and "range stretto" in text      # the owner's words, in the brain
+    assert "APPROVED" not in text and "9.99" not in text                                           # no verdicts / locked results leak into the prompt
+    assert lab.hypothesize(now=10_000.0, sync=True) == 1
+    sent = "\n".join(m["content"] for msgs in lab.llm["researcher"].msgs for m in msgs)
+    assert "OBSIDIAN MEMORY" in sent and "sweep dei minimi con volume alto" in sent and "9.99" not in sent
+    assert any("Obsidian: rileggo" in e["message"] for e in lab.events.tail())
+
+
+def test_only_extremely_important_things_are_said_out_loud_and_not_repeated(tmp_path):
+    from ofo.events import EventLog
+    ev = EventLog(tmp_path / "e.jsonl")
+    assert ev.alert("researcher", "ai_down", "AI non raggiungibile") is True
+    assert ev.alert("researcher", "ai_down", "AI non raggiungibile") is False                       # same problem: not shouted again within the cooldown
+    assert ev.alert("judge", "approved:x", "approvata", 0.0) and ev.alert("judge", "approved:x", "approvata", 0.0)   # each approval is announced
+    assert [e["type"] for e in ev.tail()].count("alert") == 3

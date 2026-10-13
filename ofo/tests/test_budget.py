@@ -21,6 +21,7 @@ TUESDAY = at(2026, 10, 13)          # the owner's second working day
 
 
 def gov(tmp_path, clock=None, **cfg):
+    cfg.setdefault("daily_limit", True)
     return BudgetGovernor(tmp_path / "b.json", {"weekly_usd": 15, "remaining_usd": 12, **cfg}, now=clock or Clock(TUESDAY))
 
 
@@ -31,7 +32,7 @@ def test_daily_allowance_is_the_balance_split_over_the_working_days_left(tmp_pat
     g.record("researcher", "m", 500_000, 500_000)                           # 1M tokens at the default $3/M = $3.00
     assert abs(g.spent_today() - 3.0) < 1e-9 and abs(g.remaining() - 9.0) < 1e-9
     assert abs(g.daily_cap() - 3.0) < 1e-9                                  # today's cap does not shrink as you spend it
-    nxt = BudgetGovernor(tmp_path / "b.json", None, now=Clock(at(2026, 10, 14)))     # tomorrow: 9 / 3 days
+    nxt = BudgetGovernor(tmp_path / "b.json", {"daily_limit": True}, now=Clock(at(2026, 10, 14)))     # tomorrow: 9 / 3 days
     assert nxt.days_left() == 3 and abs(nxt.daily_cap() - 3.0) < 1e-9 and nxt.spent_today() == 0.0
 
 
@@ -64,7 +65,7 @@ def test_new_week_restores_the_full_allowance(tmp_path):
     g = gov(tmp_path)
     g.record("researcher", "m", 1_000_000, 1_000_000)
     assert g.remaining() < 12
-    mon = BudgetGovernor(tmp_path / "b.json", None, now=Clock(at(2026, 10, 19)))      # next Monday
+    mon = BudgetGovernor(tmp_path / "b.json", {"daily_limit": True}, now=Clock(at(2026, 10, 19)))      # next Monday
     assert abs(mon.remaining() - 15.0) < 1e-9 and mon.days_left() == 5 and abs(mon.daily_cap() - 3.0) < 1e-9
 
 
@@ -142,3 +143,15 @@ def test_lab_does_not_start_ai_work_when_the_budget_says_no(tmp_path):
     assert lab.autopilot_state()["phase"] in ("budget", "waiting", "testing", "paused")
     st = lab.set_budget(remaining_usd=9.5)
     assert st["remaining_usd"] == 9.5 and lab.state()["budget"]["remaining_usd"] == 9.5
+
+
+def test_no_daily_limit_by_default_only_the_weekly_allowance_counts(tmp_path):
+    g = gov(tmp_path, daily_limit=False)
+    g.record("researcher", "m", 1_500_000, 1_500_000)                        # $9.00 in one day: far over the old $3.00 daily cap
+    assert g.mode() != "paused_day" and g.allow("researcher") == (True, "")
+    assert g.state()["daily_limit"] is False
+    g.record("researcher", "m", 500_000, 500_000)                            # remaining $0.00 -> under the safety reserve
+    assert g.mode() == "blocked" and g.allow("researcher")[0] is False       # the weekly allowance still holds
+    assert BudgetGovernor(tmp_path / "n.json", {"weekly_usd": 15, "remaining_usd": 12}, now=Clock(TUESDAY)).cfg["daily_limit"] is False
+    eco = gov(tmp_path / "e", daily_limit=False, remaining_usd=3.0)          # 20% of the week left: save tokens, keep working
+    assert eco.mode() == "economy" and eco.allow("researcher")[0] is True

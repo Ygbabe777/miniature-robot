@@ -93,8 +93,8 @@
   }
   $('#lh').onclick = () => setHidden('left', !panels.left.el.classList.contains('hidden'));
   $('#rh').onclick = () => setHidden('right', !panels.right.el.classList.contains('hidden'));
-  let bubOn = store.get('ofo_bubbles', true);
-  $('#bh').onclick = () => { bubOn = !bubOn; store.set('ofo_bubbles', bubOn); $('#bh').style.opacity = bubOn ? 1 : .45; if (window.LabScene) LabScene.setBubbles(bubOn); };
+  let bubOn = store.get('ofo_bubbles_all', false);                   // false: only important messages get a bubble
+  $('#bh').onclick = () => { bubOn = !bubOn; store.set('ofo_bubbles_all', bubOn); $('#bh').style.opacity = bubOn ? 1 : .45; if (window.LabScene) LabScene.setBubbles(bubOn); };
   ['left', 'right'].forEach(sd => { if (store.get('ofo_hide_' + sd, false)) setHidden(sd, true); });
   $('#bh').style.opacity = bubOn ? 1 : .45; if (window.LabScene) LabScene.setBubbles(bubOn);
   document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return; if (e.key === '[') $('#lh').click(); if (e.key === ']') $('#rh').click(); });
@@ -124,6 +124,7 @@
   }
   function noteEvent(e) {
     if (e.type === 'need_pdf') { needPdf(e); notify('left'); }
+    if (e.type === 'alert') { toast(`❗ <b>${esc(AGENTS[e.agent] || e.agent)}</b><div>${esc(e.message)}</div>`, 20000); notify('left'); }
     if (e.type === 'verdict' || e.type === 'autostart' || e.type === 'template_request') notify('right', 'strategies');
     if (e.type === 'verdict' || e.type === 'download' || e.type === 'autostart' || e.type === 'budget' || e.type === 'proposal') notify('left');
     if (e.agent === 'strategist' && (e.type === 'proposal' || e.type === 'message')) notify('right', 'chat');
@@ -171,7 +172,7 @@
     const cls = b.mode === 'normal' ? 'apon' : b.mode === 'economy' ? 'apm' : 'apoff';
     box.innerHTML = `<div class="${cls}">${t('bud_mode_' + b.mode)}</div>
       <div class="apm">${t('bud_left', { r: b.remaining_usd.toFixed(2), w: b.weekly_usd, d: b.days_left })}</div>
-      <div class="apm">${t('bud_today', { s: b.spent_today_usd.toFixed(3), c: b.autonomous_cap_usd.toFixed(2), p: pctDay })} · ${(b.tokens_today / 1000).toFixed(0)}k tok</div>
+      <div class="apm">${b.daily_limit === false ? t('bud_today_free', { s: b.spent_today_usd.toFixed(3) }) : t('bud_today', { s: b.spent_today_usd.toFixed(3), c: b.autonomous_cap_usd.toFixed(2), p: pctDay })} · ${(b.tokens_today / 1000).toFixed(0)}k tok</div>
       <div class="apm">${t('bud_price', { p: b.usd_per_million.toFixed(2) })} <i>(${esc(b.price_source)})</i></div>
       <div class="srow"><input id="bud-in" type="number" step="0.01" min="0" placeholder="${t('bud_ph')}" style="width:90px"> <button class="btn small" id="bud-go">${t('bud_set')}</button></div>
       <div class="apn">${t('bud_note')}</div>`;
@@ -703,7 +704,10 @@
     const rec = (r.recent || []).slice().reverse().map(x => x.error ? `<div class="no">✘ ${esc(x.at)} ${esc(x.file)}: ${esc(x.error)}</div>`
       : `<div class="${x.proposals ? 'ok' : ''}">${x.proposals ? '✔' : '·'} ${esc(x.at)} ${esc(x.file)}: ${x.proposals} ${t('rs_prop')}${(x.rejected || []).length ? ' (' + esc(x.rejected[0]) + ')' : ''}</div>`).join('');
     const h = r.hypothesis, hy = h ? `<div class="smeta">${t('rs_hyp')}: <b class="${h.ready ? 'ok' : ''}">${esc(h.ready ? t('rs_hyp_ready') : h.why)}</b>${(h.log || []).length ? ' · ' + esc(h.log[h.log.length - 1].family) + ': ' + (h.log[h.log.length - 1].error ? '✘ ' + esc(h.log[h.log.length - 1].error) : h.log[h.log.length - 1].proposals + ' ' + t('rs_prop')) : ''}</div>` : '';
-    el.innerHTML = `<div class="smeta">${bits}</div>${hy}${rec}`;
+    const dg = r.doing || { now: [], events: [] };
+    const nowL = `<div class="smeta">${t('rs_now')}: <b class="${dg.now.length ? 'ok' : ''}">${dg.now.length ? dg.now.map(k => t('rs_now_' + k)).join(' + ') : t('rs_now_idle')}</b></div>`;
+    const evL = dg.events.slice().reverse().map(x => `<div class="smeta">${esc(x.at)} ${esc(x.agent)} · ${esc(x.type)}: ${esc(x.message)}</div>`).join('');
+    el.innerHTML = `<div class="smeta">${bits}</div>${nowL}${hy}${rec}${evL}`;
   }
 
   // ---------- PDF the Researcher asked for: notification + upload ----------

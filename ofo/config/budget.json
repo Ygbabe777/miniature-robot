@@ -5,6 +5,8 @@
   "usd_per_million_default": 3.0,
   "chat_reserve_pct": 15,
   "economy_at_pct": 60,
+  "daily_limit": false,
+  "economy_weekly_pct": 25,
   "weekend_pause": true,
   "prices": {}
 }

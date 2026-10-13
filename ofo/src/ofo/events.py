@@ -21,6 +21,17 @@ class EventLog:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
 
+    def alert(self, agent: str, key: str, message: str, cooldown_s: float = 1800.0) -> bool:
+        """Something of EXTREME importance, said to the owner out loud (speech bubble + toast). The same key is not repeated within
+        the cooldown: an agent that keeps failing must not shout all day. Everything routine stays a quiet event."""
+        import time
+        last = self.__dict__.setdefault("_alerts", {})
+        if time.time() - last.get(key, 0.0) < cooldown_s:
+            return False
+        last[key] = time.time()
+        self.emit(agent, "alert", message)
+        return True
+
     def read(self) -> list[dict]:
         if not self.path.exists():
             return []

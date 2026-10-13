@@ -253,3 +253,11 @@ Una sola configurazione (`rules/research.json`, `version` + hash = *config_versi
 ## Ipotesi del Researcher e motore: chi aspetta chi
 - **Il Researcher sviluppa ipotesi da solo** (fase 1, `Lab.hypothesize`): quando la coda dei test scende sotto `hypothesis.queue_low` (4) chiede all'AI, famiglia per famiglia (la scelta usa lo stesso allocatore dei test), 1-2 ipotesi con scheda e range plausibili tratti da `rules/research.json`. Funziona anche mentre lo Scout sta cercando e mentre si testano altre strategie; al massimo una richiesta ogni `min_gap_min` minuti (più lenta in modalità risparmio); il consumo conta nel tetto della fase "hypothesis". Se l'AI non è raggiungibile lo dice (riga di stato e feed) e riprova dopo l'intervallo.
 - **Un solo studio alla volta** (sono pesanti): uno studio in coda dice per chi aspetta (studio, fase, da quanti minuti, oppure revisione prop farming); dossier, fascicolo e deployment paper si fanno dopo aver liberato il motore; la revisione delle strategie vecchie cede il passo ai nuovi studi.
+
+
+## Vignette, Obsidian e budget (aggiornamento)
+
+- **Vignette sopra gli agenti:** per impostazione predefinita parlano solo per cose di estrema importanza (strategia APPROVATA con fascicolo pronto, test fallito, AI non raggiungibile, budget settimanale esaurito): vignetta gialla con bordo rosso, un avviso a comparsa e il puntino rosso. Lo stesso problema non viene ripetuto per 30 minuti. Il pulsante 💬 mostra anche i pensieri di routine.
+- **Obsidian come memoria del Researcher:** prima di proporre ipotesi rilegge le note in `<vault>/OFO/` (le tue parole e le idee già archiviate) e cita la nota che l'ha ispirata. Le note delle strategie (verdetti, risultati OOS) NON entrano nel prompt: non devono guidare la scelta delle famiglie.
+- **Nessun limite giornaliero di token:** conta solo il budget settimanale (`weekly_usd`); sotto il 25% (`economy_weekly_pct`) passa in modalità economica, sotto la riserva (5%) si ferma. Per rimettere il limite giornaliero: `"daily_limit": true` in `config/budget.json`. I limiti giornalieri di *prove* (screening/validazione) restano: proteggono l'onestà statistica.
+- **Il Researcher non ferma i test:** le strategie di partenza vengono messe in coda e testate anche mentre il Researcher cerca; nella riga di stato vedi "Ora sta facendo" e i suoi ultimi eventi.

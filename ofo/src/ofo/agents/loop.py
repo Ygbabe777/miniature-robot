@@ -104,6 +104,7 @@ class ResearchLoop:
                                                 memory=self.memory(), info=info, max_chunks=self.max_chunks)
             except Exception as e:                       # unreadable file or LLM down / budget / key refused: retry later, never "consumed"
                 self.events.emit("researcher", "error", f"{p.name}: AI non utilizzabile ({type(e).__name__}: {str(e)[:160]}): il file resta da leggere")
+                self.events.alert("researcher", "ai_down", f"Non riesco a usare l'AI ({type(e).__name__}): non posso proporre strategie finché non torna raggiungibile.")
                 self.events.emit("researcher", "idle", "stopped")
                 self.ingest_log.append({"at": time.time(), "file": p.name, "error": f"{type(e).__name__}: {str(e)[:160]}", "proposals": 0, "rejected": []})
                 continue

@@ -31,7 +31,9 @@ DEFAULTS = {
     "prices": {},                            # {model: {"in": usd per 1M prompt tokens, "out": usd per 1M completion tokens}}
     "chat_reserve_pct": 15,                  # share of each day kept for the chat (Strategist)
     "safety_reserve_pct": 5,                 # of the weekly allowance: below this nothing runs
-    "economy_at_pct": 60,                    # share of the autonomous allowance after which the lab saves tokens
+    "economy_at_pct": 60,                    # share of the autonomous allowance after which the lab saves tokens (only with daily_limit)
+    "daily_limit": False,                    # False: no per-day cap, only the weekly allowance counts (set True to split it over the days)
+    "economy_weekly_pct": 25,                # without a daily limit: below this share of the weekly allowance the lab saves tokens
     "weekend_pause": True,
 }
 AUTONOMOUS_EXEMPT = {"strategist"}           # the chat is user-initiated
@@ -164,6 +166,8 @@ class BudgetGovernor:
             return "blocked"
         if not self.is_work_day() and self.cfg["weekend_pause"]:
             return "paused_weekend"
+        if not self.cfg["daily_limit"]:
+            return "economy" if self.remaining() <= self.cfg["weekly_usd"] * self.cfg["economy_weekly_pct"] / 100 else "normal"
         cap = self.autonomous_cap()
         spent = self.spent_today()
         if spent >= cap:
@@ -178,7 +182,7 @@ class BudgetGovernor:
         if m == "blocked":
             return False, "weekly budget used up (safety reserve reached)"
         if role in AUTONOMOUS_EXEMPT:
-            if self.daily_cap() and self.spent_today() >= self.daily_cap() and self.is_work_day():
+            if self.cfg["daily_limit"] and self.daily_cap() and self.spent_today() >= self.daily_cap() and self.is_work_day():
                 return False, "today's allowance (including the chat reserve) is used up"
             return True, ""
         if m == "paused_weekend":
@@ -198,7 +202,7 @@ class BudgetGovernor:
     def state(self) -> dict:
         self._ensure_week()
         days = sorted(self.s["usage"].items())[-7:]
-        return {"mode": self.mode(), "weekly_usd": self.cfg["weekly_usd"], "remaining_usd": round(self.remaining(), 4),
+        return {"mode": self.mode(), "daily_limit": bool(self.cfg["daily_limit"]), "weekly_usd": self.cfg["weekly_usd"], "remaining_usd": round(self.remaining(), 4),
                 "daily_cap_usd": round(self.daily_cap(), 4), "autonomous_cap_usd": round(self.autonomous_cap(), 4),
                 "spent_today_usd": round(self.spent_today(), 4), "tokens_today": self.tokens_today(),
                 "days_left": self.days_left(), "usd_per_million": round(self.blended(), 4),

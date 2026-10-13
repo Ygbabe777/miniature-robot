@@ -236,3 +236,6 @@ h2{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;c
 
 #research .bar{display:inline-block;width:90px;height:8px;background:#222;vertical-align:middle;border:1px solid #444}#research .bar i{display:block;height:100%;background:var(--accent)}
 #research .two{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:11px;margin:6px 0}#research tr.dim{opacity:.5}
+
+.bubble.alert{background:#fff3b0;border-color:#c1121f;box-shadow:3px 3px 0 #c1121f;font-weight:600;opacity:1;animation:alertpulse 1.6s ease-in-out infinite}
+@keyframes alertpulse{50%{transform:translate(-50%,-104%)}}

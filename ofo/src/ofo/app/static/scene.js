@@ -396,10 +396,14 @@
   // ---------- events ----------
   let gearSpeed = 0.4, partSpeed = 0.3, optRunning = false, valUntil = 0, heatT = 0;
   const now = () => performance.now() / 1000;
-  let bubblesOn = true;
+  let bubblesOn = false;                                              // routine thoughts are off by default: bubbles are for what matters
   const MAP = { risk: 'validator', researcher: 'research', scout: 'research', strategist: 'strategist', you: 'strategist', trader: 'trader', optimizer: 'optimizer', planner: 'optimizer', validator: 'validator', judge: 'judge', auditor: 'judge', lab: 'judge' };
-  function speak(station, text, secs) {
+  function speak(station, text, secs, alert) {
     const r = robots[station]; if (!r || !text) return;
+    if (!alert) {
+      if (!bubblesOn || (r.alertUntil || 0) > now()) { r.until = now() + 2.5; return; }     // routine thoughts only when asked; never over an important message
+      r.bub.classList.remove('alert');
+    } else { r.alertUntil = now() + 120; r.bub.classList.add('alert'); }
     r.bub.textContent = text.length > 150 ? text.slice(0, 147) + '...' : text;
     r.bubUntil = now() + (secs || 6); r.until = now() + 2.5; r.thoughtAt = now();
   }
@@ -439,7 +443,8 @@
     if (ev.type === 'study_started') setAgentState('optimizer', 'working');          // older logs without lifecycle events
     if (ev.agent === 'judge' && ev.type === 'verdict') { setAgentState('judge', 'done'); setAgentState('validator', 'done'); }
     const st = MAP[ev.agent];
-    if (st && ev.type === 'web') speak(st, ({ search: '🔎 ', found: '📄 ', read: '📖 ', saved: '💾 ', error: '⚠ ' }[ev.data && ev.data.phase] || '') + (ev.data && ev.data.src ? ev.data.src + ': ' : '') + ev.message);
+    if (st && ev.type === 'alert') speak(st, '❗ ' + ev.message, 120, true);
+    else if (st && ev.type === 'web') speak(st, ({ search: '🔎 ', found: '📄 ', read: '📖 ', saved: '💾 ', error: '⚠ ' }[ev.data && ev.data.phase] || '') + (ev.data && ev.data.src ? ev.data.src + ': ' : '') + ev.message);
     else if (st && ev.type === 'board') speak(st, '💬 ' + ev.message, 9);
     else if (st) speak(st, ({ working: '💭 ', verdict: '⚖ ', proposal: '💡 ', error: '⚠ ' }[ev.type] || '') + ev.message);
     const msg = ev.message || '';
@@ -483,8 +488,9 @@
       r.tag.style.display = vis ? 'block' : 'none'; r.tag.style.left = sx + 'px'; r.tag.style.top = sy + 'px';
       r.bub.style.left = sx + 'px'; r.bub.style.top = (sy - 22) + 'px';
       const age = now() - (r.thoughtAt || -1e9), fresh = age < 30;       // the last thought stays up: bright while fresh, dim for 5 min, then gone (or while working)
-      r.bub.classList.toggle('on', bubblesOn && vis && !!r.bub.textContent && (age < 300 || r.state === 'working'));
-      r.bub.classList.toggle('old', !fresh && r.state !== 'working');
+      const isAlert = (r.alertUntil || 0) > now();
+      r.bub.classList.toggle('on', vis && !!r.bub.textContent && (isAlert || (bubblesOn && (age < 300 || r.state === 'working'))));
+      r.bub.classList.toggle('old', !isAlert && !fresh && r.state !== 'working');
     });
   }
   function frame() {
