@@ -61,6 +61,13 @@ MAX_CANDLES = 120000                    # about 85 sessions of 1-minute bars
 TFS = ("1min", "5min", "15min", "30min", "60min", "1D")
 
 
+def _safe(fn):
+    try:
+        return fn()
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+
+
 class NoLLM:
     def chat(self, *a, **k):
         raise LLMError("AI non configurata: imposta OFO_LLM_BASE_URL e OFO_LLM_API_KEY e riavvia il Lab")
@@ -690,7 +697,15 @@ class Lab:
             threads.append({"name": t.name, "alive": t.is_alive(), "where": list(reversed(where))})
         return {"build": BUILD, "lab_lock_held": self.lock.locked(), "engine_lock_held": self.run_lock.locked(), "holder": self._holder,
                 "busy": dict(self.busy), "jobs": [{k: v for k, v in j.items() if not k.startswith("_")} for j in list(self.jobs.values())[-10:]],
-                "pending": len(self.pending), "budget": self.budget_explain(), "hypothesis": self.hypothesis_status(), "ai": not isinstance(self.llm, NoLLM), "threads": threads}
+                "pending": len(self.pending), "budget": self._bounded_view(self.budget_explain), "hypothesis": self._bounded_view(self.hypothesis_status), "ai": not isinstance(self.llm, NoLLM), "threads": threads}
+
+    @staticmethod
+    def _bounded_view(fn, seconds: float = 1.5):
+        """Run a read-only view in a helper thread with a deadline: diagnostics must never hang on a lock someone else holds."""
+        box: dict = {}
+        t = threading.Thread(target=lambda: box.update(v=_safe(fn)), daemon=True)
+        t.start(); t.join(seconds)
+        return box.get("v", {"error": "non disponibile in tempo (un lock è occupato)"})
 
     STUCK_AFTER_S = 20
 
@@ -848,8 +863,7 @@ class Lab:
         out = {"day": self.rbudget.day(), "unit": "valutazioni di test (trial), non token", "caps": caps, "used": used, "overage_allowed": self.rbudget.overage_allowed(),
                "owner_ceiling_per_day": self.ap["max_trials_per_day"], "deep_today": self.registry.deep_candidates_on(self.rbudget.day()),
                "total_registered": self.registry.n_trials, "total_cap": self.ap["max_trials_total"], "queued": []}
-        with self.lock:
-            items = list(self.pending.items())
+        items = list(self.pending.items())                          # a snapshot, no lock: /api/diag must answer even when the Lab lock is held
         for sid, v in items[:200]:
             sp = v["spec"]
             plan = planned_units(sp, self.rbudget.cfg)
