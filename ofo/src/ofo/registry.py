@@ -53,6 +53,11 @@ class TrialRegistry:
         self._con.execute("PRAGMA journal_mode=WAL")
         self._con.execute("PRAGMA synchronous=FULL")          # a committed experiment survives a power cut
         self._con.executescript(SCHEMA)
+        try:                                                      # informational sweeps (exit grid, time windows) are not screening work: they used to eat the whole daily cap
+            self._con.execute("UPDATE experiments SET stage='info' WHERE kind='compute' AND stage='screening' AND (label LIKE 'schedule_info:%' OR label LIKE 'exits_info:%')")
+            self._con.commit()
+        except sqlite3.Error:
+            pass
         self._migrate_schema()
         self._migrate_json()
 

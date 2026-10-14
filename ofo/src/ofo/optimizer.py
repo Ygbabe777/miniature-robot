@@ -229,7 +229,7 @@ def _exit_study(dev_bars_tf, cand, base_series, contract, contracts, slippage_ti
         d = s.reindex(dev_days).fillna(0.0)
         cells.append({**g, "sharpe": sharpe(d), "pnl": float(d.sum()), **summarize_info(info)})
     if informational:                      # shown for every study, but nothing is selected from it: evaluations, not trials
-        registry.add_trials(0, f"exits_info:{name}", experiment_id=experiment_id, kind="compute", stage="screening", n_evals=len(grid), **(meta or {}))
+        registry.add_trials(0, f"exits_info:{name}", experiment_id=experiment_id, kind="compute", stage="info", n_evals=len(grid), **(meta or {}))
     else:
         registry.add_trials(len(grid), f"exits:{name}", experiment_id=experiment_id, kind="exits", stage=stage, **(meta or {}))
     best = max(cells, key=lambda c: c["sharpe"])
@@ -264,7 +264,7 @@ def _schedule_study(dev_bars, fcand, exit_, base_dev, tfs_dev, contract, contrac
         out["applied"] = sched if out["chosen"] else None
     n_try = int(st.get("n_scanned", 0)) + int(st.get("n_caps", 0))
     if informational:
-        registry.add_trials(0, f"schedule_info:{name}", experiment_id=eid, kind="compute", stage="screening", n_evals=max(1, n_try), **meta)
+        registry.add_trials(0, f"schedule_info:{name}", experiment_id=eid, kind="compute", stage="info", n_evals=max(1, n_try), **meta)
     else:
         registry.add_trials(n_try, f"schedule:{name}", experiment_id=eid, kind="schedule", stage="validation", **meta)
     out["n_trials"] = 0 if informational else n_try

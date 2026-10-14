@@ -311,3 +311,24 @@ def test_yesterdays_budget_pause_is_not_restored_on_restart(tmp_path):
     assert not lab.ap.get("paused") and lab.autopilot_state()["paused"] is None
     lab.ap["paused"] = "day"; lab._save_ap()
     assert "paused" not in json.loads((d / "autopilot.json").read_text(encoding="utf-8"))
+
+
+def test_one_study_does_not_spend_the_whole_daily_screening_budget(tmp_path):
+    """A 12-candidate study used to book ~1200 'screening' evaluations (informational time-window sweeps), pausing the autopilot after ONE test."""
+    from ofo.backtest import MNQ
+    from ofo.optimizer import run_study
+    from ofo.registry import TrialRegistry
+    from ofo.research_budget import ResearchBudget, planned_units
+    from ofo.specs import from_dict
+    from test_research import synth
+    reg = TrialRegistry(tmp_path / "r.db")
+    spec = from_dict({"name": "x", "template": "breakout", "ranges": {"lookback": [10, 20, 30, 40, 60, 80]}, "timeframes": ["5min", "15min"], "rationale": "MECCANISMO x EVIDENZA y QUANDO NON FUNZIONA z"})
+    rb = ResearchBudget(reg)
+    run_study(synth(n_sessions=300, drift_ar=0.0, seed=11), spec, MNQ, PRESETS["50k"], reg, dedupe=True)
+    plan = planned_units(spec, rb.cfg)
+    assert rb.used()["screening"] <= plan["screening"] + 28 + 5            # candidates + the exit grid, nothing else
+    assert rb.can_start(spec)[0]
+    # databases written by earlier versions are repaired when opened
+    reg._con.execute("UPDATE experiments SET stage='screening' WHERE label LIKE 'schedule_info:%'"); reg._con.commit()
+    assert rb.used()["screening"] > 1000
+    assert ResearchBudget(TrialRegistry(tmp_path / "r.db")).used()["screening"] <= plan["screening"] + 33
