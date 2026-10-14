@@ -20,7 +20,7 @@ from .backtest import Contract, daily_pnl
 from .data import resample
 from .exits import exit_grid, summarize_info
 from .trades import extract_trades
-from .judge import REJECTED, judge
+from .judge import REJECTED, Thresholds, judge
 from .ledger import AccountingError, reconcile, run_ledger, run_ledger_next_open
 from .prop import PRESETS, PropRules
 from .prop_intraday import arrays_from_ledger, intraday_report
@@ -827,7 +827,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                                                     goal_days, goal_rate, "unseen_block"),
                             "sizing": size_study(locked.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, basis="unseen_block"),
                             "p_pass": v.mc.get("p_pass"), "p_pass_ci95": v.mc.get("p_pass_ci95"),
-                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "mc_sample": v.mc.get("sample"), "dsr": {**(v.mc.get("dsr") or {"value": modes["holdout_null"]["value"] if official else None, "n_trials": k_planned if official else n_dsr, "var_sr": modes["holdout_null"]["V"] if official else float(var_sr), "needed": judge_th.min_dsr}), "basis": dsr_mode, "n_trials_raw": registry.n_trials + 1, "holdout_null": holdout_null}, "dsr_modes": modes, "official_dsr": dsr_mode, "params": cand["params"],
+                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "mc_sample": v.mc.get("sample"), "dsr": {**(v.mc.get("dsr") or {"value": modes["holdout_null"]["value"] if official else None, "n_trials": k_planned if official else n_dsr, "var_sr": modes["holdout_null"]["V"] if official else float(var_sr), "needed": (judge_th or Thresholds()).min_dsr}), "basis": dsr_mode, "n_trials_raw": registry.n_trials + 1, "holdout_null": holdout_null}, "dsr_modes": modes, "official_dsr": dsr_mode, "params": cand["params"],
                             "tf": tf, "exit": best_exit, "prop_model": "daily_simplified"}
         # The Judge above is DETERMINISTIC and uses the simplified daily account model. After its look, the same unseen
         # block is replayed bar by bar with unrealised P&L and intraday drawdown rules, for the owner to read.
