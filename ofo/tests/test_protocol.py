@@ -142,8 +142,9 @@ def _study(tmp_path, monkeypatch, names, max_finalists=3, reg=None):
     bars = synth(n_sessions=700, drift_ar=0.9, seed=5)
     out = []
     ranges = {"breakout": {"lookback": [10, 20, 30, 40, 60]}, "ema_cross": {"fast": [5, 8, 12], "slow": [20, 30, 40]}}
-    for n, tmpl in names:
-        spec = from_dict({"name": n, "template": tmpl, "ranges": ranges[tmpl], "timeframes": ["15min", "30min"], "rationale": "MECCANISMO x EVIDENZA y QUANDO NON FUNZIONA z"})
+    for item in names:
+        n, tmpl = item[0], item[1]
+        spec = from_dict({"name": n, "template": tmpl, "ranges": item[2] if len(item) > 2 else ranges[tmpl], "timeframes": ["15min", "30min"], "rationale": "MECCANISMO x EVIDENZA y QUANDO NON FUNZIONA z"})
         out.append(O.run_study(bars, spec, MNQ, PRESETS["50k"], reg, dedupe=True, research=_enforced_cfg(max_finalists)))
     return out, reg
 
@@ -164,7 +165,7 @@ def test_a_study_registers_its_finalist_before_the_look_and_uses_the_official_ds
 
 
 def test_a_variant_of_a_judged_line_is_shelved_without_touching_the_block(tmp_path, monkeypatch):
-    reps, reg = _study(tmp_path, monkeypatch, [("bo", "breakout"), ("bo 2", "breakout")])
+    reps, reg = _study(tmp_path, monkeypatch, [("bo", "breakout"), ("bo 2", "breakout", {"lookback": [15, 25, 35, 45, 70]})])
     if "checks" not in reps[0]["locked"]:
         pytest.skip("the synthetic study did not reach the audit stage")
     second = reps[1]

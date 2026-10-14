@@ -124,6 +124,48 @@ def forward_pipeline(L, reps, rng):
           "Il candidato a paper è anche una selezione debole: a K=3 passa il ~7% dei nulli contro il ~26% di uno Sharpe 1 (rapporto ~3,5): non va letto come una conferma. I controlli aggiuntivi si preregistrano **prima**, non dopo aver visto i dati.", ""]
 
 
+def stress_and_protocol(L, reps):
+    """Items 6 and 10: false positives under correlated finalists, autocorrelation and fat tails; then the WHOLE chain (block -> paper -> forward)."""
+    from ofo import protocol_sim as PS
+    L += ["## 11. Falsi positivi in condizioni avverse (item 6)", "",
+          f"{reps} ripetizioni, 3 finalisti preregistrati nulli (vero Sharpe 0) su 100 sessioni; tasso con cui **almeno uno** supera DSR≥0,95 sul blocco. "
+          "«Formula nuda» = senza correzione per autocorrelazione, senza t di Student, senza margine; «ufficiale» = `dsr_holdout` con tutte le correzioni (margine 0,30 z). "
+          "Il margine è stato scelto da questa griglia sintetica, non da dati reali.", "",
+          "| scenario | formula nuda | **ufficiale** |", "|---|---|---|"]
+    worlds = [("gaussiano, finalisti indipendenti", dict(rho=0.0)), ("gaussiano, finalisti correlati ρ=0,9", dict(rho=0.9)), ("autocorrelazione AR(1) φ=0,2, ρ=0", dict(rho=0.0, phi=0.2)),
+              ("autocorrelazione AR(1) φ=0,4, ρ=0", dict(rho=0.0, phi=0.4)), ("code spesse t(3), ρ=0", dict(rho=0.0, dist="t3")), ("zero-inflated (70% giorni a zero) φ=0,2", dict(rho=0.0, dist="zero_infl", phi=0.2)),
+              ("asimmetria negativa (piccole vincite, rare perdite grosse)", dict(rho=0.0, dist="neg_skew"))]
+    rng = np.random.default_rng(31)
+    for name, kw in worlds:
+        X = PS.block(rng, reps, 3, 100, 0.0, kw.get("rho", 0.0), kw.get("dist", "gauss"), kw.get("phi", 0.0))
+        naive = np.mean([any((EV.dsr_holdout(x, 3, adjust=False, small_sample_t=False, z_margin=0.0)["value"] or 0) >= 0.95 for x in X[r]) for r in range(reps)])
+        off = np.mean([any((EV.dsr_holdout(x, 3)["value"] or 0) >= 0.95 for x in X[r]) for r in range(reps)])
+        L.append(f"| {name} | {naive:.1%} | **{off:.1%}** |")
+    L += ["", "Lettura: la formula nuda supera il 5% con autocorrelazione forte (φ=0,4) anche con K=3; con le correzioni tutti gli scenari stanno sotto il 5% (i finalisti correlati rendono il test più conservativo di Šidák, non meno). "
+          "Con un solo finalista il caso peggiore (φ=0,4) resta intorno al 5%, ed è il motivo per cui K ufficiale è sempre il massimo preregistrato (3), mai il conteggio corrente.", "",
+          "## 12. Protocollo intero: blocco → paper → forward (item 10)", "",
+          f"{max(500, reps // 4)} epoche simulate. Per ogni epoca: 3 finalisti giudicati sul blocco con il DSR ufficiale (100 sessioni); chi supera la linea PAPER_CANDIDATE va in forward (4 controlli preregistrati a 60/120/180/250 sessioni, confine di Šidák z≥2,23, correzione per autocorrelazione). "
+          "Si misura la probabilità che **almeno uno** dei tre finalisti raggiunga ciascun livello: sono tassi family-wise dell'intero percorso.", "",
+          "| mondo | P(≥1 RESEARCH_APPROVED) | P(≥1 PAPER_CANDIDATE) | P(≥1 FORWARD_CONFIRMED) |", "|---|---|---|---|"]
+    n = max(500, reps // 4)
+    for name, kw in (("nullo, ρ=0,9", dict(rho=0.9)), ("nullo, φ=0,4, ρ=0", dict(rho=0.0, phi=0.4)), ("nullo, t(3)", dict(dist="t3")), ("nullo, zero-inflated φ=0,2", dict(dist="zero_infl", phi=0.2)),
+                     ("edge debole 0,5", dict(true_annual=0.5, rho=0.5)), ("edge moderato 1,0", dict(true_annual=1.0, rho=0.5)), ("edge forte 2,0", dict(true_annual=2.0, rho=0.5)), ("edge molto forte 3,0", dict(true_annual=3.0, rho=0.5))):
+        r = PS.simulate(41, n, K=3, T_hold=100, **kw)
+        L.append(f"| {name} | {r['P_any_approved']:.1%} | {r['P_any_paper']:.1%} | {r['P_any_forward_confirmed']:.1%} |")
+    L += ["", "Nei mondi nulli l'errore dell'intero percorso (colonna FORWARD_CONFIRMED) resta sotto il 2%: il candidato a paper è una selezione debole (le sue percentuali non sono errori finali), la conferma in avanti no. "
+          "Per Sharpe 1,0 la conferma richiede molto più dei 250 sessioni in avanti previsti (sezione 2): il protocollo è onesto sulla propria potenza.", "",
+          "## 13. Il protocollo preregistrato in pratica", "",
+          "- **Epoca congelata.** Il blocco hidden è un intervallo fisso di sessioni. Dati nuovi aggiungono sessioni *dopo* l'epoca (riservate al forward); il taglio non si sposta più.",
+          "- **≤ 3 finalisti per epoca**, registrati *prima* di calcolare qualsiasi cosa sul blocco: fingerprint, parametri, versione del codice, dataset (limitato all'epoca), regola di sizing, ruleset, timestamp, K. Tabella append-only con catena di hash e trigger che rifiutano UPDATE/DELETE. "
+          "Un nuovo test identico è una *ripetizione*, non un nuovo finalista.",
+          "- **Nessuna modifica dopo lo sguardo.** Una variante di una linea (template + nome senza numeri di versione) già giudicata sul blocco viene rifiutata: lo studio finisce `INSUFFICIENT_EVIDENCE` con cancello E7, senza toccare il blocco. "
+          "Le diagnosi basate sul blocco non vengono più passate al Researcher durante l'epoca.",
+          "- **K ufficiale = massimo preregistrato**, non un conteggio che cresce: con meno di 3 finalisti il test resta conservativo.",
+          "- **`locked_looks`** resta il contatore separato di *tutti* gli sguardi al blocco (qualunque motivo); non è né i candidati dello sviluppo né K.",
+          "- **Slot pieni.** Con il limite a 3, dopo tre finalisti gli studi successivi che superano la validazione vengono messi in attesa (E7) finché non si apre una nuova epoca (servono ≥ 100 sessioni nuove; il vecchio blocco entra nello sviluppo). È il prezzo dell'integrità; l'attuale selezione dei finalisti è per ordine di arrivo tra gli studi che superano tutti i gate di sviluppo (screening, walk-forward annidato, robustezza): non esiste ancora un round di selezione per punteggio.",
+          "- **Validazione.** Il ruolo della validazione lo svolge il walk-forward annidato *dentro* lo sviluppo; non c'è un blocco di validazione separato nel motore (la suddivisione della sezione 6 resta una proposta).", ""]
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--out", default="docs/DSR_AUDIT.md"); ap.add_argument("--reps", type=int, default=4000)
     a = ap.parse_args()
@@ -162,6 +204,7 @@ def main():
           "Onestà sulla potenza: passare da 91 a 100 sessioni di holdout aumenta lo z medio solo di √(100/91) ≈ +5%. **Nessuna suddivisione di 500 sessioni può rendere dimostrabile uno Sharpe ≈ 1** (potenza ~15–20%, sezione 2): il blocco serve da *veto* contro l'overfitting e da conferma per effetti forti; la prova di effetti moderati viene dall'accumulo in avanti (sezione 8).", ""]
     rng = sensitivity(L, a.reps)
     forward_pipeline(L, max(600, a.reps // 4), rng)
+    stress_and_protocol(L, min(a.reps, 1500))
     L += ["## 7. Livelli di evidenza separati", "",
           "| livello | cosa significa | cosa NON significa |", "|---|---|---|",
           "| `RESEARCH_APPROVED` | blocco hidden: DSR coerente ≥ 0,95 con K_eff finalisti, P&L > 0 dopo costi, cancelli di integrità e robustezza superati, ≥ 1 ruleset compatibile | non è tradabile: è un risultato di ricerca su un campione corto |",
