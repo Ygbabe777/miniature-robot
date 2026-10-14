@@ -70,7 +70,7 @@
  },
  "cost_model_version": "1",
  "cost_model_note": "commissioni e slippage del contratto + riempimento alla chiusura della barra del segnale; cambiare questa versione crea esperimenti nuovi senza sovrascrivere i vecchi",
- "dsr_trials": "raw",
+ "dsr_trials": "locked_looks",
  "dsr_trials_note": "raw = tutti i trial registrati (prudente); l'effettivo (corretto per la correlazione) è calcolato e mostrato ma non usato per approvare",
  "families": {
   "A": {
