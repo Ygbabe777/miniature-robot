@@ -778,6 +778,12 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         dsr_mode = rcfg.get("dsr_trials", "raw")                  # raw: every trial ever registered (strictest) | locked_looks: only strategies that were tested on the unseen block | effective: this study's independent trials
         n_dsr = (int(registry.data["locked_looks"]) + 1 if dsr_mode == "locked_looks" else max(2, int(round(n_eff))) + 1 if dsr_mode == "effective" else registry.n_trials + 1)
         v = judge(locked.values, rules, n_dsr, var_sr, judge_th, n_trades=n_locked_trades)
+        try:                                                      # informational: the coherent holdout benchmark (V of the block itself, K = looks at the block); see docs/DSR_AUDIT.md
+            from . import evidence as EV
+            hv = EV.dsr_holdout(locked.values, int(registry.data["locked_looks"]) + 1)
+            holdout_null = {"value": hv["value"], "k": hv["k_eff"], "sr0_annual": hv["sr0_annual"], "T": hv["T"]}
+        except Exception:
+            holdout_null = None
         look_label = f"{spec.name}:{cand['params']}@{tf}"
         jctx.update(oos=np.asarray(locked.values, float), dev=np.asarray(final_dev.values if hasattr(final_dev, "values") else final_dev, float),
                     lineage=JG.lineage_looks_for(registry, spec.name, look_label, str(cut)[:10]))
@@ -790,7 +796,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                                                     goal_days, goal_rate, "unseen_block"),
                             "sizing": size_study(locked.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, basis="unseen_block"),
                             "p_pass": v.mc.get("p_pass"), "p_pass_ci95": v.mc.get("p_pass_ci95"),
-                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "mc_sample": v.mc.get("sample"), "dsr": {**(v.mc.get("dsr") or {}), "basis": dsr_mode, "n_trials_raw": registry.n_trials + 1}, "params": cand["params"],
+                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "mc_sample": v.mc.get("sample"), "dsr": {**(v.mc.get("dsr") or {}), "basis": dsr_mode, "n_trials_raw": registry.n_trials + 1, "holdout_null": holdout_null}, "params": cand["params"],
                             "tf": tf, "exit": best_exit, "prop_model": "daily_simplified"}
         # The Judge above is DETERMINISTIC and uses the simplified daily account model. After its look, the same unseen
         # block is replayed bar by bar with unrealised P&L and intraday drawdown rules, for the owner to read.
