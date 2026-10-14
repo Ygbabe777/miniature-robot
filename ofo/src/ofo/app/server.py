@@ -162,6 +162,10 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.forget_directive(str(data.get("id", ""))))
                 if u.path == "/api/dedup/invalidate":
                     return self._json(lab.invalidate_dedup(data.get("market")))
+                if u.path == "/api/paper":
+                    return self._json(lab.owner_paper(str(data.get("slug") or ""), str(data.get("account") or "50k"), data.get("micro")))
+                if u.path == "/api/paper/auto":
+                    return self._json(lab.set_auto_paper(bool(data.get("enabled"))))
                 if u.path == "/api/mie/tick":
                     return self._json(lab.mie.tick_async())
                 if u.path == "/api/mie/cycle/start":

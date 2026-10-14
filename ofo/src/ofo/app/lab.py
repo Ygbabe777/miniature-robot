@@ -158,7 +158,7 @@ class Lab:
         self.busy = {"research": 0, "job": 0, "chat": 0, "review": 0, "hypo": 0}          # real activity, not event timeouts
         self.ap_file = self.data / "autopilot.json"
         first = not self.ap_file.exists()
-        self.ap = {"v": 2, "markets": None, "enabled": True, "max_trials_per_day": 30000, "max_trials_total": 300000, "day": "", "trials_today": 0}
+        self.ap = {"v": 2, "auto_paper_imports": True, "markets": None, "enabled": True, "max_trials_per_day": 30000, "max_trials_total": 300000, "day": "", "trials_today": 0}
         if not first:
             saved = json.loads(self.ap_file.read_text(encoding="utf-8", errors="ofo_legacy"))
             if saved.get("v", 1) < 2:                 # v1 capped at 4000/day: queued strategies sat there for hours
@@ -496,6 +496,8 @@ class Lab:
             if res is not None:
                 job["status"] = "done"
                 self.farming_post(job["slug"])         # fascicolo + the board's discussion of the numbers (italian)
+                if (self._running_specs.get(job["id"]) or {}).get("origin") == "import" and self.ap.get("auto_paper_imports", True) and res["verdict"] != "EXECUTION_FAILED":
+                    self.owner_paper(job["slug"])      # a strategy the owner imported goes straight to paper: the owner decides what to follow
                 try:
                     self.mie.after_study(job["slug"], spec.name, str(spec.source or ""), res["verdict"])
                 except Exception as e:
@@ -561,7 +563,40 @@ class Lab:
                 lp.ingest_ideas(vi)                       # your Obsidian notes in OFO/Ideas
             while lp.queue:
                 spec, _ = lp.queue.pop(0)
-                self._add_pending_all(spec, "paper")
+                self._add_pending_all(spec, "import" if "(http" not in str(spec.source or "") else "paper")      # a file the OWNER dropped in vs a paper the Scout downloaded
+
+    def owner_paper(self, slug: str, account: str = "50k", micro: int | None = None) -> dict:
+        """The owner sends ANY tested strategy to paper trading, whatever the Judge said. Nothing is traded: it is a forward simulation on new sessions, with the append-only
+        signal log and the preregistered forward test. The verdict is untouched and the deployment is labelled as the owner's own choice (not validated by the Judge)."""
+        d = load_study(self.work, slug)
+        if d is None or not d.get("series") or not (d["series"].get("best_params")):
+            return {"error": "studio non trovato o senza una combinazione eseguibile"}
+        existing = self.deployments.get(slug)
+        if existing and existing.get("status") in ("live", "confirmed"):
+            return {"slug": slug, "already": True}
+        rep, ser = d["report"], d["series"]
+        if rep.get("template") not in TEMPLATES:
+            return {"error": "modello non disponibile"}
+        bp = dict(ser["best_params"]); tf = bp.pop("tf")
+        account = account if account in ("25k", "50k") else "50k"
+        n_micro = max(1, min(int(micro or 1), 50))
+        market = self.market_of(rep)
+        c = self.ctx(market); c.bars()
+        last = str(c.sessions[-1])[:10]
+        item = {"slug": slug, "name": rep.get("name"), "market": market, "template": rep["template"], "tf": tf, "params": bp, "direction": ser.get("direction") or "both",
+                "schedule": ser.get("schedule"), "exit": ser.get("exit"), "account": account, "micro": n_micro, "cut": last, "deployed_at": time.strftime("%Y-%m-%d %H:%M"),
+                "status": "live", "reason": "", "probation": True, "owner_paper": True, "oos_mean": None, "oos_std": None, "n_signals": 0, "forward": {"days": 0},
+                "forward_plan": dep._plan(last, (rcfg_mod.get().get("protocol") or {}).get("forward")),
+                "note": "scelta del proprietario: NON convalidata dal Judge. Simulazione su sessioni nuove, nessun ordine reale."}
+        self.deployments.d["items"] = [x for x in self.deployments.d["items"] if x.get("slug") != slug] + [item]
+        self.deployments.save()
+        self.events.emit("trader", "deployed", f"PAPER (scelta tua): {item['name']} - {n_micro} micro su {account}", {"slug": slug})
+        return {"slug": slug, "paper": True, "account": account, "micro": n_micro}
+
+    def set_auto_paper(self, enabled: bool) -> dict:
+        self.ap["auto_paper_imports"] = bool(enabled)
+        self._save_ap()
+        return {"auto_paper_imports": self.ap["auto_paper_imports"]}
 
     def ingest(self) -> dict:
         def work():

@@ -734,7 +734,7 @@
     const title = { wf_oos: t('s_wf'), locked: t('s_locked'), dev_best: t('s_dev') };
     const pl = d.planner && d.planner.reason ? (/failed a deterministic gate/.test(d.planner.reason) ? t('pl_gate') : d.planner.reason) : '';
     $('#detail').innerHTML = `
-      <div class="dtitle"><h1>${esc(rep.name)}</h1><span class="badge b-${L.verdict || L.status}">${t('v_' + (L.verdict || L.status))}</span><a class="btn small" id="pdf-go" href="/api/pdf/${encodeURIComponent(slug)}" download>PDF</a> <button class="btn small" id="retest-go" title="${esc(t('retest_tip'))}">↻ ${t('retest')}</button></div>
+      <div class="dtitle"><h1>${esc(rep.name)}</h1><span class="badge b-${L.verdict || L.status}">${t('v_' + (L.verdict || L.status))}</span><button class="btn small" id="paper-any" title="${esc(t('paper_any_tip'))}">${t('paper_any')}</button> <a class="btn small" id="pdf-go" href="/api/pdf/${encodeURIComponent(slug)}" download>PDF</a> <button class="btn small" id="retest-go" title="${esc(t('retest_tip'))}">↻ ${t('retest')}</button></div>
       ${rep.retest_no ? `<div class="sub">${t('retest_n', { n: rep.retest_no })}</div>` : ''}
       <div class="sub">${t('d_model')} ${esc(rep.template)} · ${rep.n_candidates} ${t('d_tested')} · ${esc(rep.source || '')}</div>
       <div class="judge"><b>${t('d_judge')}</b> ${L.reason ? '<div style="margin-top:6px">' + esc(itReason(L.reason)) + '</div>' : ''}
@@ -776,6 +776,10 @@
       const pb = $('#jx-paper');
       if (pb) pb.onclick = async () => { const x = await api('/api/promote', { method: 'POST', body: JSON.stringify({ slug }) }); toast(x.error ? '⚠ ' + esc(x.error) : '✔ ' + esc(t('jx_paper_started')), 8000); };
     }).catch(() => {});
+    $('#paper-any').onclick = async () => {
+      const x = await api('/api/paper', { method: 'POST', body: JSON.stringify({ slug }) });
+      toast(x.error ? '⚠ ' + esc(x.error) : x.already ? esc(t('paper_already')) : '✔ ' + esc(t('paper_started', { n: x.micro, a: x.account })), 9000);
+    };
     $('#retest-go').onclick = async () => {
       if (!confirm(t('retest_confirm'))) return;
       const r = await api('/api/retest', { method: 'POST', body: JSON.stringify({ slug }) });
