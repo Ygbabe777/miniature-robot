@@ -1,0 +1,24 @@
+{
+ "_README": "Market Intelligence Engine: definizioni CONFIGURABILI. Cambiare una definizione cambia il suo fingerprint: gli studi vecchi restano archiviati con la definizione con cui sono stati fatti.",
+ "version": "1",
+ "timezone": "America/New_York",
+ "markets": {"priority": ["NQ"], "later": ["ES", "GC"]},
+ "timeframes": {"observe": "1min", "local": "5min", "intraday": "15min", "higher": "1h", "daily": "1D"},
+ "sessions": {
+  "overnight": ["18:00", "08:30"],
+  "premarket": ["08:30", "09:30"],
+  "cash_open": ["09:30", "09:35"],
+  "opening_range": ["09:30", "10:00"],
+  "intraday": ["10:00", "15:30"],
+  "close": ["15:30", "16:00"],
+  "post_cash": ["16:00", "17:00"],
+  "rth": ["09:30", "16:00"],
+  "short_session_last_bar_before": "15:00"
+ },
+ "structure": {"swing_k": {"1min": 5, "5min": 3, "15min": 2}, "range_band_atr": 1.5, "range_min_pivots": 4, "acceptance_closes": 3, "reclaim_bars": 6, "sweep_min_ticks": 1, "tick_size": 0.25},
+ "regime": {"er_window": 30, "er_trend": 0.35, "er_range": 0.15, "atr_fast": 10, "atr_slow": 60, "vol_expansion": 1.35, "vol_compression": 0.75, "min_bars": 120},
+ "behavior": {"horizons_bars": [6, 12, 30], "atr_window": 20, "min_events": 30, "bootstrap": 600, "cost_ticks": 2.0, "tick_value": 0.5, "baseline_per_event": 3, "top_share_max": 0.5, "seed": 17, "fdr_q": 0.10},
+ "memory": {"max_notes": 5000, "half_life_days": 180, "evidence_weight": {"SUPPORTED": 1.0, "TESTED": 0.7, "OBSERVED": 0.6, "INCONCLUSIVE": 0.5, "CONTRADICTED": 0.8, "HYPOTHESIZED": 0.35}, "llm_penalty": 0.5, "top_k": 8},
+ "cycle": {"days": 30, "min_sessions_for_claim": 60, "weekly_focus": ["baseline", "discovery", "hypothesis", "consolidation"]},
+ "director": {"max_missions_per_day": 6, "min_events_gap": 30}
+}
