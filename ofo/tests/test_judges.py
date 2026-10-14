@@ -348,3 +348,30 @@ def test_by_default_no_daily_trial_cap_ever_pauses_the_lab_but_trials_are_still_
     assert rb.can_start(spec)[0] and reg.n_trials >= 5000                    # never blocked, always counted (the Deflated Sharpe still sees them)
     cfg = json.loads(json.dumps(rc.get())); cfg["budget"]["enforce_daily_caps"] = True
     assert not ResearchBudget(reg, cfg).can_start(spec)[0]                  # the old behaviour is one switch away
+
+
+def test_a_registry_with_a_failed_and_a_completed_run_of_the_same_study_reopens(tmp_path):
+    """The strict uniqueness index used to be re-created on every start and crashed on databases holding a failed run next to its rerun."""
+    import sqlite3
+    from ofo.registry import TrialRegistry
+    p = tmp_path / "r.db"
+    r = TrialRegistry(p)
+    con = sqlite3.connect(p)
+    for st in ("failed", "completed"):
+        con.execute("INSERT INTO experiments(id,created,kind,label,spec_fp,dataset_fp,n_trials,status) VALUES (?,?,?,?,?,?,?,?)", (st, "2026-01-01", "study", "x", "S", "D", 5, st))
+    con.commit(); con.close()
+    assert TrialRegistry(p).n_trials >= 10
+    assert TrialRegistry(p).n_trials >= 10                                      # and again
+
+
+def test_a_registry_with_two_completed_runs_of_the_same_study_is_repaired_without_losing_trials(tmp_path):
+    import sqlite3
+    from ofo.registry import TrialRegistry
+    p = tmp_path / "r.db"
+    TrialRegistry(p)
+    con = sqlite3.connect(p)
+    con.execute("DROP INDEX IF EXISTS uq_study2")
+    for i in range(2):
+        con.execute("INSERT INTO experiments(id,created,kind,label,spec_fp,dataset_fp,n_trials,status) VALUES (?,?,?,?,?,?,?,?)", (f"c{i}", "2026-01-01", "study", "x", "S", "D", 7, "completed"))
+    con.commit(); con.close()
+    assert TrialRegistry(p).n_trials == 14                                      # every trial still counts for the Deflated Sharpe

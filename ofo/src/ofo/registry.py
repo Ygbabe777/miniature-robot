@@ -22,8 +22,6 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS experiments (
     id TEXT PRIMARY KEY, created TEXT NOT NULL, kind TEXT NOT NULL, label TEXT, market TEXT,
     spec_fp TEXT, dataset_fp TEXT, n_trials INTEGER NOT NULL, details TEXT);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_study ON experiments(spec_fp, dataset_fp)
-    WHERE kind = 'study' AND spec_fp IS NOT NULL AND dataset_fp IS NOT NULL;
 CREATE TABLE IF NOT EXISTS locked_looks (
     id INTEGER PRIMARY KEY AUTOINCREMENT, experiment_id TEXT, created TEXT NOT NULL, label TEXT, status TEXT,
     dataset_fp TEXT, oos_start TEXT);
@@ -77,8 +75,15 @@ class TrialRegistry:
         self._con.execute("UPDATE experiments SET n_evals=n_trials WHERE n_evals IS NULL")
         # a study blocks a duplicate only while it is running or finished: a crashed one (status 'failed') can be run again
         self._con.execute("DROP INDEX IF EXISTS uq_study")
-        self._con.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_study2 ON experiments(spec_fp, dataset_fp) WHERE kind='study' "
-                          "AND status IN ('running','completed','early_stopped') AND spec_fp IS NOT NULL AND dataset_fp IS NOT NULL")
+        ddl = ("CREATE UNIQUE INDEX IF NOT EXISTS uq_study2 ON experiments(spec_fp, dataset_fp) WHERE kind='study' "
+               "AND status IN ('running','completed','early_stopped') AND spec_fp IS NOT NULL AND dataset_fp IS NOT NULL")
+        try:
+            self._con.execute(ddl)
+        except sqlite3.IntegrityError:                        # duplicates already on disk (a rerun next to its first run): keep every row and its trial count, keep only the newest as the live one
+            self._con.execute("UPDATE experiments SET status='superseded' WHERE kind='study' AND status IN ('running','completed','early_stopped') AND spec_fp IS NOT NULL "
+                              "AND dataset_fp IS NOT NULL AND rowid NOT IN (SELECT MAX(rowid) FROM experiments WHERE kind='study' AND status IN ('running','completed','early_stopped') "
+                              "AND spec_fp IS NOT NULL AND dataset_fp IS NOT NULL GROUP BY spec_fp, dataset_fp)")
+            self._con.execute(ddl)
         self._con.execute("CREATE TABLE IF NOT EXISTS counters (key TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0)")
 
     # -- helpers ------------------------------------------------------------------------
