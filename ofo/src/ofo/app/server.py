@@ -61,6 +61,12 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(d) if d else self._json({"error": "not found"}, 404)
                 if u.path == "/api/epoch":
                     return self._json(lab.epoch_state())
+                if u.path.startswith("/api/mie/"):
+                    what = u.path[len("/api/mie/"):]
+                    if what == "trace":
+                        return self._json(lab.mie.trace(parse_qs(u.query).get("slug", [""])[0]))
+                    fn = {"overview": lab.mie.overview, "intelligence": lab.mie.intelligence, "memory": lab.mie.memory_view, "cycle": lab.mie.cycle_view, "status": lab.mie.status}.get(what)
+                    return self._json(fn()) if fn else self._json({"error": "not found"}, 404)
                 if u.path == "/api/research":
                     return self._json(lab.research_report())
                 if u.path == "/api/ranking":
@@ -140,6 +146,10 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.forget_directive(str(data.get("id", ""))))
                 if u.path == "/api/dedup/invalidate":
                     return self._json(lab.invalidate_dedup(data.get("market")))
+                if u.path == "/api/mie/tick":
+                    return self._json(lab.mie.tick_async())
+                if u.path == "/api/mie/cycle/start":
+                    return self._json(lab.mie.start_cycle())
                 if u.path == "/api/epoch/open":
                     return self._json(lab.open_epoch())
                 if u.path == "/api/promote":

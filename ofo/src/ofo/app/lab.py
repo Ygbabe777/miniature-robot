@@ -31,6 +31,7 @@ from ..timing import SIZES as SIZES_ALL
 from ..registry import TrialRegistry
 from ..agents.loop import _fingerprint
 from ..specs import StrategySpec, from_dict
+from .mie_service import AGENTS as MIE_AGENTS, MIEService
 from ..storage import atomic_write, list_studies, load_study, slugify
 from .. import deploy as dep
 from .. import knowledge, obsidian
@@ -172,7 +173,9 @@ class Lab:
             self.obs["vault"] = json.loads(self.obs_file.read_text(encoding="utf-8", errors="ofo_legacy")).get("vault", "")
         self.deployments = dep.Store(self.data / "deployments.json")
         self.busy["forward"] = 0
+        self.busy["mie"] = 0
         self._last_forward = 0.0
+        self.mie = MIEService(self)
         self._load_queue()
 
     # -- engine -------------------------------------------------------------------------
@@ -491,6 +494,10 @@ class Lab:
             if res is not None:
                 job["status"] = "done"
                 self.farming_post(job["slug"])         # fascicolo + the board's discussion of the numbers (italian)
+                try:
+                    self.mie.after_study(job["slug"], spec.name, str(spec.source or ""), res["verdict"])
+                except Exception as e:
+                    self.events.emit("obsidian_memory", "error", f"memoria MIE: {e}"[:200])
                 if res["verdict"] == "APPROVED":
                     self.events.alert("judge", f"approved:{job['slug']}", f"«{spec.name}» è APPROVATA: il fascicolo è sulla scrivania del trader. Decidi tu se usarla.", 0.0)
                     self.make_dossier(job["slug"])
@@ -1327,6 +1334,8 @@ class Lab:
             out.add("strategist")
         if b.get("forward", 0) > 0:
             out.add("trader")
+        if b.get("mie", 0) > 0:                                       # real MIE activity: only the agents that announced work in their own lifecycle
+            out |= {a for a in MIE_AGENTS if life.get(a) == "working"} or {"market_observer"}
         return out
 
     # -- ready strategies -----------------------------------------------------------------
@@ -1948,6 +1957,8 @@ class Lab:
                                 finally:
                                     self._connecting = False
                             threading.Thread(target=_conn, daemon=True).start()                     # the Researcher develops hypotheses on its own, independent of the Scout and of the tests
+                        if n % 12 == 6 and self.mie.due():
+                            self.mie.tick_async()
                         if n % 12 == 0:
                             self.deploy_ready()
                             self.forward_tick()
@@ -1984,8 +1995,14 @@ class Lab:
                 "engine": self.engine_state(), "build": BUILD,
                 "engine_busy_with": ("revisione prop farming" if getattr(self, "_farm_busy", False) else None),
                 "ai": not isinstance(self.llm, NoLLM), "scout": self.scout_state(),
-                "autopilot": self.autopilot_state(), "budget": self.budget_state(), "obsidian": self.obsidian_state(),
+                "autopilot": self.autopilot_state(), "budget": self.budget_state(), "obsidian": self.obsidian_state(), "mie": self._mie_status(),
                 "deployed": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed"))}
+
+    def _mie_status(self) -> dict:
+        try:
+            return self.mie.status()
+        except Exception as e:                                       # the page must always answer
+            return {"enabled": False, "error": str(e)[:200], "available": False}
 
     def events_after(self, after: int) -> dict:
         ev = self.events.read()
