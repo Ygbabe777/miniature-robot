@@ -750,9 +750,11 @@ def test_judge_does_not_count_few_days_as_a_defect_when_the_strategy_trades_ever
     frequent = judge(x, PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=140)     # 1.6 trades a day
     assert frequent.checks["enough_days"] is True and frequent.status != INSUFFICIENT
     assert frequent.mc["sample"]["days_waived"] is True and frequent.mc["sample"]["sporadic"] is False
-    sporadic = judge(x, PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=40)      # 0.44 trades a day: sporadic, and few days -> a defect
+    weekly = judge(x, PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=40)        # 0.44 trades a day: more than one a week -> valid frequency (owner's rule)
+    assert weekly.checks["enough_days"] is True and weekly.mc["sample"]["sporadic"] is False
+    sporadic = judge(x, PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=12)      # 0.13 trades a day: less than one a week, and few days -> a defect
     assert sporadic.status == INSUFFICIENT and sporadic.checks["enough_days"] is False and sporadic.mc["sample"]["sporadic"] is True
-    thin = judge(_daily(90), PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=20)  # even daily trading needs a minimum number of trades
+    thin = judge(_daily(90), PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=10)  # even weekly trading needs a minimum number of trades
     assert thin.status == INSUFFICIENT
     assert judge(_daily(130), PRESETS["50k"], 50, 0.01, Thresholds(), n_trades=40).checks["enough_days"] is True   # enough days: frequency is irrelevant
 
