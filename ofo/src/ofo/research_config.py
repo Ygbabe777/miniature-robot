@@ -28,13 +28,13 @@ def _default() -> dict:
                        "stage_split": {"hypothesis": 0.15, "screening": 0.35, "validation": 0.30, "robustness": 0.15, "audit": 0.05}},
             "walk_forward": {"min_windows": 6, "train_days": 120, "test_days": 20, "min_test_days": 10},
             "sample": {"min_oos_trades": 200, "min_backtest_trades": 200},
-            "judge": {}, "protocol": {"enforce": False, "max_finalists": 3, "epoch_min_new_sessions": 100, "forward": {"looks": [60, 120, 180, 250], "alpha": 0.05}}, "near_miss": {"min_dsr": 0.70, "auto_paper": False}, "favorites": {"min_winning_days": 0.50, "max_losing_streak": 7},
+            "judge": {}, "protocol": {"enforce": True, "max_finalists": 3, "epoch_min_new_sessions": 100, "forward": {"looks": [60, 120, 180, 250], "alpha": 0.05}}, "near_miss": {"min_dsr": 0.70, "auto_paper": False}, "favorites": {"min_winning_days": 0.50, "max_losing_streak": 7},
             "holdout_fraction": 0.18,
             "search": {"coarse_step": 2, "random_extra_fraction": 0.25, "refine_top": 3, "refine_share": 0.25, "seed": 7},
             "early_stop": {"min_fraction": 0.3, "min_configs": 8, "z": 1.645},
             "allocation": {"prior_strength": 20, "prior_rate": 0.05, "novelty_weight": 1.0, "min_family_share": 0.10, "max_family_share": 0.40},
             "hypothesis": {"queue_low": 4, "min_gap_min": 8, "economy_gap_factor": 3, "per_call": 2},
-            "cost_model_version": "1", "dsr_trials": "locked_looks", "families": {}, "search_space": {}}
+            "cost_model_version": "1", "dsr_trials": "holdout_null", "families": {}, "search_space": {}}
 
 
 def _merge(base: dict, user: dict) -> dict:

@@ -72,7 +72,7 @@
  },
  "cost_model_version": "1",
  "cost_model_note": "commissioni e slippage del contratto + riempimento alla chiusura della barra del segnale; cambiare questa versione crea esperimenti nuovi senza sovrascrivere i vecchi",
- "dsr_trials": "locked_looks",
+ "dsr_trials": "holdout_null",
  "dsr_trials_note": "raw = tutti i trial registrati (prudente); l'effettivo (corretto per la correlazione) è calcolato e mostrato ma non usato per approvare",
  "families": {
   "A": {
@@ -529,7 +529,7 @@
   "note": "Giudice a due teste (edge / prop / finale). Soglie CONFIGURABILI ma mai calibrate sul blocco bloccato: vedi docs/JUDGE_AUDIT.md e scripts/judge_sensitivity.py. APPROVED non è più facile del Judge legacy: richiede anche la revisione prop-farming completa. PAPER_CANDIDATE non è un'approvazione."
  },
  "protocol": {
-  "enforce": false,
+  "enforce": true,
   "max_finalists": 3,
   "epoch_min_new_sessions": 100,
   "forward": {

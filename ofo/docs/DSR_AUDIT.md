@@ -95,53 +95,53 @@ Onestà sulla potenza: passare da 91 a 100 sessioni di holdout aumenta lo z medi
 
 ## 9. Sensibilità delle soglie su simulazioni sintetiche
 
-3000 ripetizioni per cella, rendimenti normali con Sharpe vero noto, una strategia per ripetizione, sul blocco mai visto. Il tasso di promozione per «edge nullo» e «overfittata» è un **falso positivo**; per le altre classi è la **potenza** (il complemento è il falso negativo). Non c'è nessuna metrica basata sul numero di strategie approvate.
+2000 ripetizioni per cella, rendimenti normali con Sharpe vero noto, una strategia per ripetizione, sul blocco mai visto. Il tasso di promozione per «edge nullo» e «overfittata» è un **falso positivo**; per le altre classi è la **potenza** (il complemento è il falso negativo). Non c'è nessuna metrica basata sul numero di strategie approvate.
 
 ### Blocco mai visto: 91 sessioni, K_eff = 1 finalisti
 
 | classe | PSR₀≥0,95 (senza molteplicità) | DSR≥0,95 | DSR≥0,90 | DSR≥0,80 | PAPER_CANDIDATE (DSR≥0,70 e PSR₀≥0,90) |
 |---|---|---|---|---|---|
-| edge nullo (1 strategia preregistrata) (SR 0) | 4.9% | 4.9% | 9.9% | 19.1% | 9.9% |
-| edge debole (SR 0.5) | 9.0% | 9.0% | 17.6% | 30.1% | 17.6% |
-| edge moderato (SR 1) | 15.2% | 15.2% | 25.5% | 41.3% | 25.5% |
-| edge forte (SR 2) | 32.9% | 32.9% | 46.7% | 65.2% | 46.7% |
-| **overfittata** (migliore di 50 nulle, SR sviluppo ≈ 2.1, vero 0) | 4.3% | 4.3% | 9.5% | 20.8% | 9.5% |
+| edge nullo (1 strategia preregistrata) (SR 0) | 4.7% | 4.7% | 10.2% | 19.4% | 10.2% |
+| edge debole (SR 0.5) | 8.6% | 8.6% | 16.6% | 29.5% | 16.6% |
+| edge moderato (SR 1) | 15.3% | 15.3% | 25.4% | 41.1% | 25.4% |
+| edge forte (SR 2) | 32.6% | 32.6% | 46.3% | 64.5% | 46.3% |
+| **overfittata** (migliore di 50 nulle, SR sviluppo ≈ 2.1, vero 0) | 5.0% | 5.0% | 9.6% | 19.1% | 9.6% |
 
-Giudicata SUL SOLO sviluppo con PSR₀≥0,95 (senza holdout), la stessa classe overfittata viene promossa nel **92.0%** dei casi: è il motivo per cui il blocco separato esiste.
+Giudicata SUL SOLO sviluppo con PSR₀≥0,95 (senza holdout), la stessa classe overfittata viene promossa nel **93.2%** dei casi: è il motivo per cui il blocco separato esiste.
 
 ### Blocco mai visto: 91 sessioni, K_eff = 3 finalisti
 
 | classe | PSR₀≥0,95 (senza molteplicità) | DSR≥0,95 | DSR≥0,90 | DSR≥0,80 | PAPER_CANDIDATE (DSR≥0,70 e PSR₀≥0,90) |
 |---|---|---|---|---|---|
-| edge nullo (1 strategia preregistrata) (SR 0) | 4.8% | 0.8% | 1.6% | 4.3% | 8.4% |
-| edge debole (SR 0.5) | 9.0% | 1.6% | 3.6% | 8.6% | 14.5% |
-| edge moderato (SR 1) | 14.6% | 3.2% | 6.7% | 13.7% | 21.8% |
-| edge forte (SR 2) | 32.2% | 9.4% | 17.2% | 31.2% | 42.8% |
-| **overfittata** (migliore di 50 nulle, SR sviluppo ≈ 2.1, vero 0) | 5.1% | 0.5% | 1.5% | 4.6% | 9.0% |
+| edge nullo (1 strategia preregistrata) (SR 0) | 6.2% | 0.5% | 1.8% | 5.8% | 9.8% |
+| edge debole (SR 0.5) | 8.3% | 1.6% | 2.7% | 7.7% | 13.5% |
+| edge moderato (SR 1) | 15.2% | 3.4% | 6.5% | 14.3% | 22.4% |
+| edge forte (SR 2) | 33.5% | 9.8% | 17.7% | 32.0% | 43.9% |
+| **overfittata** (migliore di 50 nulle, SR sviluppo ≈ 2.1, vero 0) | 5.0% | 0.7% | 1.9% | 4.5% | 8.3% |
 
-Giudicata SUL SOLO sviluppo con PSR₀≥0,95 (senza holdout), la stessa classe overfittata viene promossa nel **92.5%** dei casi: è il motivo per cui il blocco separato esiste.
+Giudicata SUL SOLO sviluppo con PSR₀≥0,95 (senza holdout), la stessa classe overfittata viene promossa nel **92.0%** dei casi: è il motivo per cui il blocco separato esiste.
 
 ### Blocco mai visto: 125 sessioni, K_eff = 1 finalisti
 
 | classe | PSR₀≥0,95 (senza molteplicità) | DSR≥0,95 | DSR≥0,90 | DSR≥0,80 | PAPER_CANDIDATE (DSR≥0,70 e PSR₀≥0,90) |
 |---|---|---|---|---|---|
-| edge nullo (1 strategia preregistrata) (SR 0) | 4.6% | 4.6% | 9.2% | 20.0% | 9.2% |
-| edge debole (SR 0.5) | 9.6% | 9.6% | 17.3% | 30.8% | 17.3% |
-| edge moderato (SR 1) | 17.2% | 17.2% | 28.4% | 46.2% | 28.4% |
-| edge forte (SR 2) | 39.3% | 39.3% | 53.6% | 70.0% | 53.6% |
-| **overfittata** (migliore di 50 nulle, SR sviluppo ≈ 2.1, vero 0) | 5.4% | 5.4% | 10.2% | 19.7% | 10.2% |
+| edge nullo (1 strategia preregistrata) (SR 0) | 4.8% | 4.8% | 10.4% | 20.0% | 10.4% |
+| edge debole (SR 0.5) | 10.3% | 10.3% | 17.4% | 31.2% | 17.4% |
+| edge moderato (SR 1) | 17.2% | 17.2% | 27.5% | 42.8% | 27.5% |
+| edge forte (SR 2) | 40.7% | 40.7% | 55.4% | 70.5% | 55.4% |
+| **overfittata** (migliore di 50 nulle, SR sviluppo ≈ 2.1, vero 0) | 4.9% | 4.9% | 9.1% | 19.6% | 9.1% |
 
-Giudicata SUL SOLO sviluppo con PSR₀≥0,95 (senza holdout), la stessa classe overfittata viene promossa nel **93.1%** dei casi: è il motivo per cui il blocco separato esiste.
+Giudicata SUL SOLO sviluppo con PSR₀≥0,95 (senza holdout), la stessa classe overfittata viene promossa nel **92.9%** dei casi: è il motivo per cui il blocco separato esiste.
 
 ### Blocco mai visto: 125 sessioni, K_eff = 3 finalisti
 
 | classe | PSR₀≥0,95 (senza molteplicità) | DSR≥0,95 | DSR≥0,90 | DSR≥0,80 | PAPER_CANDIDATE (DSR≥0,70 e PSR₀≥0,90) |
 |---|---|---|---|---|---|
-| edge nullo (1 strategia preregistrata) (SR 0) | 4.6% | 0.5% | 1.5% | 4.2% | 7.4% |
-| edge debole (SR 0.5) | 9.7% | 1.8% | 4.1% | 9.1% | 14.8% |
-| edge moderato (SR 1) | 17.3% | 3.8% | 8.3% | 16.5% | 26.4% |
-| edge forte (SR 2) | 39.4% | 14.1% | 24.1% | 38.1% | 50.7% |
-| **overfittata** (migliore di 50 nulle, SR sviluppo ≈ 2.1, vero 0) | 5.3% | 0.6% | 1.9% | 5.0% | 8.7% |
+| edge nullo (1 strategia preregistrata) (SR 0) | 4.7% | 0.7% | 1.8% | 4.3% | 8.2% |
+| edge debole (SR 0.5) | 9.6% | 1.8% | 3.4% | 8.8% | 14.8% |
+| edge moderato (SR 1) | 17.1% | 3.5% | 8.1% | 16.4% | 25.8% |
+| edge forte (SR 2) | 38.8% | 12.9% | 21.9% | 37.1% | 50.7% |
+| **overfittata** (migliore di 50 nulle, SR sviluppo ≈ 2.1, vero 0) | 5.2% | 0.9% | 1.9% | 4.8% | 9.2% |
 
 Giudicata SUL SOLO sviluppo con PSR₀≥0,95 (senza holdout), la stessa classe overfittata viene promossa nel **92.2%** dei casi: è il motivo per cui il blocco separato esiste.
 
@@ -151,12 +151,55 @@ Protocollo: alla promozione a PAPER_CANDIDATE si registra una data di taglio (`c
 
 | classe | P(PAPER_CANDIDATE) con 125 sessioni, K=3 | P(FORWARD_CONFIRMED \| candidato) | P(percorso intero) |
 |---|---|---|---|
-| edge nullo | 7.1% | 1.9% | 0.13% |
-| edge debole (0,5) | 16.5% | 8.1% | 1.33% |
-| edge moderato (1,0) | 25.9% | 15.5% | 4.00% |
-| edge forte (2,0) | 50.5% | 50.1% | 25.33% |
+| edge nullo | 9.2% | 5.5% | 0.50% |
+| edge debole (0,5) | 16.0% | 7.3% | 1.17% |
+| edge moderato (1,0) | 26.8% | 9.3% | 2.50% |
+| edge forte (2,0) | 47.5% | 51.6% | 24.50% |
 
 Lettura: il percorso intero filtra molto bene i falsi positivi (la colonna dell'edge nullo) ma, con 125 sessioni di holdout e 250 in avanti, promuove anche solo una parte degli edge reali (potenza piena per Sharpe 1 richiede ~1.500 sessioni, sezione 2). Il candidato a paper è anche una selezione debole: a K=3 passa il ~7% dei nulli contro il ~26% di uno Sharpe 1 (rapporto ~3,5): non va letto come una conferma. I controlli aggiuntivi si preregistrano **prima**, non dopo aver visto i dati.
+
+## 11. Falsi positivi in condizioni avverse (item 6)
+
+1500 ripetizioni, 3 finalisti preregistrati nulli (vero Sharpe 0) su 100 sessioni; tasso con cui **almeno uno** supera DSR≥0,95 sul blocco. «Formula nuda» = senza correzione per autocorrelazione, senza t di Student, senza margine; «ufficiale» = `dsr_holdout` con tutte le correzioni (margine 0,30 z). Il margine è stato scelto da questa griglia sintetica, non da dati reali.
+
+| scenario | formula nuda | **ufficiale** |
+|---|---|---|
+| gaussiano, finalisti indipendenti | 1.1% | **0.4%** |
+| gaussiano, finalisti correlati ρ=0,9 | 1.5% | **0.7%** |
+| autocorrelazione AR(1) φ=0,2, ρ=0 | 5.9% | **1.7%** |
+| autocorrelazione AR(1) φ=0,4, ρ=0 | 13.7% | **3.1%** |
+| code spesse t(3), ρ=0 | 3.0% | **0.9%** |
+| zero-inflated (70% giorni a zero) φ=0,2 | 8.7% | **3.8%** |
+| asimmetria negativa (piccole vincite, rare perdite grosse) | 0.0% | **0.0%** |
+
+Lettura: la formula nuda supera il 5% con autocorrelazione forte (φ=0,4) anche con K=3; con le correzioni tutti gli scenari stanno sotto il 5% (i finalisti correlati rendono il test più conservativo di Šidák, non meno). Con un solo finalista il caso peggiore (φ=0,4) resta intorno al 5%, ed è il motivo per cui K ufficiale è sempre il massimo preregistrato (3), mai il conteggio corrente.
+
+## 12. Protocollo intero: blocco → paper → forward (item 10)
+
+500 epoche simulate. Per ogni epoca: 3 finalisti giudicati sul blocco con il DSR ufficiale (100 sessioni); chi supera la linea PAPER_CANDIDATE va in forward (4 controlli preregistrati a 60/120/180/250 sessioni, confine di Šidák z≥2,23, correzione per autocorrelazione). Si misura la probabilità che **almeno uno** dei tre finalisti raggiunga ciascun livello: sono tassi family-wise dell'intero percorso.
+
+| mondo | P(≥1 RESEARCH_APPROVED) | P(≥1 PAPER_CANDIDATE) | P(≥1 FORWARD_CONFIRMED) |
+|---|---|---|---|
+| nullo, ρ=0,9 | 1.0% | 7.4% | 0.6% |
+| nullo, φ=0,4, ρ=0 | 3.6% | 23.8% | 1.8% |
+| nullo, t(3) | 0.4% | 6.6% | 0.2% |
+| nullo, zero-inflated φ=0,2 | 1.0% | 11.0% | 0.8% |
+| edge debole 0,5 | 2.2% | 17.8% | 1.8% |
+| edge moderato 1,0 | 4.4% | 27.6% | 5.2% |
+| edge forte 2,0 | 12.0% | 53.0% | 32.6% |
+| edge molto forte 3,0 | 30.0% | 78.4% | 70.8% |
+
+Nei mondi nulli l'errore dell'intero percorso (colonna FORWARD_CONFIRMED) resta sotto il 2%: il candidato a paper è una selezione debole (le sue percentuali non sono errori finali), la conferma in avanti no. Per Sharpe 1,0 la conferma richiede molto più dei 250 sessioni in avanti previsti (sezione 2): il protocollo è onesto sulla propria potenza.
+
+## 13. Il protocollo preregistrato in pratica
+
+- **Epoca congelata.** Il blocco hidden è un intervallo fisso di sessioni. Dati nuovi aggiungono sessioni *dopo* l'epoca (riservate al forward); il taglio non si sposta più.
+- **≤ 3 finalisti per epoca**, registrati *prima* di calcolare qualsiasi cosa sul blocco: fingerprint, parametri, versione del codice, dataset (limitato all'epoca), regola di sizing, ruleset, timestamp, K. Tabella append-only con catena di hash e trigger che rifiutano UPDATE/DELETE. Un nuovo test identico è una *ripetizione*, non un nuovo finalista.
+- **Nessuna modifica dopo lo sguardo.** Una variante di una linea (template + nome senza numeri di versione) già giudicata sul blocco viene rifiutata: lo studio finisce `INSUFFICIENT_EVIDENCE` con cancello E7, senza toccare il blocco. Le diagnosi basate sul blocco non vengono più passate al Researcher durante l'epoca.
+- **K ufficiale = massimo preregistrato**, non un conteggio che cresce: con meno di 3 finalisti il test resta conservativo.
+- **`locked_looks`** resta il contatore separato di *tutti* gli sguardi al blocco (qualunque motivo); non è né i candidati dello sviluppo né K.
+- **Slot pieni.** Con il limite a 3, dopo tre finalisti gli studi successivi che superano la validazione vengono messi in attesa (E7) finché non si apre una nuova epoca (servono ≥ 100 sessioni nuove; il vecchio blocco entra nello sviluppo). È il prezzo dell'integrità; l'attuale selezione dei finalisti è per ordine di arrivo tra gli studi che superano tutti i gate di sviluppo (screening, walk-forward annidato, robustezza): non esiste ancora un round di selezione per punteggio.
+- **Validazione.** Il ruolo della validazione lo svolge il walk-forward annidato *dentro* lo sviluppo; non c'è un blocco di validazione separato nel motore (la suddivisione della sezione 6 resta una proposta).
 
 ## 7. Livelli di evidenza separati
 

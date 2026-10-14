@@ -283,11 +283,11 @@ def test_rejudging_changes_no_out_of_sample_number_and_never_unapproves_silently
     assert v["deterministic"] and v["judgment"]["gates"] and lab.promote_to_paper(slug).get("error")      # not a PAPER_CANDIDATE: refused
 
 
-def test_dsr_counts_the_looks_at_the_unseen_block_not_every_trial_ever_registered():
+def test_the_official_dsr_is_the_coherent_holdout_formulation_with_the_protocol_enforced():
     from ofo import research_config as rc
-    assert rc.get()["dsr_trials"] == "locked_looks"
-    # the threshold itself did not move
-    assert JG.DEFAULTS["confidence"] == 0.95 and rc.get()["judge"]["confidence"] == 0.95
+    cfg = rc.get()
+    assert cfg["dsr_trials"] == "holdout_null" and cfg["protocol"]["enforce"] is True and cfg["protocol"]["max_finalists"] == 3
+    assert JG.DEFAULTS["confidence"] == 0.95 and cfg["judge"]["confidence"] == 0.95          # the threshold itself did not move
 
 
 def test_budget_explain_names_the_binding_constraint_in_trials_not_tokens(tmp_path):
