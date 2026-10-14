@@ -131,12 +131,12 @@ def risk_plan(pnl, rules: PropRules, base_contracts: int, n_micro: int) -> dict:
 
 def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_contracts: int, trials_total: int,
                   language: str = "it", doc: str = "", audit: dict | None = None, economics: dict | None = None,
-                  goal: dict | None = None, market: str = "NQ", micro: str = "MNQ", point_value: float = 2.0) -> dict | None:
+                  goal: dict | None = None, market: str = "NQ", micro: str = "MNQ", point_value: float = 2.0, force: bool = False) -> dict | None:
     """Only for APPROVED studies. Returns None for anything else (nothing is ever dressed up).
     `fast_ok` says whether the strategy meets YOUR goal: pass the evaluation within `goal['max_eval_days']`
     sessions with an acceptable pass rate (lower bound of the 95% interval) on at least one account."""
     locked = report.get("locked") or {}
-    if locked.get("status") != "APPROVED":
+    if locked.get("status") != "APPROVED" and not force:      # force = the owner sends a rejected study to PAPER probation: the verdict itself never changes
         return None
     series = (report.get("series") or {}).get("locked")
     if not series:
@@ -257,4 +257,5 @@ def build_dossier(report: dict, rules_by_account: dict[str, PropRules], base_con
             "exits": {"chosen": report["series"].get("exit"), "grid": ex.get("grid", [])}, "accounts": accounts, "caveat": caveat,
             "n_oos_days": len(pnl), "oos_pnl": float(pnl.sum()), "oos_mean": float(pnl.mean()), "oos_std": float(pnl.std(ddof=1)),
             "base_contracts": base_contracts, "language": language,
-            "auditor": (audit or {}).get("summary"), "risk_flags": (audit or {}).get("risk_flags", [])}
+            "auditor": (audit or {}).get("summary"), "risk_flags": (audit or {}).get("risk_flags", []),
+            "probation": bool(locked.get("status") != "APPROVED"), "judge_status": locked.get("status")}

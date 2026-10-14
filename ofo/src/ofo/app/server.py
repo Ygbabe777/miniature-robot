@@ -56,6 +56,9 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                 if u.path.startswith("/api/fascicolo/"):
                     d = lab.fascicolo(unquote(u.path[len("/api/fascicolo/"):]))
                     return self._json(d) if d else self._json({"error": "not found"}, 404)
+                if u.path == "/api/judge":
+                    d = lab.judgment(unquote(parse_qs(u.query).get("slug", [""])[0]))
+                    return self._json(d) if d else self._json({"error": "not found"}, 404)
                 if u.path == "/api/research":
                     return self._json(lab.research_report())
                 if u.path == "/api/ranking":
@@ -133,6 +136,10 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.tell_researcher(str(data.get("text", "")), data.get("kind")))
                 if u.path == "/api/directives/remove":
                     return self._json(lab.forget_directive(str(data.get("id", ""))))
+                if u.path == "/api/promote":
+                    return self._json(lab.promote_to_paper(str(data.get("slug") or "")))
+                if u.path == "/api/rejudge":
+                    return self._json(lab.rejudge_all() if data.get("all") else lab.rejudge(str(data.get("slug") or "")))
                 if u.path == "/api/retest":
                     return self._json(lab.retest(str(data.get("slug") or "")))
                 if u.path == "/api/autopilot":

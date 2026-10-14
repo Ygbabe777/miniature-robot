@@ -41,7 +41,8 @@
  },
  "sample": {
   "min_oos_trades": 200,
-  "note": "indicativo: oltre al numero si verificano dipendenza (autocorrelazione), concentrazione dei profitti e intervalli di incertezza"
+  "note": "min_oos_trades è indicativo; min_backtest_trades (200) è un requisito: con meno trade nell'intero backtest una strategia non può essere approvata (campione insufficiente)",
+  "min_backtest_trades": 200
  },
  "holdout_fraction": 0.18,
  "holdout_note": "15-20% indicativo; con pochi dati un blocco così piccolo può avere troppi pochi trade e lo studio risulta INSUFFICIENT_EVIDENCE",
@@ -505,5 +506,24 @@
   "economy_gap_factor": 3,
   "per_call": 2,
   "note": "fase 1: il Researcher genera ipotesi da solo, famiglia per famiglia, quando le SUE ipotesi in coda (le strategie di partenza non contano) scendono sotto queue_low, anche mentre lo Scout cerca; al massimo una richiesta ogni min_gap_min minuti (x economy_gap_factor in modalità risparmio); il consumo conta nel tetto della fase 'hypothesis'"
+ },
+ "favorites": {
+  "min_winning_days": 0.5,
+  "max_losing_streak": 7,
+  "note": "preferite nella classifica: giorni vincenti costanti (quota di giorni vincenti, serie perdente massima) e pass rate alto"
+ },
+ "judge": {
+  "confidence": 0.95,
+  "candidate_dsr": 0.7,
+  "candidate_psr0": 0.9,
+  "min_useful_sharpe": 0.5,
+  "against_psr0": 0.2,
+  "decay_z": 1.64,
+  "max_sharpe_ci_width": 8.0,
+  "min_oos_days": 80,
+  "min_oos_trades": 30,
+  "min_backtest_trades": 200,
+  "ci_z": 1.96,
+  "note": "Giudice a due teste (edge / prop / finale). Soglie CONFIGURABILI ma mai calibrate sul blocco bloccato: vedi docs/JUDGE_AUDIT.md e scripts/judge_sensitivity.py. APPROVED non è più facile del Judge legacy: richiede anche la revisione prop-farming completa. PAPER_CANDIDATE non è un'approvazione."
  }
 }

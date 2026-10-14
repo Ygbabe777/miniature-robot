@@ -277,3 +277,29 @@ Una sola configurazione (`rules/research.json`, `version` + hash = *config_versi
 - **Reparti:** parete di fondo RESEARCH WING · OPTIMIZATION BAY · VALIDATION CHAMBER; al centro a sinistra STRATEGIST, al centro **OFO CORE** (tavolo esagonale in metallo nero e vetro fumé), a destra RISK MANAGER e TRADER DESK; davanti STRATEGY VAULT · THE JUDGE (rialzato) · PROP FARM (evaluation, funded, buffer = livello del liquido, payout = monete).
 - **Il percorso di un dossier** segue solo eventi veri del backend: proposta del Researcher → Optimization Bay → Validation Chamber → OFO Core → Judge → Vault (approvata), Archive (scartata) o On Hold (campione insufficiente). Gli schermi della Validation Chamber mostrano walk-forward ed equity dell'ultimo studio vero; quelli del Risk Manager l'ultimo studio e i conti.
 - **Camera:** vista isometrica a tre quarti, parete frontale rimossa, inquadratura completa all'avvio. Barra dei reparti in basso: zoom su ognuno e «Vista generale». Clic su un agente o una postazione (o su un'etichetta) apre l'Inspector del reparto con dati reali; doppio clic = zoom.
+
+## Judge a due teste: severo ma non ottuso
+
+Il verdetto non risponde più a una sola domanda. `src/ofo/judges.py` (funzione pura del report salvato, nessun LLM, nessun I/O):
+
+* **EDGE JUDGE** – dopo costi realistici, c'è un vantaggio statistico che la fortuna non spiega? Indipendente dalla prop: integrità/contabilità, campione, Deflated Sharpe con intervallo 95% dello Sharpe, precisione, degrado sviluppo→blocco mai visto, robustezza (parametri, costi ×2, deriva).
+* **PROP JUDGE** – dato l'edge, è compatibile con *ruleset + taglia + politica di payout*? Per ogni ruleset: conformità al drawdown, primo payout, valore netto del ciclo (NPFV con intervallo), valore con costi maggiorati. P(pass), P(primo payout), P(sopravvivenza da funded) sono mostrate separatamente: passare la valutazione non è un proxy della sostenibilità.
+* **FINAL JUDGE** – precedenza fissa, nessun punteggio compensa un cancello critico fallito. **APPROVED non è più facile di prima**: richiede anche che la revisione prop-farming completa approvi.
+
+| Verdetto | Condizione (testata in `tests/test_judges.py`) |
+|---|---|
+| `APPROVED` | edge VALIDO (DSR ≥ 0.95, P&L OOS > 0, campione ok, nessun degrado) + ≥ 1 ruleset compatibile + revisione farming APPROVED |
+| `PAPER_CANDIDATE` | edge plausibile (DSR ≥ 0.70, P(Sharpe>0) ≥ 90%, OOS > 0), campione sufficiente, nessuna incompatibilità prop → prova in paper, non approvazione |
+| `INSUFFICIENT_EVIDENCE` | l'edge non è né dimostrato né escluso (campione corto, intervallo che include lo zero, valore netto non provato) |
+| `NEEDS_ROBUSTNESS` | edge non escluso ma fragile ai costi o ai parametri sullo sviluppo |
+| `EDGE_VALID_PROP_INCOMPATIBLE` | edge credibile ma nessun ruleset lo rende conveniente (drawdown, primo payout, valore netto): **non è senza valore** |
+| `EXECUTION_FAILED` | errore di contabilità/libro mastro/riproducibilità o valori non finiti: nessun giudizio statistico è valido |
+| `STATISTICALLY_REJECTED` | **solo** con evidenza contro (P(Sharpe>0) ≤ 20% su campione sufficiente, firma di overfitting, sviluppo e OOS entrambi non positivi, la maggior parte delle combinazioni perde). Mai per semplice assenza di prova |
+
+`locked.status` resta tre-valore (APPROVED / REJECTED / INSUFFICIENT_EVIDENCE) per compatibilità; il nuovo verdetto è in `locked.verdict` e `report["judgment"]`.
+
+**Diagnosi di bocciatura.** Per ogni studio non approvato: cancello fallito, valore osservato, soglia, intervallo, ragione tecnica, classificazione (nessun edge / campione / incertezza / overfitting / costi / fragilità parametrica / incompatibilità prop / sizing / errore), prossimo esperimento, recuperabilità, vincoli che non si cambiano. Nel Lab: clic sul dossier → «Diagnosi del Judge» (`/api/judge?slug=`). Il verdetto resta deterministico: gli agenti possono discuterlo, non cambiarlo.
+
+**Ciclo di ricerca.** I fallimenti recuperabili vanno al Researcher come testo (`Lab.judge_feedback`, `judges.brief`): *campione insufficiente → nuove osservazioni indipendenti; costi → stress test di esecuzione; fragilità → plateau analysis; prop incompatibile → ruleset alternativi; sizing → nuova configurazione di rischio sviluppata sul solo training*. I numeri misurati sul blocco bloccato non vengono mostrati agli agenti (`judges.agent_view`), e una variante della stessa linea di ricerca che ha già usato il blocco non può essere APPROVATA su quello stesso blocco (cancello E5, registrato nel registro dei tentativi). Gli esperimenti proposti sono testo per il Researcher: nessuno viene lanciato in automatico.
+
+**Audit e soglie.** `python scripts/judge_audit.py` → `docs/JUDGE_AUDIT.md` (potenza statistica, falsi positivi, NaN, bust a taglia base, pass ≠ payout). Risultato chiave: con ~90 giorni mai visti, DSR ≥ 0.95 richiede uno Sharpe annuo ≈ 2.8 anche con un solo tentativo (≈ 4 con 100): la maggior parte delle bocciature "ingiuste" è mancanza di potenza, non di qualità. **Nessuna soglia è stata abbassata.** Le soglie sono in `rules/research.json → judge` e `dsr_trials` (raw | locked_looks | effective); non si calibrano sul blocco bloccato. `python scripts/judge_sensitivity.py` mostra la sensibilità usando solo dati di sviluppo. «Rivaluta» (`/api/rejudge`) rigiudica gli studi salvati senza toccare i numeri fuori campione e senza declassare in silenzio uno studio già APPROVED.

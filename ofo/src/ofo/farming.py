@@ -225,12 +225,12 @@ def gates_for(ev: dict, ctx: dict, cfg: dict) -> dict:
     tps = nt / ns if ns else 0.0
     # few sessions are NOT a defect when the strategy trades at least `min_trades_per_session` a day on average (the owner has ~2 years of data);
     # few sessions with sporadic trades ARE one. The number of trades is always required.
-    frequent_ok = ns >= int(g.get("min_locked_sessions_if_frequent", 40)) and tps >= float(g.get("min_trades_per_session", 1.0))
+    frequent_ok = ns >= int(g.get("min_locked_sessions_if_frequent", 40)) and tps >= float(g.get("min_trades_per_session", 0.5))
     sess_ok = ns >= g["min_locked_sessions"] or frequent_ok
     if not sess_ok or nt < g["min_locked_trades"]:
-        add(3, "Fuori campione", "INSUFFICIENT", (f"trade sporadici: {nt} trade in {ns} sessioni ({tps:.2f} al giorno, serve almeno {float(g.get('min_trades_per_session', 1.0)):g}) "
-            f"e poche sessioni (servono {g['min_locked_sessions']})" if tps < float(g.get("min_trades_per_session", 1.0)) and ns < g["min_locked_sessions"] else
-            f"campione insufficiente: {ns} sessioni e {nt} trade (servono almeno {g['min_locked_trades']} trade)"), sporadic=bool(tps < float(g.get("min_trades_per_session", 1.0))))
+        add(3, "Fuori campione", "INSUFFICIENT", (f"trade sporadici: {nt} trade in {ns} sessioni ({tps:.2f} al giorno, serve almeno {float(g.get('min_trades_per_session', 0.5)):g}) "
+            f"e poche sessioni (servono {g['min_locked_sessions']})" if tps < float(g.get("min_trades_per_session", 0.5)) and ns < g["min_locked_sessions"] else
+            f"campione insufficiente: {ns} sessioni e {nt} trade (servono almeno {g['min_locked_trades']} trade)"), sporadic=bool(tps < float(g.get("min_trades_per_session", 0.5))))
     else:
         add(3, "Fuori campione", "PASS" if ctx.get("oos_positive") else "FAIL",
             "profitto netto positivo sul blocco mai visto" if ctx.get("oos_positive") else "il blocco mai visto non è profittevole")
@@ -278,13 +278,13 @@ def indistinguishable(a: dict, b: dict) -> bool:
 def rank(entries: list[dict]) -> dict:
     """entries: [{slug, name, npfv: {mean,lcb95,ucb95}, verdict}] for ONE ruleset. Only APPROVED strategies are ranked, by LCB95.
     Zero approved strategies is a valid answer."""
-    ok = sorted([e for e in entries if e["verdict"] == "APPROVED" and e["npfv"]["lcb95"] is not None], key=lambda e: -e["npfv"]["lcb95"])
+    ok = sorted([e for e in entries if e["verdict"] == "APPROVED" and e["npfv"]["lcb95"] is not None], key=lambda e: (not e.get("favorite"), -e["npfv"]["lcb95"]))      # favourites (steady winning days, high pass rate) first, then by the lower bound
     if not ok:
         return {"ranking": [], "note": "nessuna strategia supera tutti i gate: OFO ne approva zero, ed è la risposta corretta"}
     top = ok[0]
     for e in ok:
         e["indistinguishable_from_top"] = (e is not top) and indistinguishable(e["npfv"], top["npfv"])
-    return {"ranking": ok, "note": "ordinate per NPFV_LCB95; 'indistinguibile' = intervalli sovrapposti al primo, evidenza insufficiente per preferirne una"}
+    return {"ranking": ok, "note": "prima le PREFERITE (giorni vincenti costanti e pass rate alto), poi per NPFV_LCB95; 'indistinguibile' = intervalli sovrapposti al primo, evidenza insufficiente per preferirne una"}
 
 
 # ------------------------------------------------------------------ multi-account farming portfolio

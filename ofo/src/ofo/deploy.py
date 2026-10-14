@@ -48,7 +48,7 @@ def make_deployment(dossier: dict, last_session: str, now: str) -> dict | None:
     return {"slug": dossier["slug"], "name": dossier["name"], "market": dossier.get("market"), "template": dossier["template"], "tf": dossier["tf"],
             "params": dossier["params"], "direction": dossier.get("direction") or "both", "schedule": dossier.get("schedule"), "exit": (dossier.get("exits") or {}).get("chosen"),
             "account": acct, "micro": rec["micro_equiv"], "cut": last_session, "deployed_at": now,
-            "status": "live", "reason": "", "oos_mean": dossier.get("oos_mean"), "oos_std": dossier.get("oos_std"),
+            "status": "live", "reason": "", "probation": bool(dossier.get("probation")), "oos_mean": dossier.get("oos_mean"), "oos_std": dossier.get("oos_std"),
             "n_signals": 0, "forward": {"days": 0}}
 
 

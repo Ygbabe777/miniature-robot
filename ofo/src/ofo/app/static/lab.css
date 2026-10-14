@@ -290,3 +290,9 @@ h2{color:var(--silver);letter-spacing:.22em;font-weight:400}
 #inspector .ev2 small{display:block;color:var(--silver);font-size:9.5px}
 #inspector .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 #inspector .fl{cursor:pointer;color:var(--platinum);border-bottom:1px solid #1C1E21;padding:3px 0;font-size:11.5px} #inspector .fl:hover{color:var(--white)}
+
+.b-PAPER_CANDIDATE{background:var(--platinum);color:var(--void)} .b-NEEDS_ROBUSTNESS,.b-EDGE_VALID_PROP_INCOMPATIBLE{background:var(--warn);color:var(--void)}
+.b-EXECUTION_FAILED,.b-STATISTICALLY_REJECTED{background:var(--down);color:var(--critical-bg)}
+.jx .jx-diag{margin:10px 0;padding:10px 12px;border-left:2px solid var(--silver);background:rgba(255,255,255,.03)}
+.jx-t{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0}.jx-t td,.jx-t th{padding:4px 6px;border-bottom:1px solid var(--edge);vertical-align:top;text-align:left}
+.jx-t tr.jx-FAIL td:nth-child(2){color:var(--down)}.jx-t tr.jx-INSUFFICIENT td:nth-child(2){color:var(--warn)}.jx-t tr.jx-PASS td:nth-child(2){color:var(--up)}

@@ -27,7 +27,7 @@
   "min_locked_sessions": 60,
   "min_locked_trades": 30,
   "min_locked_sessions_if_frequent": 40,
-  "min_trades_per_session": 1.0,
+  "min_trades_per_session": 0.5,
   "min_npfv_lcb95": 0.0,
   "min_p_first_payout": 0.15,
   "min_first_payout_given_pass": 0.5,

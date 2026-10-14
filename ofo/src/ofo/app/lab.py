@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .. import judges as JG
 from .. import BUILD
 from ..agents.base import AgentError
 from ..agents.loop import IDEA_SUFFIXES, ResearchLoop
@@ -1333,7 +1334,7 @@ class Lab:
         out.update({"ruleset": rid, "rulesets": ids, "evaluated": len(entries), "rejected": [e for e in entries if e["verdict"] != "APPROVED"][:30]})
         return out
 
-    def make_dossier(self, slug: str) -> dict | None:
+    def make_dossier(self, slug: str, force: bool = False) -> dict | None:
         d = load_study(self.work, slug)
         if d is None or not d.get("series"):
             return None
@@ -1343,7 +1344,7 @@ class Lab:
         dos = build_dossier(rep, {k: PRESETS[k] for k in ("50k", "25k")}, self.contracts, self.registry.n_trials,
                             lang, TEMPLATES[rep["template"]].doc, d.get("auditor"),
                             economics=load_assumptions(self._econ_path()), goal=load_goal(self._econ_path()),
-                            market=c.sym, micro=c.contract.symbol, point_value=c.contract.point_value)
+                            market=c.sym, micro=c.contract.symbol, point_value=c.contract.point_value, force=force)
         if dos is None:
             return None
         self._add_intraday(dos, rep, c, lang)
@@ -1352,6 +1353,95 @@ class Lab:
         (self.dossier_dir / f"{slug}.json").write_text(json.dumps(dos, indent=1, ensure_ascii=False, default=str))
         self.events.emit("lab", "ready", f"READY: {dos['name']}", {"slug": slug})
         return dos
+
+    # -- dual judge: diagnosis, re-judging, paper probation, feedback -------------------------
+    def _judge_inputs(self, d: dict):
+        ser = d.get("series") or {}
+        pick = lambda k: [float(v) for _, v in (ser.get(k) or [])] or None
+        return pick("locked"), pick("dev_best")
+
+    def rejudge(self, slug: str, persist: bool = True) -> dict:
+        """Judge a stored study again with the CURRENT dual judge. Pure: it reads only the stored report and series, never the market data,
+        never the registry (no new look at the unseen block). A study already APPROVED is never silently un-approved: a conflict is flagged."""
+        d = load_study(self.work, slug)
+        if d is None:
+            return {"error": "studio non trovato"}
+        rep = d["report"]
+        oos, dev = self._judge_inputs(d)
+        j = JG.judge_report(rep, oos=oos, dev=dev, cfg=JG.cfg_from(rcfg_mod.get()), lineage_looks=int((rep.get("judgment") or {}).get("lineage_looks", 0)))
+        if persist:
+            def mut(r):
+                lk = r["locked"]
+                lk.setdefault("legacy_status", lk.get("status"))
+                lk["verdict"] = j["verdict"]
+                if lk.get("status") == "APPROVED" and j["verdict"] != "APPROVED":
+                    j["conflict"] = "lo studio era APPROVED con il Judge precedente: non viene declassato in automatico, rivedilo"
+                else:
+                    lk["status"] = j["legacy_status"]
+                r["judgment"] = j
+                if j["verdict"] != "APPROVED" and not r.get("gate_failed"):
+                    r["gate_failed"] = ((j.get("diagnosis") or {}).get("failed_gate") or {}).get("label")
+                r["near_miss"] = True if j["verdict"] == "PAPER_CANDIDATE" else None
+            update_report(self.work, slug, mut)
+        return {"slug": slug, "verdict": j["verdict"], "was": (rep.get("locked") or {}).get("status")}
+
+    def rejudge_all(self) -> dict:
+        n, changed = 0, 0
+        for r in list_studies(self.work):
+            before = r.get("verdict")
+            out = self.rejudge(r["slug"])
+            n += 1; changed += int(out.get("verdict") != before)
+        self.events.emit("judge", "verdict", f"{n} studi rivalutati con il Judge a due teste ({changed} con diagnosi nuova); i numeri fuori campione non sono stati toccati")
+        return {"studies": n, "changed": changed}
+
+    def judgment(self, slug: str) -> dict | None:
+        """The dossier-click view: verdict, passed and failed gates, determining metrics, reason, next research path. Computed on the fly
+        for studies saved before the dual judge existed."""
+        d = load_study(self.work, slug)
+        if d is None:
+            return None
+        rep = d["report"]
+        j = rep.get("judgment")
+        if j is None:
+            oos, dev = self._judge_inputs(d)
+            j = JG.judge_report(rep, oos=oos, dev=dev, cfg=JG.cfg_from(rcfg_mod.get()))
+            j["computed_now"] = True
+        dep_item = next((x for x in self.deployments.d["items"] if x.get("slug") == slug), None)
+        return {"slug": slug, "name": rep.get("name"), "judgment": j, "deterministic": True,
+                "can_promote_to_paper": bool(j["verdict"] == "PAPER_CANDIDATE" and not dep_item),
+                "paper": None if not dep_item else {"status": dep_item.get("status"), "probation": dep_item.get("probation"), "forward": dep_item.get("forward"), "reason": dep_item.get("reason")},
+                "legacy_status": (rep.get("locked") or {}).get("legacy_status"), "note": "Il verdetto è deterministico: gli agenti possono discuterlo ma non cambiarlo con opinioni."}
+
+    def promote_to_paper(self, slug: str) -> dict:
+        """PAPER_CANDIDATE -> paper probation: forward days are NEW out-of-sample evidence. The verdict itself does not change; nothing is traded."""
+        d = load_study(self.work, slug)
+        if d is None:
+            return {"error": "studio non trovato"}
+        j = (d["report"].get("judgment") or {})
+        if j.get("verdict") != "PAPER_CANDIDATE":
+            return {"error": f"solo i PAPER_CANDIDATE possono andare in prova (verdetto: {j.get('verdict') or 'n/d'})"}
+        if self.deployments.get(slug):
+            return {"slug": slug, "already": True}
+        dos = self.make_dossier(slug, force=True)
+        if dos is None:
+            return {"error": "dossier non costruibile"}
+        self.deploy_ready()
+        self.events.emit("judge", "verdict", f"{d['report']['name']}: PAPER_CANDIDATE → in prova in paper (giorni nuovi = evidenza nuova)", {"slug": slug})
+        return {"slug": slug, "probation": True}
+
+    def judge_feedback(self, limit: int = 1600) -> str:
+        """For the Researcher: why recent strategies were not approved and which experiments are worth trying. Locked-block numbers are withheld
+        (judges.agent_view); only classes and development-side experiments are shared. Untrusted-free: written by the deterministic Judge."""
+        rows = []
+        for r in list_studies(self.work)[:60]:
+            if r.get("verdict") in (None, "APPROVED", "STATISTICALLY_REJECTED"):
+                continue
+            d = load_study(self.work, r["slug"])
+            j = (d or {}).get("report", {}).get("judgment")
+            if j and j.get("diagnosis") and j["diagnosis"].get("recoverable"):
+                rows.append(f"- {r['name']}: {JG.brief(JG.agent_view(j))}")
+        txt = "\n".join(rows)
+        return ("JUDGE DIAGNOSES (recoverable failures; use them to design TARGETED variants on development data only, never to tune against the unseen block):\n" + txt)[:limit] if rows else ""
 
     def _add_intraday(self, dos: dict, rep: dict, c: "MarketCtx", lang: str) -> None:
         """Replay the unseen block bar by bar at each account's recommended size (unrealised P&L, intraday trailing)."""
@@ -1442,7 +1532,11 @@ class Lab:
             mem = knowledge.memory_text(self.knowledge_graph())
         except Exception:
             mem = ""
-        return (self.directives.prompt_text() + "\n" + mem).strip()
+        try:
+            fb = self.judge_feedback()
+        except Exception:
+            fb = ""
+        return (self.directives.prompt_text() + "\n" + mem + ("\n" + fb if fb else "")).strip()
 
     # -- Obsidian ---------------------------------------------------------------------------
     def _vault_ideas(self) -> Path | None:
@@ -1552,6 +1646,9 @@ class Lab:
                     if r["status"] != x["status"] and not (x["status"] == "confirmed" and r["status"] == "live"):
                         x["status"], x["reason"] = r["status"], r["reason"]
                         self.events.emit("trader", x["status"], f"{x['name']}: {x['status'].upper()} - {x['reason']}")
+                        if x.get("probation") and x["status"] == "confirmed":      # paper probation confirmed: new evidence, the owner re-reviews (the Judge is not bent)
+                            update_report(self.work, x["slug"], lambda rr: rr.__setitem__("paper_confirmation", {"at": time.strftime("%Y-%m-%d %H:%M"), "forward": r["forward"]}))
+                            self.events.emit("judge", "verdict", f"{x['name']}: CONFERMATA in paper - evidenza nuova disponibile, rilancia il test su dati aggiornati per un nuovo giudizio", {"slug": x["slug"]})
                 except Exception as e:
                     self.events.emit("lab", "error", f"forward {x['slug']}: {e}")
             self.deployments.save()

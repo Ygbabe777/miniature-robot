@@ -32,6 +32,8 @@ from .lifecycle import pool_from_ledger
 from .rulesets import load_farming_config, load_rulesets
 from .sizing import size_study
 from .timing import timing_report
+from . import judges as JG
+from .nearmiss import consistency, is_favorite
 from .roles import classify_roles
 from .schedule import schedule_study
 from .strategies import DIRECTIONS, TEMPLATES, TIMEFRAMES, directional, flatten_overnight, scheduled, version_fn
@@ -46,7 +48,7 @@ class SurfaceThresholds:
     min_plateau_ratio: float = 0.6      # PARAMETER neighbours of the best must keep >=60% of its Sharpe
     min_neighbours_positive: float = 0.75
     min_tf_positive: float = 0.5        # share of timeframes whose median Sharpe is positive (when several are tested)
-    min_trades: int = 100               # development trades of the final candidate
+    min_trades: int = 160               # development trades of the final candidate (the whole backtest needs 200: ~80% of them are development)
     max_cost_multiple_sharpe: float = 0.0   # Sharpe must stay above this at twice the costs and with next-open fills
 
 
@@ -585,10 +587,30 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                    "wf_kind": "entry_only", "wf_oos_days": len(wf0), "wf_oos_pnl": float(wf0.sum()) if len(wf0) else 0.0,
                    "wf_oos_sharpe_daily": sharpe(wf0) if len(wf0) > 2 else 0.0, "wf_oos_series": wf0}
 
+    jctx: dict = {}                                                  # series the dual judge may read (set when the unseen block was judged)
+
     def finish(report: dict, status: str = "completed") -> dict:
         report["stages"] = stages.rows
         lk = report["locked"]
+        # DUAL JUDGE (edge / prop / final): a pure function of this report. The legacy status stays visible as `legacy_status`.
+        try:
+            j = JG.judge_report(report, oos=jctx.get("oos"), dev=jctx.get("dev"), cfg=JG.cfg_from(rcfg), lineage_looks=int(jctx.get("lineage", 0)))
+            report["judgment"] = j
+            lk["legacy_status"] = lk.get("status")
+            lk["verdict"] = j["verdict"]
+            lk["status"] = j["legacy_status"]
+            lk["reason"] = lk.get("reason") if j["verdict"] == "APPROVED" else j["reason"]
+            if j["verdict"] != "APPROVED" and not report.get("gate_failed"):
+                report["gate_failed"] = ((j.get("diagnosis") or {}).get("failed_gate") or {}).get("label")
+            report["near_miss"] = ({"gate": "edge", "dsr": (j["edge"]["metrics"] or {}).get("dsr"), "needed": rcfg.get("judge", {}).get("confidence", 0.95), "why": j["reason"]}
+                                   if j["verdict"] == "PAPER_CANDIDATE" else None)
+        except Exception as e:                                       # never lose a finished study because the diagnosis failed
+            report["judgment_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         report["evidence"] = evidence_ladder(report)
+        ser_ = report.get("series") or {}
+        vals_ = [v for _, v in (ser_.get("dev_best") or [])] + [v for _, v in (ser_.get("locked") or [])]
+        report["consistency"] = consistency(vals_) if vals_ else None
+        report["favorite"] = bool(report["consistency"] and is_favorite(report["consistency"], bool((report.get("locked") or {}).get("checks", {}).get("pass_rate")), rcfg.get("favorites", {})))
         report["roles"] = classify_roles(report)
         results = {"survived_screening": bool(surf["robust"]), "validated": bool(report.get("validated")), "locked_status": lk.get("status"),
                    "approved": lk.get("status") == "APPROVED",
@@ -723,7 +745,14 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         stages.start("audit", "audit e blocco bloccato")
         say("judge", "working", "audit, reproducibility and the look at the hidden block")
         cand, tf = fcand, fcand["tf"]
-        s_full, rc, pos_full, b_full = guarded_full_series(bars, cand, best_exit, contract, contracts, slippage_ticks, dev_days, final_dev, spec.name)
+        try:
+            s_full, rc, pos_full, b_full = guarded_full_series(bars, cand, best_exit, contract, contracts, slippage_ticks, dev_days, final_dev, spec.name)
+        except AccountingError as e:                             # a verdict is never built on broken numbers: EXECUTION_FAILED, the locked block was not read
+            report["accounting_error"] = str(e)[:300]
+            report["gate_failed"] = "accounting"
+            report["locked"] = {"status": REJECTED, "reason": f"AccountingError: {str(e)[:200]}; blocco bloccato non toccato"}
+            stages.end(2, "controllo contabile fallito", False)
+            return finish(report)
         report["ledger_check"] = rc
         locked_days = [d for d in sessions if d >= cut]
         locked = s_full.reindex(locked_days).fillna(0.0)
@@ -744,7 +773,12 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         var_sr = float(np.var([r["sharpe"] for r in rows], ddof=1))
         led_full = run_ledger(b_full, pos_full, contract, contracts, slippage_ticks, best_exit)
         n_locked_trades = sum(1 for t_ in led_full.trades if str(t_.get("entry_session"))[:10] >= str(cut)[:10])
-        v = judge(locked.values, rules, registry.n_trials + 1, var_sr, judge_th, n_trades=n_locked_trades)
+        dsr_mode = rcfg.get("dsr_trials", "raw")                  # raw: every trial ever registered (strictest) | locked_looks: only strategies that were tested on the unseen block | effective: this study's independent trials
+        n_dsr = (int(registry.data["locked_looks"]) + 1 if dsr_mode == "locked_looks" else max(2, int(round(n_eff))) + 1 if dsr_mode == "effective" else registry.n_trials + 1)
+        v = judge(locked.values, rules, n_dsr, var_sr, judge_th, n_trades=n_locked_trades)
+        look_label = f"{spec.name}:{cand['params']}@{tf}"
+        jctx.update(oos=np.asarray(locked.values, float), dev=np.asarray(final_dev.values if hasattr(final_dev, "values") else final_dev, float),
+                    lineage=JG.lineage_looks_for(registry, spec.name, look_label, str(cut)[:10]))
         registry.add_locked_look(f"{spec.name}:{cand['params']}@{tf}", v.status, experiment_id=eid, dataset_fp=dfp,
                                  oos_start=str(cut)[:10])
         # the human may only see the locked block once the Judge has already used its look
@@ -754,7 +788,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                                                     goal_days, goal_rate, "unseen_block"),
                             "sizing": size_study(locked.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, basis="unseen_block"),
                             "p_pass": v.mc.get("p_pass"), "p_pass_ci95": v.mc.get("p_pass_ci95"),
-                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "mc_sample": v.mc.get("sample"), "params": cand["params"],
+                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "mc_sample": v.mc.get("sample"), "dsr": {**(v.mc.get("dsr") or {}), "basis": dsr_mode, "n_trials_raw": registry.n_trials + 1}, "params": cand["params"],
                             "tf": tf, "exit": best_exit, "prop_model": "daily_simplified"}
         # The Judge above is DETERMINISTIC and uses the simplified daily account model. After its look, the same unseen
         # block is replayed bar by bar with unrealised P&L and intraday drawdown rules, for the owner to read.
@@ -786,6 +820,14 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
             report["locked"]["status"] = REJECTED                        # a result that cannot be reproduced from its metadata is not promoted
             report["locked"]["reason"] = "not reproducible from the saved metadata"
             report["gate_failed"] = "reproducibility"
+        # the WHOLE backtest (development + unseen block) must contain at least `min_backtest_trades` trades: fewer cannot be approved
+        n_bt = len(led_full.trades) if led_full is not None else None
+        min_bt = int(rcfg["sample"].get("min_backtest_trades", 200))
+        report["locked"]["backtest_trades"] = {"n": n_bt, "min": min_bt, "ok": bool(n_bt is not None and n_bt >= min_bt)}
+        if n_bt is not None and n_bt < min_bt and report["locked"]["status"] == "APPROVED":
+            report["locked"]["status"] = "INSUFFICIENT_EVIDENCE"
+            report["locked"]["reason"] = f"solo {n_bt} trade in tutto il backtest (ne servono almeno {min_bt}): campione insufficiente"
+            report["gate_failed"] = "backtest_trades"
         stages.end(2, "causalità, libro mastro, riproducibilità, blocco nascosto, Giudice, prop farming", report["locked"]["status"] == "APPROVED")
     else:
         why = [k for k, ok in surf["checks"].items() if not ok]

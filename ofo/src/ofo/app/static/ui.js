@@ -682,6 +682,36 @@
       <table class="rrt"><tr><th></th>${rrs.map(r => `<th>${r == null ? t('rr_none') : 'R:R ' + r + ':1'}</th>`).join('')}</tr>${own}${rows}</table>
       <div class="sub">${t('rr_note', { b: num(ex.baseline.sharpe, 3), f: pct(ex.frac_better_than_baseline), n: ex.n_trials })}</div></div>`;
   }
+
+  // ---- Judge diagnosis (edge / prop / final): what passed, what failed, why, and what to try next ----
+  function jxVal(v) {
+    if (v == null) return '–';
+    if (typeof v === 'number') return Math.abs(v) < 5 ? v.toFixed(2) : Math.round(v).toLocaleString();
+    if (typeof v === 'object') return Object.entries(v).map(([k, x]) => k + ' ' + jxVal(x)).join(' · ');
+    return String(v);
+  }
+  function judgeBox(r) {
+    const j = r.judgment; if (!j) return '';
+    const row = g => `<tr class="jx-${g.status}"><td>${esc(g.label)}</td><td>${esc(g.status)}</td><td>${g.observed != null ? esc(jxVal(g.observed)) : '–'}</td><td>${g.threshold != null ? esc(jxVal(g.threshold)) : '–'}</td><td>${g.interval && g.interval[0] != null ? esc(jxVal(g.interval[0]) + ' … ' + jxVal(g.interval[1])) : '–'}</td><td>${esc(g.reason || '')}</td></tr>`;
+    const bad = j.gates.filter(g => g.status !== 'PASS'), ok = j.gates.filter(g => g.status === 'PASS');
+    const d = j.diagnosis;
+    const next = d && d.next_experiments && d.next_experiments.length ? '<ul>' + d.next_experiments.map(e => `<li>${esc(e.text || e.kind)}</li>`).join('') + '</ul>' : '';
+    const props = Object.entries((j.prop && j.prop.by_ruleset) || {}).map(([id, v]) => `<li><b>${esc(id)}</b>: ${esc(v.status)} · ${v.size_micro || '–'} micro · NPFV ${v.metrics.npfv_mean == null ? '–' : '$' + Math.round(v.metrics.npfv_mean).toLocaleString()} · ${t('ro_p_win')}: ${v.metrics.p_pass == null ? '–' : pct(v.metrics.p_pass)} · payout: ${v.metrics.p_first_payout == null ? '–' : pct(v.metrics.p_first_payout)}</li>`).join('');
+    return `<div class="judge jx" id="jx"><b>${t('jx_title')}</b> <span class="badge b-${j.verdict}">${t('v_' + j.verdict)}</span>
+      <div class="sub">${esc(j.reason || '')}</div><div class="sub">${t('jx_det')}</div>
+      ${r.can_promote_to_paper ? `<button class="btn small" id="jx-paper">${t('jx_paper_go')}</button>` : ''}
+      ${r.paper ? `<div class="sub">${t('jx_paper_state')}: ${esc(r.paper.status)}${r.paper.probation ? ' (prova)' : ''}</div>` : ''}
+      ${j.conflict ? `<div class="sub">⚠ ${t('jx_conflict')}: ${esc(j.conflict)}</div>` : ''}
+      ${d ? `<div class="jx-diag"><div><b>${esc(d.failed_gate ? d.failed_gate.label : '')}</b> — ${esc(d.classification_label || d.classification)} · ${d.recoverable ? t('jx_recov') : t('jx_norecov')}</div>
+        <div>${esc(d.technical_reason || '')}</div>
+        <div class="sub">${t('jx_obs')}: ${esc(jxVal(d.observed))} · ${t('jx_thr')}: ${esc(jxVal(d.threshold))}${d.interval && d.interval[0] != null ? ' · ' + t('jx_ci') + ': ' + esc(jxVal(d.interval[0]) + ' … ' + jxVal(d.interval[1])) : ''}</div>
+        <div><b>${t('jx_next')}</b>${next || '<div class="sub">–</div>'}</div>
+        <div class="sub"><b>${t('jx_frozen')}:</b> ${(d.frozen || []).map(esc).join(' · ')}</div></div>` : ''}
+      <details open><summary>${t('jx_failed')} (${bad.length})</summary>${bad.length ? `<table class="jx-t"><tr><th></th><th></th><th>${t('jx_obs')}</th><th>${t('jx_thr')}</th><th>${t('jx_ci')}</th><th></th></tr>${bad.map(row).join('')}</table>` : `<div class="sub">${t('jx_none')}</div>`}</details>
+      <details><summary>${t('jx_passed')} (${ok.length})</summary><table class="jx-t">${ok.map(row).join('')}</table></details>
+      ${props ? `<details><summary>${t('jx_prop')}</summary><ul>${props}</ul></details>` : ''}</div>`;
+  }
+
   async function openDetail(slug) {
     const d = await api('/api/strategy/' + encodeURIComponent(slug));
     if (d.error) return;
@@ -691,7 +721,7 @@
     const title = { wf_oos: t('s_wf'), locked: t('s_locked'), dev_best: t('s_dev') };
     const pl = d.planner && d.planner.reason ? (/failed a deterministic gate/.test(d.planner.reason) ? t('pl_gate') : d.planner.reason) : '';
     $('#detail').innerHTML = `
-      <div class="dtitle"><h1>${esc(rep.name)}</h1><span class="badge b-${L.status}">${t('v_' + L.status)}</span><button class="btn small" id="retest-go" title="${esc(t('retest_tip'))}">↻ ${t('retest')}</button></div>
+      <div class="dtitle"><h1>${esc(rep.name)}</h1><span class="badge b-${L.verdict || L.status}">${t('v_' + (L.verdict || L.status))}</span><button class="btn small" id="retest-go" title="${esc(t('retest_tip'))}">↻ ${t('retest')}</button></div>
       ${rep.retest_no ? `<div class="sub">${t('retest_n', { n: rep.retest_no })}</div>` : ''}
       <div class="sub">${t('d_model')} ${esc(rep.template)} · ${rep.n_candidates} ${t('d_tested')} · ${esc(rep.source || '')}</div>
       <div class="judge"><b>${t('d_judge')}</b> ${L.reason ? '<div style="margin-top:6px">' + esc(itReason(L.reason)) + '</div>' : ''}
@@ -699,6 +729,7 @@
         ${L.p_pass != null ? `<div>${t('d_pass')}: <b>${pct(L.p_pass)}</b> (${t('d_interval')} ${pct(L.p_pass_ci95[0])}–${pct(L.p_pass_ci95[1])}) · ${t('d_bust')}: <b>${pct(L.p_bust)}</b> · ${t('d_pnl_block')}: <b class="${L.pnl >= 0 ? 'pos' : 'neg'}">${money(L.pnl)}</b></div>` : ''}</div>
       <div class="grid">${kpi(t('kp_med'), num(sur.median_sharpe, 3))}${kpi(t('kp_pos'), pct(sur.frac_positive))}${kpi(t('kp_plat'), num(sur.plateau_ratio, 2))}${kpi(t('kp_rob'), sur.robust ? t('yes') : t('no'), sur.robust ? 'pos' : 'neg')}${kpi(t('kp_wf'), money(rep.wf_oos_pnl), rep.wf_oos_pnl >= 0 ? 'pos' : 'neg')}</div>
       ${d.best_params ? `<div class="sub">${t('d_best', { p: esc(JSON.stringify(d.best_params)), n: rep.n_candidates })}</div>` : ''}
+      <div id="jx-slot"></div>
       ${rolesBox(rep.roles)}
       ${farmBox(rep.farming)}
       ${tfBox(rep.by_timeframe)}
@@ -717,6 +748,12 @@
       </div>
       ${d.auditor ? `<div class="judge"><b>${t('aud_title')}</b><p>${esc(d.auditor.summary)}</p>${(d.auditor.risk_flags || []).length ? '<ul style="padding:0">' + d.auditor.risk_flags.map(f => `<li class="no">${esc(f)}</li>`).join('') + '</ul>' : ''}<p><b>${t('aud_next')}:</b> ${esc(d.auditor.next_step)}</p></div>` : ''}
       ${pl ? `<div class="judge"><b>${t('planner')}:</b> ${esc(t('pl_' + ({ abandon: 'abandon', extend: 'extend', new_hypothesis: 'new' }[d.planner.decision] || 'abandon')))} — ${esc(pl)}</div>` : ''}`;
+    api('/api/judge?slug=' + encodeURIComponent(slug)).then(r => {
+      const slot = $('#jx-slot'); if (!slot || r.error) return;
+      slot.outerHTML = judgeBox(r);
+      const pb = $('#jx-paper');
+      if (pb) pb.onclick = async () => { const x = await api('/api/promote', { method: 'POST', body: JSON.stringify({ slug }) }); toast(x.error ? '⚠ ' + esc(x.error) : '✔ ' + esc(t('jx_paper_started')), 8000); };
+    }).catch(() => {});
     $('#retest-go').onclick = async () => {
       if (!confirm(t('retest_confirm'))) return;
       const r = await api('/api/retest', { method: 'POST', body: JSON.stringify({ slug }) });

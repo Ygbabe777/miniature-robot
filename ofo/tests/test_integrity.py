@@ -166,7 +166,7 @@ def test_quality_checks_flag_few_trades_cost_fragility_and_gap_only_edges():
     q = quality_checks({"5min": thin}, cand, None, MNQ, 2, 1.0, days, th)
     assert q["n_trades"] == 30 and not q["checks"]["min_trades"] and not q["ok"]            # 30 trades prove nothing
     assert q["sharpe_1x"] > 0 and q["sharpe_2x_costs"] < 0 and not q["checks"]["cost_2x"]  # edge smaller than 2x the costs
-    gappy = staircase(150, gap=True)
+    gappy = staircase(200, gap=True)
     days = sorted(gappy["session"].unique())
     q2 = quality_checks({"5min": gappy}, cand, None, MNQ, 2, 1.0, days, th)
     assert q2["checks"]["min_trades"] and q2["sharpe_1x"] > 0 and q2["sharpe_next_open"] < 0 and not q2["checks"]["next_open_fill"]
