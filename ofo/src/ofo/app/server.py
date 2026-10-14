@@ -65,7 +65,7 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     what = u.path[len("/api/mie/"):]
                     if what == "trace":
                         return self._json(lab.mie.trace(parse_qs(u.query).get("slug", [""])[0]))
-                    fn = {"overview": lab.mie.overview, "intelligence": lab.mie.intelligence, "memory": lab.mie.memory_view, "cycle": lab.mie.cycle_view, "status": lab.mie.status}.get(what)
+                    fn = {"overview": lab.mie.overview, "intelligence": lab.mie.intelligence, "memory": lab.mie.memory_view, "cycle": lab.mie.cycle_view, "status": lab.mie.status, "chart": lab.mie.chart}.get(what)
                     return self._json(fn()) if fn else self._json({"error": "not found"}, 404)
                 if u.path == "/api/research":
                     return self._json(lab.research_report())

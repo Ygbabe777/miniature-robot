@@ -6,7 +6,7 @@
   const money = (v) => v == null ? '–' : (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString(loc);
   const num = (v, d = 2) => v == null ? '–' : Number(v).toFixed(d);
   const pct = (v) => v == null ? '–' : (v * 100).toFixed(0) + '%';
-  const AGENTS = { researcher: 'Researcher', strategist: 'Strategist', you: LANG === 'en' ? 'You' : 'Tu', optimizer: 'Optimizer', planner: 'Planner', validator: 'Validator', judge: 'Judge', auditor: 'Auditor', lab: 'Lab' };
+  const AGENTS = { researcher: 'Researcher', strategist: 'Strategist', you: LANG === 'en' ? 'You' : 'Tu', optimizer: 'Optimizer', planner: 'Planner', validator: 'Validator', judge: 'Judge', auditor: 'Auditor', lab: 'Lab', market_observer: 'Market Observer', structure_engine: 'Structure Engine', behavior_analyzer: 'Behavior Analyzer', obsidian_memory: 'Obsidian Memory', research_director: 'Research Director' };
   const api = async (path, opt) => {
     opt = opt || {};
     const r = await fetch(path, { method: opt.method || 'GET', headers: Object.assign({ 'X-OFO': '1' }, opt.json ? { 'Content-Type': 'application/json' } : {}), body: opt.json ? JSON.stringify(opt.json) : opt.body });
@@ -743,6 +743,7 @@
       <div class="grid">${kpi(t('kp_med'), num(sur.median_sharpe, 3))}${kpi(t('kp_pos'), pct(sur.frac_positive))}${kpi(t('kp_plat'), num(sur.plateau_ratio, 2))}${kpi(t('kp_rob'), sur.robust ? t('yes') : t('no'), sur.robust ? 'pos' : 'neg')}${kpi(t('kp_wf'), money(rep.wf_oos_pnl), rep.wf_oos_pnl >= 0 ? 'pos' : 'neg')}</div>
       ${d.best_params ? `<div class="sub">${t('d_best', { p: esc(JSON.stringify(d.best_params)), n: rep.n_candidates })}</div>` : ''}
       <div id="jx-slot"></div>
+      <div id="mie-trace"></div>
       ${rolesBox(rep.roles)}
       ${farmBox(rep.farming)}
       ${tfBox(rep.by_timeframe)}
@@ -761,6 +762,7 @@
       </div>
       ${d.auditor ? `<div class="judge"><b>${t('aud_title')}</b><p>${esc(d.auditor.summary)}</p>${(d.auditor.risk_flags || []).length ? '<ul style="padding:0">' + d.auditor.risk_flags.map(f => `<li class="no">${esc(f)}</li>`).join('') + '</ul>' : ''}<p><b>${t('aud_next')}:</b> ${esc(d.auditor.next_step)}</p></div>` : ''}
       ${pl ? `<div class="judge"><b>${t('planner')}:</b> ${esc(t('pl_' + ({ abandon: 'abandon', extend: 'extend', new_hypothesis: 'new' }[d.planner.decision] || 'abandon')))} — ${esc(pl)}</div>` : ''}`;
+    if (window.MIE) MIE.trace(slug, $('#mie-trace'));
     api('/api/judge?slug=' + encodeURIComponent(slug)).then(r => {
       const slot = $('#jx-slot'); if (!slot || r.error) return;
       slot.outerHTML = judgeBox(r);
@@ -941,8 +943,8 @@
   setInterval(feedScreens, 6000);
 
   // ---------- departments: zoom bar + Inspector (live data only: nothing here is made up) ----------
-  const DEPT_AGENTS = { research: ['researcher', 'scout'], optimizer: ['optimizer', 'planner'], validator: ['validator'], strategist: ['strategist'], risk: ['risk'], judge: ['judge', 'auditor'], trader: ['trader'], core: [], vault: [], farm: [] };
-  const DEPT_STATE = { research: 'research', optimizer: 'optimizer', validator: 'validator', strategist: 'strategist', risk: 'risk', judge: 'judge', trader: 'trader' };
+  const DEPT_AGENTS = { research: ['researcher', 'scout'], optimizer: ['optimizer', 'planner'], validator: ['validator'], strategist: ['strategist'], risk: ['risk'], judge: ['judge', 'auditor'], trader: ['trader'], core: [], vault: [], farm: [], mie: ['market_observer', 'structure_engine', 'behavior_analyzer', 'obsidian_memory', 'research_director'] };
+  const DEPT_STATE = { research: 'research', optimizer: 'optimizer', validator: 'validator', strategist: 'strategist', risk: 'risk', judge: 'judge', trader: 'trader', mie: 'mie_director' };
   let inspKey = null;
   function buildDeptBar() {
     const bar = $('#deptbar'); if (!bar || !window.LabScene || !LabScene.departments) return;
@@ -953,7 +955,8 @@
   function markBar(k) { document.querySelectorAll('#deptbar button').forEach(b => b.classList.toggle('on', !!k && b.dataset.k === k)); }
   function openInspector(key) { inspKey = key; markBar(key); renderInspector(); }
   function evLines(agents, n) {
-    return evCache.filter(e => agents.includes(e.agent) && !['working', 'done', 'idle', 'web'].includes(e.type)).slice(-n).reverse()
+    const quiet = agents.includes('market_observer') ? ['idle', 'web'] : ['working', 'done', 'idle', 'web'];       // the MIE agents report through done/working lines
+    return evCache.filter(e => agents.includes(e.agent) && !quiet.includes(e.type)).slice(-n).reverse()
       .map(e => `<div class="ev2"><small>${esc(AGENTS[e.agent] || e.agent)} · ${esc(e.type)} · ${esc((e.t || '').slice(11, 19))}</small>${esc(String(e.message || '').slice(0, 180))}</div>`).join('') || `<div class="smeta">${t('dp_noev')}</div>`;
   }
   function renderInspector() {
@@ -971,6 +974,7 @@
     else if (k === 'judge') { rows = kv(t('v_APPROVED'), cnt('APPROVED')) + kv(t('v_REJECTED'), cnt('REJECTED')) + kv(t('v_INSUFFICIENT_EVIDENCE'), cnt('INSUFFICIENT_EVIDENCE')) + kv(t('dp_looks'), s.locked_looks ?? '–'); }
     else if (k === 'vault') { const f = s.fascicoli || []; rows = kv(t('dp_dossiers'), f.length); extra = f.slice(0, 8).map(x => `<div class="fl" data-fasc="${esc(x.slug)}">▸ ${esc(x.nome)} · ${esc(x.decisione || t('dp_pending'))}</div>`).join(''); }
     else if (k === 'farm') { const A = lastAcct || []; const by = st => A.filter(a => a.state === st).length; rows = kv(t('dp_accounts'), A.length) + kv(t('acct_eval'), A.filter(a => a.kind !== 'funded').length) + kv(t('acct_funded'), A.filter(a => a.kind === 'funded').length) + kv('passed', by('passed')) + kv('busted', by('busted')) + kv(t('dp_payouts'), A.reduce((x, a) => x + (a.payouts || 0), 0)); }
+    else if (k === 'mie') { const m = s.mie || {}, c = m.cycle || {}; rows = kv(t('mie_cycle'), c.status && c.status !== 'idle' ? esc(c.status) + (c.focus ? ' · ' + esc(c.focus) : '') : 'NOT AVAILABLE') + kv(t('mie_studies'), m.studies ?? 'NOT AVAILABLE') + kv(t('mie_hyps'), m.hypotheses ?? 'NOT AVAILABLE') + (m.error ? kv('!', esc(m.error)) : ''); acts = `<button class="btn small" id="insp-mie">${t('mie_open_panel')}</button>`; }
     else if (k === 'trader') { rows = kv(t('v_APPROVED'), cnt('APPROVED')); acts = `<button class="btn small" data-go="trader">${t('dp_open_trader')}</button>`; }
     const ag = DEPT_AGENTS[k] || [];
     box.hidden = false;
@@ -979,6 +983,7 @@
       ${ag.length ? `<h3>${t('dp_events')}</h3>${evLines(ag, 5)}` : ''}<div class="acts"><button class="btn small ghost" id="insp-zoom">${t('dp_zoom')}</button>${acts}</div>`;
     $('#insp-x').onclick = () => { LabScene.home(); closeInspector(); };
     $('#insp-zoom').onclick = () => LabScene.focus(k);
+    const mb = box.querySelector('#insp-mie'); if (mb) mb.onclick = () => window.MIE && MIE.open();
     box.querySelectorAll('[data-go]').forEach(b => b.onclick = () => tab(b.dataset.go));
     box.querySelectorAll('[data-fasc]').forEach(b => b.onclick = () => openFasc(b.dataset.fasc));
   }

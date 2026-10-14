@@ -16,6 +16,9 @@ from pathlib import Path
 from .. import finalists as FIN
 from .. import research_config as rcfg_mod
 from ..mie import config as MC
+from ..mie import observer as OB
+from ..mie import questions as Q
+from ..mie import structure as ST
 from ..mie.cycle import LearningCycle
 from ..mie.engine import Engine
 from ..mie.guard import DevView
@@ -116,14 +119,54 @@ class MIEService:
         snap = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "market": view.market, "data_version": view.data_version, "dq": prep["dq"], "regime_share": prep["regime_share"],
                 "epoch": {"start": view.epoch[0], "end": view.epoch[1]}, "counts": cyc.counts(view),
                 "forward_sessions": int(view.forward["session"].nunique()) if len(view.forward) else 0}
+        try:
+            snap["chart"] = self._chart(view, prep, eng)
+        except Exception as e:                                       # the chart is a view: its failure never stops the research
+            snap["chart"] = None
+            self.lab.events.emit("market_observer", "error", f"chart MIE: {e}"[:200])
         self.dir.mkdir(parents=True, exist_ok=True)
         self.snap_file.write_text(json.dumps(snap, ensure_ascii=False, default=str), encoding="utf-8")
+
+    def _chart(self, view: DevView, prep: dict, eng: Engine, sessions: int = 2) -> dict:
+        """The last development sessions as 5-minute candles with what the agents actually computed on them: session levels, confirmed swings and the events of
+        each study. DEVELOPMENT data only (the view cannot contain the hidden block); times are the data's own timestamps."""
+        dev = view.development
+        last = sorted(dev["session"].unique())[-sessions:]
+        b1 = dev[dev["session"].isin(last)]
+        c5 = OB.derive(b1, "5min")
+        k = int(self.cfg["structure"]["swing_k"]["5min"])
+        sw = ST.swings(c5, k, "5min")
+        ctx = prep["ctx"]
+        ctx = ctx[ctx.index.isin(last)]
+        row = ctx.iloc[-1] if len(ctx) else None
+        levels = {n: float(row[n]) for n in ("pdh", "pdl", "onh", "onl", "orh", "orl") if row is not None and row[n] is not None and row[n] == row[n]}
+        events = []
+        for did, st in (eng.studies.get(view.data_version) or {}).items():
+            q = next((x for x in (eng.questions or Q.standard_questions(self.cfg)) if x["definition"]["id"] == did), None)
+            if q is None:
+                continue
+            ev = Q.events_for(q, b1, ctx, self.cfg)
+            for _, e in ev.iterrows():
+                t = e.get("breach_time") if "breach_time" in ev.columns else e["available_at"]
+                events.append({"t": str(t), "available_at": str(e["available_at"]), "sign": int(e["sign"]), "study": q["text"][:60], "status": st["status"], "level": (None if "level" not in ev.columns else float(e["level"]))})
+        return {"tf": "5min", "sessions": [str(x)[:10] for x in last], "candles": [[str(i), float(r.open), float(r.high), float(r.low), float(r.close)] for i, r in c5.iterrows()],
+                "levels": levels, "swings": [{"kind": r.kind, "price": r.price, "t": str(r.event_time), "confirmed_at": str(r.confirm_time)} for r in sw.itertuples()][-40:], "events": events[-40:],
+                "scope": "development"}
+
+    def chart(self) -> dict:
+        snap = self.snapshot()
+        ch = (snap or {}).get("chart")
+        return {"available": bool(ch and ch["candles"]), "reason": None if ch else NA, **(ch or {})}
 
     def snapshot(self) -> dict | None:
         try:
             return json.loads(self.snap_file.read_text(encoding="utf-8", errors="ofo_legacy")) if self.snap_file.exists() else None
         except ValueError:
             return None
+
+    def touched(self) -> bool:
+        """True once the MIE has ever run here. Before that, views answer NOT AVAILABLE without building anything (no folders are created in the vault by merely opening the page)."""
+        return self._parts is not None or self.snap_file.exists() or (self.dir / "cycle.json").exists()
 
     # ------------------------------------------------------------------ views (only what exists)
     def status(self) -> dict:
@@ -140,7 +183,7 @@ class MIEService:
 
     def overview(self) -> dict:
         snap = self.snapshot()
-        if snap is None:
+        if snap is None or not self.touched():
             return {"available": False, "reason": NA, "note": "Nessuna osservazione ancora: il Market Observer non ha ancora analizzato i dati."}
         dq = snap["dq"]
         _, eng, _ = self.parts()
@@ -150,6 +193,8 @@ class MIEService:
                 "epoch": snap["epoch"], "forward_sessions": snap["forward_sessions"], "order_flow": NA, "counts": snap["counts"]}
 
     def intelligence(self) -> dict:
+        if not self.touched():
+            return {"available": False, "reason": NA, "studies": [], "hypotheses": [], "missions": {"by_status": {}, "open": []}, "duplicates_hypotheses": 0}
         snap = self.snapshot()
         _, eng, _ = self.parts()
         dv = (snap or {}).get("data_version")
@@ -167,6 +212,9 @@ class MIEService:
                 "duplicates_hypotheses": eng.counters["duplicates_hypotheses"]}
 
     def memory_view(self) -> dict:
+        if not self.touched():
+            return {"available": False, "reason": NA, "shared_vault": bool(self.lab.obs.get("vault")), "notes_total": 0, "notes_intelligence": 0, "by_access": {}, "by_kind": {}, "by_evidence": {},
+                    "conflicts": [], "recent": [], "errors": []}
         mem, _, _ = self.parts()
         s = mem.stats()
         idx = mem.index()
@@ -178,6 +226,8 @@ class MIEService:
                 "recent": [{"title": n.get("title"), "kind": n["front"].get("ofo_kind"), "evidence": n["front"].get("ofo_evidence"), "access": n["access"]} for n in recent]}
 
     def cycle_view(self) -> dict:
+        if not self.touched():
+            return {"status": {"status": "idle"}, "counts": None, "reason": NA, "weeks": self.cfg["cycle"]["weekly_focus"], "days": self.cfg["cycle"]["days"], "done": [], "report": None}
         _, eng, cyc = self.parts()
         st = cyc.status()
         snap = self.snapshot()
@@ -189,12 +239,14 @@ class MIEService:
 
     # ------------------------------------------------------------------ Observation -> Memory -> Hypothesis -> Study -> Validation -> Judge -> Forward
     def hypothesis_of(self, slug: str) -> dict | None:
+        if not self.touched():
+            return None
         _, eng, _ = self.parts()
         d = load_study(self.lab.work, slug)
         if d is None:
             return None
         src = str(d["report"].get("source") or "")
-        if not src.startswith("MIE "):
+        if not src.startswith("MIE ") or not self.touched():
             return None
         return eng.hyps.get(src.split(" ", 1)[1].strip())
 

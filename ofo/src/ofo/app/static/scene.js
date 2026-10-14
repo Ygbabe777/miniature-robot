@@ -12,9 +12,9 @@
   renderer.setClearColor(0x000000, 0);                         // the page paints a soft graphite gradient behind the lab
   scene.fog = new T.Fog(THEME.n.bg, 62, 125);
   const camera = new T.PerspectiveCamera(42, 1, 0.1, 300);
-  camera.position.set(21.5, 16.5, 24.5);
+  camera.position.set(19.5, 19.5, 31.5);
   const controls = new T.OrbitControls(camera, canvas);
-  controls.target.set(0, 1.4, 1.6);
+  controls.target.set(-5.5, 0.8, 5.5);
   controls.enableDamping = true;
   controls.maxPolarAngle = Math.PI * 0.47;
   controls.minDistance = 8; controls.maxDistance = 95;
@@ -540,6 +540,119 @@
   makeDesk(robots.judge, 0xffffff); makeDesk(robots.strategist, 0xe7e9ec); makeDesk(robots.risk, 0xe7e9ec);
   Object.values(robots).forEach(r => tagStation(r.g, r.name));
 
+  // ======================= MARKET INTELLIGENCE WING (front left, an extension of the lab floor) =======================
+  // Five scientists: Market Observer, Structure Engine, Behavior Analyzer, Obsidian Memory, Research Director. The screens show ONLY what the backend reports
+  // (LabScene.setMie); with no data they say NOT AVAILABLE. The links light up only when the corresponding agents really emitted events, in that order.
+  const miG = new T.Group(); scene.add(miG);
+  const MZ0 = Z1 + 0.5, MZ1 = Z1 + 11.5;                                                          // wing floor: z 14.5 .. 25.5, x as the lab
+  vox(miG, (X0 + 0) / 2 - 0.0, -0.45, (MZ0 + MZ1) / 2, 16.6, 0.4, MZ1 - MZ0, 0x020305, { cast: false });
+  (function wingFloor() {
+    const a = new T.InstancedMesh(geo(0.94, 0.4, 0.94), mat(0x0c1017), 120), b = new T.InstancedMesh(geo(0.94, 0.4, 0.94), mat(0x10151e), 120), m4 = new T.Matrix4(); let ia = 0, ib = 0;
+    for (let x = X0; x < 0; x++) for (let z = Math.ceil(MZ0); z < MZ1; z++) { m4.setPosition(x + 0.5, -0.2, z + 0.5); ((x + z) & 1 ? a : b).setMatrixAt((x + z) & 1 ? ia++ : ib++, m4); }
+    a.count = ia; b.count = ib; a.receiveShadow = b.receiveShadow = true; miG.add(a, b);
+  })();
+  vox(miG, X0 - 0.5, 0, (MZ0 + MZ1) / 2 + 0.2, 1, 13, MZ1 - MZ0 + 0.4, 0x070a0f);                  // the left wall continues
+  for (let z = MZ0 + 1; z < MZ1 - 0.5; z += 2.2) vox(miG, X0 + 0.12, 0.7, z, 0.1, 5.4, 2.0, Math.round(z) % 2 ? 0x0e131c : 0x0b0f17, { cast: false });
+  vox(miG, X0 + 0.1, 0, (MZ0 + MZ1) / 2, 0.3, 0.8, MZ1 - MZ0, 0x05070b); vox(miG, X0 + 0.2, 12.3, (MZ0 + MZ1) / 2, 0.2, 0.25, MZ1 - MZ0, 0x8a8a90, { cast: false, mat: glow(0xcfcfd6, 0.7) });
+  sign(miG, X0 + 0.02, 11.2, (MZ0 + MZ1) / 2, 9.4, 1.0, ['MARKET INTELLIGENCE WING'], '#050505', THEME.accent, 20, Math.PI / 2);
+  // four small wall screens (data) high up, and a big CHART wall below them: the scientists stand in front of it and work on it
+  const miScr = ['overview', 'intelligence', 'memory', 'cycle'].map((k, i) => {
+    const z = MZ0 + 1.7 + i * 2.55, tt = paint(512, 384, () => {}, '#050505');
+    vox(miG, X0 + 0.2, 7.1, z, 0.12, 2.4, 2.4, 0x101113, { cast: false }); plane(miG, X0 + 0.32, 8.3, z, 2.25, 1.7, tt, Math.PI / 2);
+    return { k, tt, z };
+  });
+  const CH = { zc: (MZ0 + MZ1) / 2, yc: 3.7, W: 9.4, H: 4.4, x: X0 + 0.32, pw: 1280, ph: 600 };
+  const chartTT = paint(CH.pw, CH.ph, () => {}, '#050505');
+  vox(miG, X0 + 0.2, 1.3, CH.zc, 0.12, CH.H + 0.4, CH.W + 0.4, 0x101113, { cast: false }); plane(miG, CH.x, CH.yc, CH.zc, CH.W, CH.H, chartTT, Math.PI / 2);
+  let chartGeo = null;                                                                          // pixel mapping of the last drawn chart (for the beams)
+  const wall = (px, py) => new T.Vector3(CH.x, CH.yc + CH.H / 2 - py / CH.ph * CH.H, CH.zc + CH.W / 2 - px / CH.pw * CH.W);
+  const MI_SEATS = [['mie_observer', 'Market Observer', 0, { coat: 0xe7e9ec, trim: 0xa6abb1, accent: 0xffffff, hair: 0x2a2d31, goggles: true, item: null }],
+                    ['mie_structure', 'Structure Engine', 1, { coat: 0x44484d, trim: 0xe7e9ec, accent: 0xe7e9ec, hair: 0x101113, antenna: true, item: null }],
+                    ['mie_behavior', 'Behavior Analyzer', 2, { coat: 0xa6abb1, trim: 0xe7e9ec, accent: 0xffffff, hair: 0xe7e9ec, hairStyle: 'tall', item: 'flask' }],
+                    ['mie_memory', 'Obsidian Memory', 3, { coat: 0x101113, trim: 0xe7e9ec, accent: 0xffffff, hair: 0xa6abb1, hairStyle: 'bun', halo: true, item: 'tablet' }],
+                    ['mie_director', 'Research Director', 4, { coat: 0x7b8087, trim: 0xe7e9ec, accent: 0xffffff, hair: 0x2a2d31, pauldron: true, item: 'tablet' }]];
+  MI_SEATS.forEach(([n, label, i, o]) => { const z = MZ0 + 1.5 + i * 2.1; makeScientist(n, label, o); place(robots[n], -12.2, z, X0, z); tagStation(robots[n].g, n); });
+  // a beam from each WORKING scientist to what it is looking at on the chart: observer -> last candle, structure -> last swing, behavior -> last event, memory -> the levels, director -> the title
+  const beams = {};
+  MI_SEATS.forEach(([n]) => {
+    const m = new T.Mesh(new T.CylinderGeometry(0.035, 0.035, 1, 6), new T.MeshBasicMaterial({ color: 0xe7e9ec, transparent: true, opacity: 0.0, depthWrite: false })); m.visible = false; miG.add(m); beams[n] = m;
+    const dot = new T.Mesh(new T.SphereGeometry(0.14, 8, 8), new T.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0 })); dot.visible = false; miG.add(dot); m.userData.dot = dot;
+  });
+  const _up = new T.Vector3(0, 1, 0), _d = new T.Vector3(), _a = new T.Vector3();
+  function aimBeams(t) {
+    MI_SEATS.forEach(([n]) => {
+      const r = robots[n], m = beams[n], g = chartGeo, on = r.state === 'working' && g && g.focus && g.focus[n];
+      m.visible = m.userData.dot.visible = !!on; if (!on) return;
+      const tgt = wall(g.focus[n][0] + Math.sin(t * 1.7 + r.phase) * 6, g.focus[n][1] + Math.cos(t * 1.3 + r.phase) * 4);
+      r.armR.getWorldPosition(_a); _a.y -= 0.5; _d.subVectors(tgt, _a); const len = _d.length();
+      m.position.copy(_a).addScaledVector(_d, 0.5); m.scale.set(1, len, 1); m.quaternion.setFromUnitVectors(_up, _d.normalize());
+      m.material.opacity = 0.55 + 0.3 * Math.sin(t * 8 + r.phase); m.userData.dot.position.copy(tgt); m.userData.dot.material.opacity = 0.9;
+    });
+  }
+  function drawChart(ch) {
+    chartGeo = null;
+    chartTT.redraw((g, w, h) => {
+      g.textBaseline = 'alphabetic'; g.textAlign = 'left'; g.fillStyle = '#a6abb1'; g.font = 'bold 28px monospace';
+      if (!ch || !ch.available) { g.fillStyle = '#a6abb1'; g.fillText('MARKET CHART', 30, 44); g.fillStyle = '#44484d'; g.font = 'bold 56px monospace'; g.textAlign = 'center'; g.fillText('NOT AVAILABLE', w / 2, h / 2 + 18); return; }
+      g.fillText('NQ · 5min · ' + ch.sessions.join(' + ') + ' · DEVELOPMENT DATA ONLY', 30, 44);
+      const L = 90, R = w - 40, Tp = 70, B = h - 40, cs = ch.candles, n = cs.length, T0 = cs[0][0], idx = {}; cs.forEach((c, i) => idx[c[0]] = i);
+      let lo = Infinity, hi = -Infinity; cs.forEach(c => { lo = Math.min(lo, c[3]); hi = Math.max(hi, c[2]); });
+      const pad = (hi - lo) * 0.05; lo -= pad; hi += pad;
+      const X = i => L + (i + 0.5) / n * (R - L), Y = v => B - (v - lo) / (hi - lo) * (B - Tp), cw = Math.max(1.5, (R - L) / n * 0.7);
+      const near = ts => { if (idx[ts] != null) return idx[ts]; let b = 0; for (let i = 0; i < n; i++) { if (cs[i][0] <= ts) b = i; else break; } return b; };
+      g.strokeStyle = '#1c1e21'; g.lineWidth = 1; g.fillStyle = '#7b8087'; g.font = '16px monospace'; g.textAlign = 'right';
+      for (let k = 0; k <= 4; k++) { const v = lo + (hi - lo) * k / 4, y = Y(v); g.beginPath(); g.moveTo(L, y); g.lineTo(R, y); g.stroke(); g.fillText(v.toFixed(0), L - 8, y + 5); }
+      cs.forEach((c, i) => { const up = c[4] >= c[1]; g.strokeStyle = g.fillStyle = up ? '#e7e9ec' : '#5a5f65'; g.lineWidth = 1; g.beginPath(); g.moveTo(X(i), Y(c[2])); g.lineTo(X(i), Y(c[3])); g.stroke(); g.fillRect(X(i) - cw / 2, Math.min(Y(c[1]), Y(c[4])), cw, Math.max(1.5, Math.abs(Y(c[1]) - Y(c[4])))); });
+      g.font = 'bold 16px monospace'; g.lineWidth = 1.5; g.setLineDash([8, 6]);
+      Object.entries(ch.levels || {}).forEach(([k, v]) => { const y = Y(v); if (y < Tp || y > B) return; g.strokeStyle = '#a6abb1'; g.beginPath(); g.moveTo(L, y); g.lineTo(R, y); g.stroke(); g.setLineDash([]); g.fillStyle = '#a6abb1'; g.textAlign = 'left'; g.fillText(k.toUpperCase() + ' ' + v.toFixed(2), L + 6, y - 5); g.setLineDash([8, 6]); });
+      g.setLineDash([]);
+      const sw = (ch.swings || []).slice(-24); let lastSw = null;
+      sw.forEach(s => { const i = near(s.t), x = X(i), y = s.kind === 'H' ? Y(s.price) - 14 : Y(s.price) + 14; g.fillStyle = '#c4c8cd'; g.beginPath(); if (s.kind === 'H') { g.moveTo(x, y + 8); g.lineTo(x - 6, y - 4); g.lineTo(x + 6, y - 4); } else { g.moveTo(x, y - 8); g.lineTo(x - 6, y + 4); g.lineTo(x + 6, y + 4); } g.fill(); lastSw = [x, y]; });
+      let lastEv = null; const col = { SUPPORTED: '#e7e9ec', CONTRADICTED: '#d98b8b', INCONCLUSIVE: '#d9c27f' };
+      (ch.events || []).forEach(e => { const i = near(e.t), x = X(i), y = e.level != null ? Y(e.level) : Y(cs[i][4]); g.strokeStyle = col[e.status] || '#a6abb1'; g.lineWidth = 3; g.beginPath(); g.arc(x, y, 11, 0, 7); g.stroke(); g.fillStyle = g.strokeStyle; g.font = 'bold 15px monospace'; g.textAlign = 'left'; g.fillText((e.sign > 0 ? '▲ ' : '▼ ') + e.study.slice(0, 26), x + 14, y - 12); lastEv = [x, y]; });
+      g.fillStyle = '#7b8087'; g.font = '15px monospace'; g.textAlign = 'left'; g.fillText('△▽ swing confermati · ○ eventi studiati (colore = stato dell\'evidenza) · linee tratteggiate = livelli di sessione', L, h - 12);
+      chartGeo = { focus: { mie_observer: [X(n - 1), Y(cs[n - 1][4])], mie_structure: lastSw || [X(n - 1), Y(cs[n - 1][4])], mie_behavior: lastEv || [X(Math.floor(n / 2)), Y(cs[Math.floor(n / 2)][4])],
+        mie_memory: [L + 60, Tp + 20], mie_director: [w / 2, 32] } };
+    }, '#050505');
+  }
+  // links of the real research pipeline: observer -> structure -> behavior -> memory -> director
+  const MI_ORDER = ['mie_observer', 'mie_structure', 'mie_behavior', 'mie_memory', 'mie_director'], miLinks = {};
+  for (let i = 0; i + 1 < MI_ORDER.length; i++) {
+    const A = robots[MI_ORDER[i]].g.position, B = robots[MI_ORDER[i + 1]].g.position, dx = B.x - A.x, dz = B.z - A.z, len = Math.hypot(dx, dz);
+    const m = vox(miG, (A.x + B.x) / 2, 0.05, (A.z + B.z) / 2, len, 0.08, 0.16, 0x44484d, { cast: false, mat: glow(0x44484d, 0.2) });
+    m.material = m.material.clone(); m.rotation.y = -Math.atan2(dz, dx); miLinks[MI_ORDER[i + 1]] = m;
+  }
+  let miLast = null;
+  function miEvent(station) {                                                                    // called for a real event of an MIE agent
+    if (miLinks[station] && miLast && MI_ORDER.indexOf(miLast) + 1 === MI_ORDER.indexOf(station)) miLinks[station].userData.until = now() + 4;
+    miLast = station;
+  }
+  tagStation(miG, 'mie_overview');
+  function setMie(d) {
+    const NA = (tt, title) => tt.redraw((g, w, h) => { g.fillStyle = '#a6abb1'; g.font = 'bold 28px monospace'; g.textAlign = 'left'; g.fillText(title, 20, 40); g.fillStyle = '#44484d'; g.font = 'bold 40px monospace'; g.textAlign = 'center'; g.fillText('NOT AVAILABLE', w / 2, h / 2 + 14); }, '#050505');
+    const rows = (tt, title, lines) => tt.redraw((g, w, h) => {
+      g.fillStyle = '#a6abb1'; g.font = 'bold 28px monospace'; g.textAlign = 'left'; g.fillText(title, 20, 40);
+      g.fillStyle = '#e7e9ec'; g.font = '24px monospace'; lines.slice(0, 9).forEach((l, i) => g.fillText(String(l).slice(0, 34), 20, 92 + i * 33));
+    }, '#050505');
+    const [ov, iv, me, cy] = miScr.map(s => s.tt);
+    const o = d && d.overview, i = d && d.intelligence, m = d && d.memory, c = d && d.cycle;
+    drawChart(d && d.chart);
+    if (o && o.available) {
+      const top = Object.entries(o.regime_share || {}).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => k + ' ' + Math.round(v * 100) + '%');
+      rows(ov, 'MARKET OVERVIEW · ' + o.market, [o.period[0] + ' > ' + o.period[1], o.sessions + ' sessions', Number(o.bars).toLocaleString('en') + ' 1-min bars', o.missing_minutes + ' missing minutes', 'fwd sessions ' + o.forward_sessions, 'order flow: ' + o.order_flow, ...top]);
+    } else NA(ov, 'MARKET OVERVIEW');
+    if (i && i.available) {
+      const by = {}; (i.studies || []).forEach(s => by[s.status] = (by[s.status] || 0) + 1);
+      rows(iv, 'MARKET INTELLIGENCE', [(i.studies || []).length + ' studies', ...Object.entries(by).map(([k, v]) => k + ' ' + v), (i.hypotheses || []).length + ' hypotheses', 'open missions ' + ((i.missions && i.missions.by_status && i.missions.by_status.open) || 0)]);
+    } else NA(iv, 'MARKET INTELLIGENCE');
+    if (m && m.available) rows(me, 'OBSIDIAN MEMORY', [m.notes_intelligence + ' MIE notes / ' + m.notes_total + ' total', 'dev ' + ((m.by_access || {}).dev || 0) + ' · owner ' + ((m.by_access || {}).owner || 0), 'locked-derived ' + ((m.by_access || {}).locked_derived || 0), 'conflicts ' + (m.conflicts || []).length, 'quarantined ' + (m.quarantined || 0), 'last write ' + (m.last_write || '-')]);
+    else NA(me, 'OBSIDIAN MEMORY');
+    if (c && c.status && c.status.status === 'active') rows(cy, 'LEARNING CYCLE ' + c.status.id, ['focus: ' + c.status.focus, 'lab day ' + c.status.lab_days_elapsed + ' / ' + c.status.lab_days_planned, 'studies ' + c.status.studies_run, 'hypotheses ' + c.status.hypotheses, 'forward sessions ' + c.status.forward_sessions]);
+    else if (c && c.status && c.status.status === 'completed') rows(cy, 'LEARNING CYCLE', ['completed', c.status.report ? (c.status.report.thin ? 'report: INCONCLUSIVE' : 'report ready') : '']);
+    else NA(cy, 'LEARNING CYCLE');
+  }
+  setMie(null);
+
   // ---------- crates (strategies travelling on the belt) ----------
   const crates = [];
   function makeCrate(color) {
@@ -561,7 +674,8 @@
   let gearSpeed = 0.4, partSpeed = 0.3, optRunning = false, valUntil = 0, heatT = 0, coreFlash = 0, coreSpin = 0.12;
   const now = () => performance.now() / 1000;
   let bubblesOn = false;                                              // routine thoughts are off by default: bubbles are for what matters
-  const MAP = { risk: 'risk', researcher: 'research', scout: 'research', strategist: 'strategist', you: 'strategist', trader: 'trader', optimizer: 'optimizer', planner: 'optimizer', validator: 'validator', judge: 'judge', auditor: 'judge', lab: 'judge' };
+  const MAP = { risk: 'risk', researcher: 'research', scout: 'research', strategist: 'strategist', you: 'strategist', trader: 'trader', optimizer: 'optimizer', planner: 'optimizer', validator: 'validator', judge: 'judge', auditor: 'judge', lab: 'judge',
+    market_observer: 'mie_observer', structure_engine: 'mie_structure', behavior_analyzer: 'mie_behavior', obsidian_memory: 'mie_memory', research_director: 'mie_director' };
   function speak(station, text, secs, alert) {
     const r = robots[station]; if (!r || !text) return;
     if (!alert) {
@@ -578,7 +692,8 @@
     const hex = '#' + col.toString(16).padStart(6, '0');
     verdict.redraw(centered([status === 'INSUFFICIENT_EVIDENCE' ? 'NOT ENOUGH DATA' : status, (name || '').slice(0, 22)], hex, status === 'INSUFFICIENT_EVIDENCE' ? 40 : 56), '#07080c');
   }
-  const AGENTS_OF = { research: ['researcher', 'scout'], risk: ['risk'], strategist: ['strategist'], optimizer: ['optimizer', 'planner'], validator: ['validator'], judge: ['judge', 'auditor'], trader: ['trader'] };
+  const AGENTS_OF = { research: ['researcher', 'scout'], risk: ['risk'], strategist: ['strategist'], optimizer: ['optimizer', 'planner'], validator: ['validator'], judge: ['judge', 'auditor'], trader: ['trader'],
+    mie_observer: ['market_observer'], mie_structure: ['structure_engine'], mie_behavior: ['behavior_analyzer'], mie_memory: ['obsidian_memory'], mie_director: ['research_director'] };
   const agentState = {};
   const matWork = mat(0xffffff, glow(0xffffff, 1.3)), matDone = mat(THEME.n.up, glow(THEME.n.up, 1.2));
   let stateLabels = { idle: 'idle', standby: 'standby', working: 'working', done: 'done' };
@@ -608,6 +723,7 @@
     if (ev.type === 'board' && AGENTS_OF[MAP[ev.agent]]) setAgentState(AGENTS_OF[MAP[ev.agent]][0], 'working');      // a real board line: that agent is talking now
     if (ev.agent === 'judge' && ev.type === 'verdict') { setAgentState('judge', 'done'); setAgentState('validator', 'done'); }
     const st = MAP[ev.agent];
+    if (st && st.indexOf('mie_') === 0 && ev.type !== 'idle') miEvent(st);
     if (st && ev.type === 'alert') speak(st, '❗ ' + ev.message, 120, true);
     else if (st && ev.type === 'web') speak(st, ({ search: '🔎 ', found: '📄 ', read: '📖 ', saved: '💾 ', error: '⚠ ' }[ev.data && ev.data.phase] || '') + (ev.data && ev.data.src ? ev.data.src + ': ' : '') + ev.message);
     else if (st && ev.type === 'board') speak(st, '💬 ' + ev.message, 9);
@@ -637,7 +753,7 @@
   }
 
   // ---------- departments: each one can be selected, zoomed into, and the general view restored ----------
-  const HOME = { pos: [21.5, 16.5, 24.5], target: [0, 1.4, 1.6] };
+  const HOME = { pos: [19.5, 19.5, 31.5], target: [-5.5, 0.8, 5.5] };
   const DEPT = {
     research:   { label: 'RESEARCH WING',      at: [-9, 2.0, -9.5],    r: 5.2, station: 'research',   agent: 'research' },
     optimizer:  { label: 'OPTIMIZATION BAY',   at: [0.5, 2.4, -9.5],   r: 5.4, station: 'optimizer',  agent: 'optimizer' },
@@ -648,12 +764,14 @@
     trader:     { label: 'TRADER DESK',        at: [12.2, 2.4, 7],     r: 4.4, station: 'trader',     agent: 'trader' },
     judge:      { label: 'THE JUDGE',          at: [0, 2.6, 10.8],     r: 4.6, station: 'judge',      agent: 'judge' },
     vault:      { label: 'STRATEGY VAULT',     at: [-10.6, 2.2, 12.5], r: 5.4, station: 'vault',      agent: null },
-    farm:       { label: 'PROP FARM',          at: [10.9, 2.4, 12.7],  r: 6.0, station: 'accounts',   agent: null }
+    farm:       { label: 'PROP FARM',          at: [10.9, 2.4, 12.7],  r: 6.0, station: 'accounts',   agent: null },
+    mie:        { label: 'MARKET INTELLIGENCE WING', at: [-9.5, 3.4, 20.0], r: 8.0, station: 'mie_director', agent: 'mie_director', view0: { target: [-15.5, -1.2, 19.0], pos: [-1.0, 9.5, 27.0] } }
   };
-  const STATION_DEPT = { research: 'research', optimizer: 'optimizer', validator: 'validator', strategist: 'strategist', core: 'core', risk: 'risk', trader: 'trader', judge: 'judge', vault: 'vault', accounts: 'farm' };
+  const STATION_DEPT = { research: 'research', optimizer: 'optimizer', validator: 'validator', strategist: 'strategist', core: 'core', risk: 'risk', trader: 'trader', judge: 'judge', vault: 'vault', accounts: 'farm', mie_observer: 'mie', mie_structure: 'mie', mie_behavior: 'mie', mie_memory: 'mie', mie_director: 'mie', mie_overview: 'mie' };
   Object.entries(DEPT).forEach(([dkey, d]) => {
     d.key = dkey; const k = d.dist || 1;
     d.view = { target: [d.at[0], d.at[1] - 0.6, d.at[2] + 2.6], pos: [d.at[0] + 6.5 * k, d.at[1] + 6 * k, d.at[2] + 11.6 * k] };       // aimed a little in front of the department so the Inspector never covers it
+    if (d.view0) d.view = d.view0;
     d.tag = document.createElement('div'); d.tag.className = 'tag dept'; d.tag.textContent = d.label; overlay.appendChild(d.tag);
     d.tag.style.pointerEvents = 'auto'; d.tag.style.cursor = 'pointer'; d.tag.onclick = () => focus(d.key);
   });
@@ -730,8 +848,10 @@
       r.head.rotation.x += (hd - r.head.rotation.x) * Math.min(1, dt * 5);
       r.bulb.visible = st === 'working' || st === 'done';
       if (r.bulb.visible) { r.bulb.material = st === 'done' ? matDone : matWork; r.bulb.scale.setScalar(st === 'working' ? 0.8 + 0.4 * Math.abs(Math.sin(t * 5)) : 1); }
+      Object.values(miLinks).forEach(m => { m.material.emissiveIntensity = (m.userData.until || 0) > t ? 1.4 : 0.2; });
       if (r.pad) r.pad.material.emissiveIntensity = working ? 0.9 + 0.5 * Math.sin(t * 9 + r.phase) : st === 'standby' ? 0.45 : 0.15;
     });
+    aimBeams(t);
     chevrons.forEach(m => { m.userData.s = (m.userData.s + dt * 2.2) % TOTAL; const p = pointAt(m.userData.s); m.position.set(p[0], 0.4, p[1]); });
     gearSpeed += ((optRunning ? 4 : 0.35) - gearSpeed) * Math.min(1, dt * 3);
     gears.forEach(g => g.rotation.z += g.userData.dir * gearSpeed * dt);
@@ -861,6 +981,9 @@
   window.LabScene = { crates: () => crates.map(c => ({ s: +c.s.toFixed(1), at: c.g.position.toArray().map(v => +v.toFixed(1)), fade: !!c.fade })), focus, home, select, departments: () => Object.entries(DEPT).map(([k, d]) => ({ key: k, label: d.label, agent: d.agent })), set onSelectCb(f) { onSelect = f; }, setValidation: drawValidation, setRisk: drawRisk, setFolders, folderCount: () => folderMeshes.length, onFolder: null, onEvent, speak, setTrader, setTraderChart, setAccounts, onPick: null, ready: true, robots, resize, camera, controls, restoreStates, setServer,
     setStateLabels(l) { stateLabels = Object.assign(stateLabels, l); },
     setBubbles(on) { bubblesOn = !!on; },
+    setMie,
+    mieBeams: () => Object.fromEntries(Object.entries(beams).map(([k, m]) => [k, m.visible])), chartGeo: () => chartGeo && { n: chartGeo.focus ? Object.keys(chartGeo.focus).length : 0 },
+    mieLinks: () => Object.fromEntries(Object.entries(miLinks).map(([k, m]) => [k, (m.userData.until || 0) > now()])),
     states() { const t = now(), o = {}; Object.keys(AGENTS_OF).forEach(n => o[n] = robotState(n, t)); return o; } };
   frame();
 })();

@@ -318,3 +318,14 @@ Il verdetto non risponde più a una sola domanda. `src/ofo/judges.py` (funzione 
 * **Contatori**: `dedup_exact` e `dedup_near` contano decisioni UNICHE e sono affidabili da questa versione. I vecchi `duplicates_exact/near` (incrementati a ogni polling, quindi gonfiati) non sono né azzerati né più aggiornati: il report di ricerca li mostra a parte come `legacy_*`.
 * **Stati quando non c'è lavoro**: `ACTIVE`, `IDLE`, `WAITING_RESEARCH`, `RESEARCH_RUNNING`, `RESEARCH_BLOCKED` (nessuna AI, budget, errore del provider), `EPOCH_WAITING` (blocco hidden pieno), `NO_NEW_HYPOTHESES` (l'ultima richiesta del Researcher non ha prodotto nulla di nuovo). Derivati solo da condizioni reali del backend; l'event feed registra solo i **cambi** di stato. Nessuna strategia viene inventata per evitare l'attesa.
 * **Perché non ci sono nuovi studi**: `/api/diag` → `research` (stato, chiamate fatte e risultati, duplicati scartati, budget, errore del provider, decisioni recenti).
+
+## Market Intelligence Engine (Release 2.3)
+
+Il MIE è dentro OFO, non accanto: stessa memoria Obsidian (cartella `OFO/Intelligence`), stesso registro dei tentativi, stessa pipeline e **stesso Judge**.
+
+* **Cosa fa**: osserva il mercato sui soli dati di *sviluppo* (sessioni prima del blocco congelato), misura eventi (sweep di livelli, gap, regimi) con baseline allo stesso orario, intervalli e controllo dei test multipli, scrive note firmate con etichetta di accesso, propone ipotesi (meccanismo, previsione, falsificazione, costi, fonti) che entrano nella pipeline come qualunque strategia.
+* **Cosa non fa**: non vede il blocco protetto, non produce verdetti, non ripristina nulla in silenzio, non scrive la parola «dimostrato». Stati ammessi: OBSERVED, HYPOTHESIZED, TESTED, SUPPORTED, INCONCLUSIVE, CONTRADICTED.
+* **Ciclo di 30 giorni**: settimana 1 baseline, 2 scoperta, 3 ipotesi, 4 consolidamento; giorni di Lab, sessioni di mercato, volume dati, eventi e osservazioni forward sono contati separatamente; il report finale dice INCONCLUSIVO quando il campione è piccolo.
+* **Nel Lab 3D**: «MARKET INTELLIGENCE WING» con cinque scienziati che lavorano davanti a una chart reale (ultime sessioni di sviluppo, livelli, swing, eventi degli studi). Pannello con Panoramica / Chart / Intelligence / Memoria Obsidian / Ciclo; traccia Observation→Memory→Hypothesis→Study→Validation→Judge→Forward nel dossier. Ciò che non esiste dice `NOT AVAILABLE`.
+* **Configurazione**: `rules/mie.json` (definizioni, finestre di sessione, soglie, `scheduler`). Passo manuale: pulsante «Esegui un passo ora» o `POST /api/mie/tick`.
+* Audit e limiti: `docs/MIE_AUDIT.md`.

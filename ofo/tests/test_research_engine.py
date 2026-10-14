@@ -887,7 +887,7 @@ def test_the_ui_uses_only_the_ofo_monochrome_palette_plus_the_four_state_colours
     assert (base / "brand" / "icon.png").exists() and (base / "brand" / "icon.png").read_bytes()[:4] == b"\x89PNG"      # the supplied logo, used as it is
 
 
-def test_the_lab_layout_has_ten_departments_and_dossiers_follow_the_real_events_through_the_core(tmp_path):
+def test_the_lab_layout_has_eleven_departments_and_dossiers_follow_the_real_events_through_the_core(tmp_path):
     """Spatial redesign: Research | Optimization | Validation on the back wall, Strategist | OFO CORE | Risk Manager in the middle, Vault | Judge | Prop Farm in front.
     A dossier moves only when the backend emits the event: proposal -> optimizer -> surface -> verdict -> Core -> Judge -> Vault."""
     import json, sqlite3, threading
@@ -906,7 +906,7 @@ def test_the_lab_layout_has_ten_departments_and_dossiers_follow_the_real_events_
             errs = []; pg.on("pageerror", lambda e: errs.append(str(e)))
             pg.goto("http://127.0.0.1:8796/"); pg.wait_for_timeout(5000)
             depts = pg.evaluate("LabScene.departments().map(d => d.key)")
-            assert set(depts) == {"research", "optimizer", "validator", "strategist", "core", "risk", "trader", "judge", "vault", "farm"}
+            assert set(depts) == {"research", "optimizer", "validator", "strategist", "core", "risk", "trader", "judge", "vault", "farm", "mie"}
             assert pg.evaluate("LabScene.crates().length") == 0                                        # nothing moves without events
             send = lambda a, t, m="": pg.evaluate("LabScene.onEvent(%s)" % json.dumps({"agent": a, "type": t, "message": m, "data": {}}))
             send("researcher", "proposal", "x"); pg.wait_for_timeout(300)

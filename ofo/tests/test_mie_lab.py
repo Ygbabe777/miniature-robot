@@ -167,3 +167,124 @@ def test_http_views_are_served_and_tick_is_a_post(tmp_path):
             urllib.request.urlopen(urllib.request.Request(url + "/api/mie/tick", data=b"{}", method="POST"), timeout=10)          # no X-OFO header: refused
     finally:
         srv.shutdown()
+
+
+def test_the_wing_in_the_3d_lab_moves_only_with_real_events(tmp_path):
+    """The five MIE scientists exist, are idle without events, work when their agent emits, and a link lights up only for the real consecutive pipeline order."""
+    import threading
+    pw = pytest.importorskip("playwright.sync_api")
+    lab = mk(tmp_path)
+    srv = SRV.make_server(lab, port=8798)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with pw.sync_playwright() as p:
+            try:
+                b = p.chromium.launch(executable_path="/opt/pw-browsers/chromium", args=["--use-gl=swiftshader", "--enable-unsafe-swiftshader", "--no-sandbox"])
+            except Exception:
+                pytest.skip("no chromium available")
+            pg = b.new_page(viewport={"width": 1300, "height": 800})
+            errs = []
+            pg.on("pageerror", lambda e: errs.append(str(e)))
+            pg.goto("http://127.0.0.1:8798/")
+            pg.wait_for_timeout(4000)
+            five = ["mie_observer", "mie_structure", "mie_behavior", "mie_memory", "mie_director"]
+            st = pg.evaluate("LabScene.states()")
+            assert all(k in st for k in five) and all(st[k] in ("idle", "standby") for k in five), st
+            assert not any(pg.evaluate("Object.values(LabScene.mieLinks())")), "nothing is linked without events"
+            send = lambda a, t, m="": pg.evaluate("LabScene.onEvent(%s)" % json.dumps({"agent": a, "type": t, "message": m, "data": {}}))
+            send("market_observer", "working", "audit")
+            assert pg.evaluate("LabScene.states().mie_observer") == "working"
+            send("research_director", "working", "missione")                                        # skipping the pipeline order: no link
+            assert not pg.evaluate("LabScene.mieLinks().mie_director")
+            send("market_observer", "working", "audit"); send("structure_engine", "working", "regimi")
+            assert pg.evaluate("LabScene.mieLinks().mie_structure") is True
+            pg.evaluate("LabScene.focus('mie')")
+            pg.wait_for_timeout(1500)
+            assert pg.evaluate("document.querySelector('#inspector').hidden") is False
+            assert "NOT AVAILABLE" in pg.evaluate("document.querySelector('#inspector').innerText")          # no cycle yet: said, not invented
+            pg.evaluate("MIE.open('overview')")
+            pg.wait_for_timeout(1200)
+            assert "NOT AVAILABLE" in pg.evaluate("document.querySelector('#mie-panel').innerText")
+            assert not errs, errs
+            b.close()
+    finally:
+        srv.shutdown()
+
+
+def test_the_dashboard_prints_exactly_the_backend_numbers(tmp_path):
+    import threading
+    pw = pytest.importorskip("playwright.sync_api")
+    lab = mk(tmp_path)
+    narrow(lab)
+    lab.mie.tick()
+    ov, iv = lab.mie.overview(), lab.mie.intelligence()
+    srv = SRV.make_server(lab, port=8799)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with pw.sync_playwright() as p:
+            try:
+                b = p.chromium.launch(executable_path="/opt/pw-browsers/chromium", args=["--use-gl=swiftshader", "--enable-unsafe-swiftshader", "--no-sandbox"])
+            except Exception:
+                pytest.skip("no chromium available")
+            pg = b.new_page(viewport={"width": 1300, "height": 800})
+            errs = []
+            pg.on("pageerror", lambda e: errs.append(str(e)))
+            pg.goto("http://127.0.0.1:8799/")
+            pg.wait_for_timeout(3500)
+            pg.evaluate("MIE.open('overview')")
+            pg.wait_for_timeout(1500)
+            txt = pg.evaluate("document.querySelector('#mie-panel').innerText")
+            assert ov["period"][0] in txt and ov["period"][1] in txt and f"{ov['bars']:,}" in txt and str(ov["sessions"]) in txt
+            assert ov["epoch"]["start"] in txt and "NOT AVAILABLE" in txt                       # order flow is never invented
+            pg.evaluate("MIE.open('intelligence')")
+            pg.wait_for_timeout(800)
+            txt = pg.evaluate("document.querySelector('#mie-panel').innerText")
+            assert all(s["status"] in txt for s in iv["studies"]) and "PROVEN" not in txt
+            pg.evaluate("MIE.open('cycle')")
+            pg.wait_for_timeout(800)
+            assert "baseline" in pg.evaluate("document.querySelector('#mie-panel').innerText").lower()
+            assert not errs, errs
+            b.close()
+    finally:
+        srv.shutdown()
+
+
+def test_the_chart_is_real_development_data_and_scientists_point_at_it_only_while_working(tmp_path):
+    import threading
+    pw = pytest.importorskip("playwright.sync_api")
+    lab = mk(tmp_path)
+    assert lab.mie.chart()["available"] is False                                   # nothing observed yet: said, not drawn
+    narrow(lab)
+    lab.mie.tick()
+    ch, ep = lab.mie.chart(), lab.epoch_state()["epoch"]
+    assert ch["available"] and ch["scope"] == "development" and len(ch["candles"]) > 20
+    assert max(c[0] for c in ch["candles"])[:10] < ep["start"], "no candle may come from the protected block"
+    assert all(e["available_at"][:10] < ep["start"] for e in ch["events"]) and all(s["confirmed_at"][:10] < ep["start"] for s in ch["swings"])
+    for v in ch["levels"].values():
+        assert min(c[3] for c in ch["candles"]) - 1e3 < v < max(c[2] for c in ch["candles"]) + 1e3
+    srv = SRV.make_server(lab, port=8800)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with pw.sync_playwright() as p:
+            try:
+                b = p.chromium.launch(executable_path="/opt/pw-browsers/chromium", args=["--use-gl=swiftshader", "--enable-unsafe-swiftshader", "--no-sandbox"])
+            except Exception:
+                pytest.skip("no chromium available")
+            pg = b.new_page(viewport={"width": 1300, "height": 800})
+            errs = []
+            pg.on("pageerror", lambda e: errs.append(str(e)))
+            pg.goto("http://127.0.0.1:8800/")
+            pg.wait_for_timeout(4000)
+            assert pg.evaluate("LabScene.chartGeo()") and pg.evaluate("LabScene.chartGeo().n") == 5
+            assert not any(pg.evaluate("Object.values(LabScene.mieBeams())")), "no beam while nobody works"
+            pg.evaluate("LabScene.onEvent(%s)" % json.dumps({"agent": "structure_engine", "type": "working", "message": "x", "data": {}}))
+            pg.wait_for_timeout(1500)
+            beams = pg.evaluate("LabScene.mieBeams()")
+            assert beams["mie_structure"] is True and not beams["mie_memory"]
+            pg.evaluate("MIE.open('chart')")
+            pg.wait_for_timeout(800)
+            assert pg.evaluate("document.querySelector('#mie-cv').width") > 0
+            assert not errs, errs
+            b.close()
+    finally:
+        srv.shutdown()
