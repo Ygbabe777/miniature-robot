@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass
 
@@ -32,6 +33,8 @@ from .lifecycle import pool_from_ledger
 from .rulesets import load_farming_config, load_rulesets
 from .sizing import size_study
 from .timing import timing_report
+from . import evidence as EV
+from . import finalists as FIN
 from . import judges as JG
 from .nearmiss import consistency, is_favorite
 from .roles import classify_roles
@@ -535,7 +538,15 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
     stages = _Stages(on_stage)
     key = _session_key(bars)
     sessions = sorted(key.unique())
-    cut = sessions[int(len(sessions) * (1 - oos_fraction))]
+    proto = rcfg.get("protocol") or {}
+    fin = epoch = None
+    if proto.get("enforce"):                                      # PREREGISTERED PROTOCOL: the hidden block is a frozen epoch; later sessions are reserved for forward evidence
+        fin = FIN.Finalists(registry)
+        epoch = fin.epoch_for(market or "NQ", sessions, oos_fraction, int(proto.get("max_finalists", 3)))
+        cut = next(d for d in sessions if str(d)[:10] == epoch["start"])
+        sessions = [d for d in sessions if str(d)[:10] <= epoch["end"]]
+    else:
+        cut = sessions[int(len(sessions) * (1 - oos_fraction))]
     dev_days = [d for d in sessions if d < cut]
     dev_bars = bars[np.asarray(key < cut)]                        # <- from here on the hidden block does not exist
     plan = wf_plan(len(dev_days), rcfg, train_days, test_days)
@@ -604,6 +615,8 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                 lk["reason"] = j["reason"]
             if j["verdict"] != "APPROVED" and not report.get("gate_failed"):
                 report["gate_failed"] = ((j.get("diagnosis") or {}).get("failed_gate") or {}).get("label")
+            if fin is not None and jctx.get("finalist_id"):
+                fin.record_verdict(jctx["finalist_id"], j["verdict"])
             report["near_miss"] = ({"gate": "edge", "dsr": (j["edge"]["metrics"] or {}).get("dsr"), "needed": rcfg.get("judge", {}).get("confidence", 0.95), "why": j["reason"]}
                                    if j["verdict"] == "PAPER_CANDIDATE" else None)
         except Exception as e:                                       # never lose a finished study because the diagnosis failed
@@ -747,6 +760,24 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         stages.start("audit", "audit e blocco bloccato")
         say("judge", "working", "audit, reproducibility and the look at the hidden block")
         cand, tf = fcand, fcand["tf"]
+        if fin is not None:                                      # REGISTER the finalist BEFORE anything is computed on the hidden block
+            fpay = {"spec": dataclasses.asdict(spec), "params": dict(cand["params"]), "tf": tf, "direction": direction, "schedule": schedule, "exit": best_exit,
+                    "contracts": contracts, "slippage_ticks": slippage_ticks,
+                    "contract": {"symbol": contract.symbol, "tick_size": contract.tick_size, "tick_value": contract.tick_value, "commission_per_side": contract.commission_per_side},
+                    "code_version": code_v, "config_version": cfg_v, "dataset_fp": dataset_fingerprint(bars[np.asarray(key <= pd.Timestamp(epoch["end"]))]),
+                    "sizing": {"base_contracts": contracts, "rule": "choose_size on development sessions", "sizes": list(farm["cfg"].get("sizes", []))},
+                    "rulesets": [f"{r.id} v{r.version} ({r.provenance})" for r in farm["rulesets"]]}
+            try:
+                reg_ = fin.register(epoch, fpay, FIN_lineage(spec))
+                jctx["finalist_id"] = reg_["finalist"]["id"]
+                report["finalist"] = {**reg_["finalist"], "repeat": reg_["repeat"], "epoch": epoch, "payload_fingerprint": reg_["finalist"]["fingerprint"]}
+            except (FIN.BlockFull, FIN.LineageBlocked) as e:
+                kind = "lineage" if isinstance(e, FIN.LineageBlocked) else "block_full"
+                report["shelved"] = {"kind": kind, "reason": str(e), "epoch": epoch}
+                report["gate_failed"] = "finalist_slot"
+                report["locked"] = {"status": "INSUFFICIENT_EVIDENCE", "reason": f"blocco hidden non disponibile ({kind}): {e}; il blocco non è stato toccato"}
+                stages.end(2, "registro dei finalisti: nessuno slot", False)
+                return finish(report)
         try:
             s_full, rc, pos_full, b_full = guarded_full_series(bars, cand, best_exit, contract, contracts, slippage_ticks, dev_days, final_dev, spec.name)
         except AccountingError as e:                             # a verdict is never built on broken numbers: EXECUTION_FAILED, the locked block was not read
@@ -777,13 +808,13 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         n_locked_trades = sum(1 for t_ in led_full.trades if str(t_.get("entry_session"))[:10] >= str(cut)[:10])
         dsr_mode = rcfg.get("dsr_trials", "raw")                  # raw: every trial ever registered (strictest) | locked_looks: only strategies that were tested on the unseen block | effective: this study's independent trials
         n_dsr = (int(registry.data["locked_looks"]) + 1 if dsr_mode == "locked_looks" else max(2, int(round(n_eff))) + 1 if dsr_mode == "effective" else registry.n_trials + 1)
-        v = judge(locked.values, rules, n_dsr, var_sr, judge_th, n_trades=n_locked_trades)
-        try:                                                      # informational: the coherent holdout benchmark (V of the block itself, K = looks at the block); see docs/DSR_AUDIT.md
-            from . import evidence as EV
-            hv = EV.dsr_holdout(locked.values, int(registry.data["locked_looks"]) + 1)
-            holdout_null = {"value": hv["value"], "k": hv["k_eff"], "sr0_annual": hv["sr0_annual"], "T": hv["T"]}
-        except Exception:
-            holdout_null = None
+        k_planned = int(epoch["max_finalists"]) if epoch else int(proto.get("max_finalists", 3))
+        modes = EV.dsr_modes(locked.values, var_sr=var_sr, n_raw=registry.n_trials + 1, locked_looks=int(registry.data["locked_looks"]), k_planned=k_planned, n_eff=n_eff)
+        official = dsr_mode == "holdout_null"
+        v = judge(locked.values, rules, n_dsr, var_sr, judge_th, n_trades=n_locked_trades,
+                  dsr_value=(modes["holdout_null"]["value"] if official else None), dsr_n=(k_planned if official else None),
+                  dsr_var=(modes["holdout_null"]["V"] if official else None))
+        holdout_null = {"value": modes["holdout_null"]["value"], "k": k_planned, "sr0_annual": modes["holdout_null"]["sr0_annual"], "T": len(locked)}
         look_label = f"{spec.name}:{cand['params']}@{tf}"
         jctx.update(oos=np.asarray(locked.values, float), dev=np.asarray(final_dev.values if hasattr(final_dev, "values") else final_dev, float),
                     lineage=JG.lineage_looks_for(registry, spec.name, look_label, str(cut)[:10]))
@@ -796,7 +827,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
                                                     goal_days, goal_rate, "unseen_block"),
                             "sizing": size_study(locked.to_numpy(), {k: PRESETS[k] for k in ("25k", "50k")}, contracts, goal_days, basis="unseen_block"),
                             "p_pass": v.mc.get("p_pass"), "p_pass_ci95": v.mc.get("p_pass_ci95"),
-                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "mc_sample": v.mc.get("sample"), "dsr": {**(v.mc.get("dsr") or {}), "basis": dsr_mode, "n_trials_raw": registry.n_trials + 1, "holdout_null": holdout_null}, "params": cand["params"],
+                            "p_bust": v.mc.get("p_bust"), "best_size": v.mc.get("best_size"), "mc_sample": v.mc.get("sample"), "dsr": {**(v.mc.get("dsr") or {"value": modes["holdout_null"]["value"] if official else None, "n_trials": k_planned if official else n_dsr, "var_sr": modes["holdout_null"]["V"] if official else float(var_sr), "needed": judge_th.min_dsr}), "basis": dsr_mode, "n_trials_raw": registry.n_trials + 1, "holdout_null": holdout_null}, "dsr_modes": modes, "official_dsr": dsr_mode, "params": cand["params"],
                             "tf": tf, "exit": best_exit, "prop_model": "daily_simplified"}
         # The Judge above is DETERMINISTIC and uses the simplified daily account model. After its look, the same unseen
         # block is replayed bar by bar with unrealised P&L and intraday drawdown rules, for the owner to read.
@@ -851,6 +882,13 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
         report["gate_failed"] = ("validation: " if surf_d is None else "robustness: ") + ", ".join(why)
         report["locked"] = {"status": REJECTED, "reason": f"failed {why}; locked block not touched"}
     return finish(report)
+
+
+def FIN_lineage(spec) -> str:
+    """The line of research a finalist belongs to: template + name without trailing version numbers. A variant of a line already judged on an epoch
+    cannot be registered on it (it would be a re-test of a strategy modified after the hidden block was seen)."""
+    base = re.sub(r"[\s_\-]*(v\d+|\d+)$", "", spec.name.lower()).strip()
+    return f"{spec.template}:{base}"
 
 
 def evidence_ladder(report: dict) -> dict:

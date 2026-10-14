@@ -31,6 +31,13 @@ MIN_DAYS_RETIRE = 40
 MIN_DAYS_CONFIRM = 60
 
 
+def _plan(cutoff: str, cfg: dict | None) -> dict:
+    """The preregistered forward protocol, fixed (and hashed) the moment the strategy goes to paper: verification dates, stopping rules, error control."""
+    from .evidence import forward_plan
+    cfg = cfg or {}
+    return forward_plan(cutoff, cfg.get("looks"), float(cfg.get("alpha", 0.05)))
+
+
 def pick_account(dossier: dict) -> tuple[str, dict] | None:
     """The first account (50k before 25k) with a safe recommended size."""
     for acct in ("50k", "25k"):
@@ -40,7 +47,7 @@ def pick_account(dossier: dict) -> tuple[str, dict] | None:
     return None
 
 
-def make_deployment(dossier: dict, last_session: str, now: str) -> dict | None:
+def make_deployment(dossier: dict, last_session: str, now: str, forward_cfg: dict | None = None) -> dict | None:
     pick = pick_account(dossier)
     if pick is None:
         return None
@@ -49,7 +56,8 @@ def make_deployment(dossier: dict, last_session: str, now: str) -> dict | None:
             "params": dossier["params"], "direction": dossier.get("direction") or "both", "schedule": dossier.get("schedule"), "exit": (dossier.get("exits") or {}).get("chosen"),
             "account": acct, "micro": rec["micro_equiv"], "cut": last_session, "deployed_at": now,
             "status": "live", "reason": "", "probation": bool(dossier.get("probation")), "oos_mean": dossier.get("oos_mean"), "oos_std": dossier.get("oos_std"),
-            "n_signals": 0, "forward": {"days": 0}}
+            "n_signals": 0, "forward": {"days": 0},
+            "forward_plan": _plan(last_session, forward_cfg)}
 
 
 def assess(daily, exp_mean, exp_std, max_dd_allowed: float) -> tuple[str, str]:

@@ -59,6 +59,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                 if u.path == "/api/judge":
                     d = lab.judgment(unquote(parse_qs(u.query).get("slug", [""])[0]))
                     return self._json(d) if d else self._json({"error": "not found"}, 404)
+                if u.path == "/api/epoch":
+                    return self._json(lab.epoch_state())
                 if u.path == "/api/research":
                     return self._json(lab.research_report())
                 if u.path == "/api/ranking":
@@ -136,6 +138,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.tell_researcher(str(data.get("text", "")), data.get("kind")))
                 if u.path == "/api/directives/remove":
                     return self._json(lab.forget_directive(str(data.get("id", ""))))
+                if u.path == "/api/epoch/open":
+                    return self._json(lab.open_epoch())
                 if u.path == "/api/promote":
                     return self._json(lab.promote_to_paper(str(data.get("slug") or "")))
                 if u.path == "/api/rejudge":

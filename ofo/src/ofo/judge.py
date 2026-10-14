@@ -41,7 +41,8 @@ class Verdict:
 
 
 def judge(oos_daily_pnl, rules: PropRules, n_trials: int, var_sr_trials: float,
-          th: Thresholds | None = None, n_trades: int | None = None) -> Verdict:
+          th: Thresholds | None = None, n_trades: int | None = None, dsr_value: float | None = None, dsr_n: int | None = None,
+          dsr_var: float | None = None) -> Verdict:
     """Judge strictly on OUT-OF-SAMPLE daily P&L that no optimiser has ever seen."""
     th = th or Thresholds()
     x = list(oos_daily_pnl)
@@ -59,7 +60,8 @@ def judge(oos_daily_pnl, rules: PropRules, n_trials: int, var_sr_trials: float,
               "sporadic": bool(not long_enough and tpd < th.min_trades_per_day)}
     if not checks["enough_days"]:
         return Verdict(INSUFFICIENT, checks, {"sample": sample})
-    dsr = float(deflated_sharpe(x, n_trials, var_sr_trials))
+    # dsr_value: the OFFICIAL Deflated Sharpe computed by the caller (dsr_holdout, evidence.py). Without it the legacy sweep-based formula is used.
+    dsr = float(dsr_value) if dsr_value is not None else float(deflated_sharpe(x, n_trials, var_sr_trials))
     checks["dsr"] = bool(dsr >= th.min_dsr)
     mc = pass_probability_ci(x, rules)                       # base size, long horizon: the interval shown to the owner + bust risk
     # PASS RATE: the owner's business rule. A strategy is worth considering when, at the best size that does not bust too
@@ -67,7 +69,7 @@ def judge(oos_daily_pnl, rules: PropRules, n_trials: int, var_sr_trials: float,
     from .dossier import choose, size_table
     best = choose(size_table(x, rules, th.base_contracts, th.eval_days))["pick"]
     mc["sample"] = sample
-    mc["dsr"] = {"value": dsr, "n_trials": int(n_trials), "var_sr": float(var_sr_trials), "needed": th.min_dsr, "candidate_needed": th.min_dsr_candidate}
+    mc["dsr"] = {"value": dsr, "n_trials": int(dsr_n if dsr_n is not None else n_trials), "var_sr": float(dsr_var if dsr_var is not None else var_sr_trials), "needed": th.min_dsr, "candidate_needed": th.min_dsr_candidate}
     mc["best_size"] = None if best is None else {k: best[k] for k in ("micro_equiv", "p_fast", "p_fast_lo", "p_fast_hi", "p_bust_fast")}
     checks["pass_rate"] = bool(best is not None and best["p_fast"] >= th.min_pass_rate)
     checks["bust_risk"] = bool(mc["p_bust"] <= th.max_p_bust)

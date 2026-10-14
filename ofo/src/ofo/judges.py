@@ -22,6 +22,7 @@ from copy import deepcopy
 import numpy as np
 from scipy import stats as st
 
+from . import evidence as EV
 from .stats import deflated_sharpe, probabilistic_sharpe, sharpe
 
 ANN = math.sqrt(252)
@@ -200,7 +201,8 @@ def edge_judge(report: dict, oos=None, dev=None, cfg: dict | None = None, lineag
         psr0 = float(probabilistic_sharpe(x, 0.0)) if len(x) > 3 else None
         pnl = float(lk.get("pnl") or 0.0)
         m.update({"dsr": dsr, "psr0": psr0, "sharpe_annual": iv["sr"], "sharpe_ci95": [iv["lo"], iv["hi"]], "oos_pnl": pnl, "n_trials": dsr_cfg.get("n_trials"),
-                  "dsr_basis": dsr_cfg.get("basis"), "power_needed_sharpe_for_threshold": power_needed(max(2, days), int(dsr_cfg.get("n_trials") or 1), float(dsr_cfg.get("var_sr") or 0.001), c["confidence"]) if days > 2 else None})
+                  "dsr_basis": dsr_cfg.get("basis"), "power_needed_sharpe_for_threshold": (EV.required_observed_sharpe(max(3, days), int(dsr_cfg.get("n_trials") or 1), c["confidence"], margin=EV.Z_MARGIN)
+                                                if dsr_cfg.get("basis") == "holdout_null" else power_needed(max(2, days), int(dsr_cfg.get("n_trials") or 1), float(dsr_cfg.get("var_sr") or 0.001), c["confidence"])) if days > 2 else None})
         edge_pass = dsr is not None and dsr >= c["confidence"] and pnl > 0
         # evidence AGAINST (needs data, not the absence of data)
         if sample_ok and psr0 is not None and iv["sr"] is not None and iv["sr"] <= 0 and psr0 <= c["against_psr0"]:
@@ -255,6 +257,12 @@ def edge_judge(report: dict, oos=None, dev=None, cfg: dict | None = None, lineag
     if dev_against and not touched:
         rows.append(_row("E2", "Edge statistico (sviluppo)", "FAIL", reason="evidenza CONTRO sullo sviluppo: " + "; ".join(dev_against), cls="no_edge",
                          next_exp="archiviare con il motivo; riaprire solo con un'ipotesi economica diversa", recoverable=False))
+    sh = report.get("shelved")
+    if sh:
+        rows.append(_row("E7", "Slot sul blocco hidden (protocollo preregistrato)", "INSUFFICIENT", observed=None, threshold=None, reason=sh.get("reason", ""),
+                         cls="insufficient_sample", recoverable=True,
+                         next_exp=("attendere una nuova epoca: servono sessioni nuove oltre il blocco attuale (paper trading nel frattempo); il blocco attuale è riservato ai finalisti già registrati"
+                                   if sh.get("kind") == "block_full" else "una variante di una linea già giudicata non è una prova indipendente: serve un'ipotesi diversa o dati nuovi")))
     # --- E6 robustness / costs (development only) ----------------------------------------------------------------------
     fragile = [r for r in rob_fail if r[0] in ("parametric_fragility", "high_costs")]
     cls6 = "high_costs" if any(k == "high_costs" for k, _ in fragile) else "parametric_fragility"
@@ -274,7 +282,7 @@ def edge_judge(report: dict, oos=None, dev=None, cfg: dict | None = None, lineag
                          cls="parametric_fragility", next_exp="completare le finestre walk-forward pianificate (stesso sviluppo, nessun blocco bloccato)"))
     elif fragile:
         state = "NEEDS_ROBUSTNESS"
-    elif not touched:
+    elif not touched or sh:
         state = "INSUFFICIENT"
     elif not sample_ok or lineage_looks > 0:
         state = "INSUFFICIENT"
@@ -413,7 +421,8 @@ def judge_report(report: dict, oos=None, dev=None, cfg: dict | None = None, line
             "next_experiments": next_experiments({"verdict": verdict, "gates": rows, "edge": edge, "prop": prop}),
             "frozen": FROZEN, "other_problems": [{"gate": r["gate"], "label": r["label"], "reason": r["reason"]} for r in failed[1:6]],
         }
-    return {"version": 1, "verdict": verdict, "legacy_status": LEGACY[verdict], "reason": why, "edge": {"state": edge["state"], "metrics": edge["metrics"]},
+    stage = EV.stage_of({"verdict": verdict, "prop": {"compatible": prop["compatible"]}, "reason": why}, report.get("forward_test"))
+    return {"version": 1, "stage": stage, "verdict": verdict, "legacy_status": LEGACY[verdict], "reason": why, "edge": {"state": edge["state"], "metrics": edge["metrics"]},
             "prop": {k: v for k, v in prop.items()}, "gates": rows, "passed": [{"gate": r["gate"], "label": r["label"]} for r in passed],
             "failed": [{"gate": r["gate"], "label": r["label"], "status": r["status"]} for r in failed], "diagnosis": diagnosis,
             "best_ruleset": prop["best"], "legacy_farming": legacy_farming, "thresholds": {k: c[k] for k in DEFAULTS}, "lineage_looks": lineage_looks}

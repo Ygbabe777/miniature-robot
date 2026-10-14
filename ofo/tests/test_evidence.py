@@ -71,7 +71,7 @@ def test_required_observed_sharpe_matches_a_brute_force_inversion_of_dsr():
         lo, hi = -0.5, 1.5
         for _ in range(60):
             mid = (lo + hi) / 2
-            if EV.dsr_holdout(base + mid, k)["value"] >= 0.95:
+            if EV.dsr_holdout(base + mid, k, adjust=False, small_sample_t=False, z_margin=0.0)["value"] >= 0.95:
                 hi = mid
             else:
                 lo = mid
@@ -132,3 +132,19 @@ def test_stages_are_separate_and_forward_data_alone_promotes():
     assert EV.stage_of(appr, {"status": "CONFIRMED", "degraded": True})["stage"] == "RESEARCH_APPROVED"
     assert EV.stage_of({"verdict": "STATISTICALLY_REJECTED"}, {"status": "CONFIRMED"})["stage"] == "RESEARCH_REJECTED"
     assert EV.stage_of(appr, {"status": "PENDING"})["stage"] == "RESEARCH_APPROVED"
+
+
+def test_the_official_bar_includes_the_conservative_margin():
+    rng = np.random.default_rng(8)
+    for T, k in ((91, 3), (250, 3)):
+        base = rng.standard_normal(T)
+        lo, hi = -0.5, 1.5
+        for _ in range(60):
+            mid = (lo + hi) / 2
+            if EV.dsr_holdout(base + mid, k)["value"] >= 0.95:
+                hi = mid
+            else:
+                lo = mid
+        sr = (base + hi).mean() / (base + hi).std(ddof=1) * ANN
+        assert sr == pytest.approx(EV.required_observed_sharpe(T, k, 0.95, margin=EV.Z_MARGIN), rel=0.10)
+        assert sr > EV.required_observed_sharpe(T, k, 0.95)                               # strictly harder than the bare formula

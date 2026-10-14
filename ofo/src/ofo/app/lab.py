@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .. import evidence as EV
 from .. import judges as JG
 from .. import BUILD
 from ..agents.base import AgentError
@@ -1401,6 +1402,35 @@ class Lab:
         pick = lambda k: [float(v) for _, v in (ser.get(k) or [])] or None
         return pick("locked"), pick("dev_best")
 
+    def epoch_state(self, market: str | None = None) -> dict:
+        """The frozen holdout epoch, its registered finalists (immutable, hash-chained) and whether the protocol is enforced."""
+        from .. import finalists as FIN
+        mk = market or self.primary
+        fin = FIN.Finalists(self.registry)
+        ep = fin.current(mk)
+        proto = rcfg_mod.get().get("protocol") or {}
+        if ep is None:
+            return {"enforced": bool(proto.get("enforce")), "market": mk, "epoch": None, "finalists": [], "chain": fin.verify_chain(), "max_finalists": proto.get("max_finalists", 3)}
+        c = self.ctx(mk)
+        c.bars()
+        fresh = sum(1 for d in c.sessions if str(d)[:10] > ep["end"])
+        return {"enforced": bool(proto.get("enforce")), "market": mk, "epoch": ep, "fresh_sessions_after_epoch": fresh, "min_new_for_next": int(proto.get("epoch_min_new_sessions", 100)),
+                "finalists": [{k: v for k, v in r.items() if k != "payload"} | {"name": (r["payload"].get("spec") or {}).get("name"), "registered_at": r["payload"].get("registered_at")}
+                              for r in fin.rows(ep["id"])],
+                "looks_counter": int(self.registry.data["locked_looks"]), "chain": fin.verify_chain(), "max_finalists": ep["max_finalists"]}
+
+    def open_epoch(self, market: str | None = None) -> dict:
+        """Owner action: close the current block (it then joins development) and open a new one on fresh sessions. Refused without enough new sessions."""
+        from .. import finalists as FIN
+        mk = market or self.primary
+        c = self.ctx(mk)
+        c.bars()
+        proto = rcfg_mod.get().get("protocol") or {}
+        out = FIN.Finalists(self.registry).open_next(mk, c.sessions, int(proto.get("epoch_min_new_sessions", 100)), int(proto.get("max_finalists", 3)))
+        if "error" not in out:
+            self.events.emit("judge", "verdict", f"nuova epoca del blocco hidden: {out['start']} → {out['end']} (il blocco precedente entra nello sviluppo)")
+        return out
+
     def rejudge(self, slug: str, persist: bool = True) -> dict:
         """Judge a stored study again with the CURRENT dual judge. Pure: it reads only the stored report and series, never the market data,
         never the registry (no new look at the unseen block). A study already APPROVED is never silently un-approved: a conflict is flagged."""
@@ -1448,7 +1478,10 @@ class Lab:
             j = JG.judge_report(rep, oos=oos, dev=dev, cfg=JG.cfg_from(rcfg_mod.get()))
             j["computed_now"] = True
         dep_item = next((x for x in self.deployments.d["items"] if x.get("slug") == slug), None)
-        return {"slug": slug, "name": rep.get("name"), "judgment": j, "deterministic": True,
+        j = {**j, "stage": EV.stage_of(j, (dep_item or {}).get("forward_test"))}
+        return {"slug": slug, "name": rep.get("name"), "judgment": j, "deterministic": True, "forward_plan": (dep_item or {}).get("forward_plan"),
+                "forward_test": (dep_item or {}).get("forward_test"),
+                "dsr_modes": (rep.get("locked") or {}).get("dsr_modes"), "finalist": rep.get("finalist"), "shelved": rep.get("shelved"),
                 "can_promote_to_paper": bool(j["verdict"] == "PAPER_CANDIDATE" and not dep_item),
                 "paper": None if not dep_item else {"status": dep_item.get("status"), "probation": dep_item.get("probation"), "forward": dep_item.get("forward"), "reason": dep_item.get("reason")},
                 "legacy_status": (rep.get("locked") or {}).get("legacy_status"), "note": "Il verdetto è deterministico: gli agenti possono discuterlo ma non cambiarlo con opinioni."}
@@ -1479,7 +1512,9 @@ class Lab:
                 continue
             d = load_study(self.work, r["slug"])
             j = (d or {}).get("report", {}).get("judgment")
-            if j and j.get("diagnosis") and j["diagnosis"].get("recoverable"):
+            fg = ((j or {}).get("diagnosis") or {}).get("failed_gate") or {}
+            from_locked = any(g.get("uses_locked") for g in (j or {}).get("gates", []) if g.get("gate") == fg.get("id"))
+            if j and j.get("diagnosis") and j["diagnosis"].get("recoverable") and not from_locked:      # nothing learned from the hidden block steers a new variant of the same line
                 rows.append(f"- {r['name']}: {JG.brief(JG.agent_view(j))}")
         txt = "\n".join(rows)
         return ("JUDGE DIAGNOSES (recoverable failures; use them to design TARGETED variants on development data only, never to tune against the unseen block):\n" + txt)[:limit] if rows else ""
@@ -1639,7 +1674,7 @@ class Lab:
             c = self.ctx(d.get("market"))
             c.bars()
             last = str(c.sessions[-1])[:10]
-            item = dep.make_deployment(d, last, time.strftime("%Y-%m-%d %H:%M")) if d.get("fast_ok", True) else None
+            item = dep.make_deployment(d, last, time.strftime("%Y-%m-%d %H:%M"), (rcfg_mod.get().get("protocol") or {}).get("forward")) if d.get("fast_ok", True) else None
             if item is None and not d.get("fast_ok", True):
                 item = {"slug": d["slug"], "name": d["name"], "status": "not_deployed", "forward": {"days": 0},
                         "reason": f"approved but too slow for the {d.get('goal', {}).get('max_eval_days', 5)}-day goal"}
@@ -1676,6 +1711,12 @@ class Lab:
                     before = len(log.records)
                     r = dep.forward_update(bars, x, c.contract, self.contracts, self.rules_for(x["account"]), log)
                     x["forward"] = r["forward"]
+                    plan = x.get("forward_plan")
+                    if plan:                                  # the PREREGISTERED sequential test, on sessions after the plan's cutoff only
+                        x["forward_test"] = EV.forward_test(r["series"].values, plan["looks"], plan["alpha"], plan["cutoff"])
+                        if x["forward_test"]["status"] == "CONFIRMED" and not x.get("forward_confirmed_at"):
+                            x["forward_confirmed_at"] = time.strftime("%Y-%m-%d %H:%M")
+                            self.events.emit("judge", "verdict", f"{x['name']}: FORWARD_CONFIRMED ({x['forward_test']['sessions']} sessioni in avanti, test sequenziale preregistrato)", {"slug": x["slug"]})
                     for rec in log.records[before:]:
                         if rec["kind"] == "exit":
                             self.events.emit("trader", "signal", f"{x['name']}: exit {rec['exit_px']:.2f} ({rec['pnl']:+.0f}$)")
@@ -1714,7 +1755,15 @@ class Lab:
         return info
 
     def deployments_view(self) -> dict:
-        return {"items": self.deployments.d["items"], "data": self.deployments.d.get("data", {}),
+        items = []
+        for x in self.deployments.d["items"]:
+            try:
+                d = load_study(self.work, x["slug"])
+                j = (d or {}).get("report", {}).get("judgment")
+                items.append({**x, "stage": EV.stage_of(j, x.get("forward_test"))["stage"] if j else None})
+            except Exception:
+                items.append(x)
+        return {"items": items, "data": self.deployments.d.get("data", {}),
                 "last_bar": str(self.bars().index[-1])[:10] if Path(self.bars_path).exists() else None,
                 "markets": list(self.mk)}
 

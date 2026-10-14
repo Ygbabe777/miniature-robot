@@ -73,7 +73,7 @@ def list_studies(work: str | Path) -> list[dict]:
             rows.append({"slug": f.stem, "name": r["name"], "template": r["template"],
                          "status": r["locked"]["status"], "robust": s["robust"],
                          "median_sharpe": s["median_sharpe"], "n_candidates": r["n_candidates"], "market": r.get("market"),
-                         "role": (r.get("roles") or {}).get("label"), "verdict": (r["locked"] or {}).get("verdict"), "near_miss": bool(r.get("near_miss")), "favorite": bool(r.get("favorite")),
+                         "role": (r.get("roles") or {}).get("label"), "verdict": (r["locked"] or {}).get("verdict"), "stage": ((r.get("judgment") or {}).get("stage") or {}).get("stage"), "near_miss": bool(r.get("near_miss")), "favorite": bool(r.get("favorite")),
                          "saved_at": d.get("saved_at")})
         except (KeyError, ValueError):
             continue

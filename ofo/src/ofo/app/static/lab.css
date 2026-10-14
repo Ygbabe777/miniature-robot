@@ -296,3 +296,5 @@ h2{color:var(--silver);letter-spacing:.22em;font-weight:400}
 .jx .jx-diag{margin:10px 0;padding:10px 12px;border-left:2px solid var(--silver);background:rgba(255,255,255,.03)}
 .jx-t{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0}.jx-t td,.jx-t th{padding:4px 6px;border-bottom:1px solid var(--edge);vertical-align:top;text-align:left}
 .jx-t tr.jx-FAIL td:nth-child(2){color:var(--down)}.jx-t tr.jx-INSUFFICIENT td:nth-child(2){color:var(--warn)}.jx-t tr.jx-PASS td:nth-child(2){color:var(--up)}
+
+.b-stage{background:transparent;color:var(--platinum);border:1px solid var(--silver);letter-spacing:.06em}

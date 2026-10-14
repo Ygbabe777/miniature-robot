@@ -527,5 +527,20 @@
   "min_backtest_trades": 200,
   "ci_z": 1.96,
   "note": "Giudice a due teste (edge / prop / finale). Soglie CONFIGURABILI ma mai calibrate sul blocco bloccato: vedi docs/JUDGE_AUDIT.md e scripts/judge_sensitivity.py. APPROVED non è più facile del Judge legacy: richiede anche la revisione prop-farming completa. PAPER_CANDIDATE non è un'approvazione."
+ },
+ "protocol": {
+  "enforce": false,
+  "max_finalists": 3,
+  "epoch_min_new_sessions": 100,
+  "forward": {
+   "looks": [
+    60,
+    120,
+    180,
+    250
+   ],
+   "alpha": 0.05
+  },
+  "note": "enforce=true: blocco hidden congelato (epoca), al massimo max_finalists strategie registrate PRIMA dello sguardo, DSR ufficiale = dsr_holdout con K = max_finalists. Le sessioni dopo l'epoca sono riservate al forward."
  }
 }

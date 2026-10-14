@@ -703,7 +703,12 @@
     const d = j.diagnosis;
     const next = d && d.next_experiments && d.next_experiments.length ? '<ul>' + d.next_experiments.map(e => `<li>${esc(e.text || e.kind)}</li>`).join('') + '</ul>' : '';
     const props = Object.entries((j.prop && j.prop.by_ruleset) || {}).map(([id, v]) => `<li><b>${esc(id)}</b>: ${esc(v.status)} · ${v.size_micro || '–'} micro · NPFV ${v.metrics.npfv_mean == null ? '–' : '$' + Math.round(v.metrics.npfv_mean).toLocaleString()} · ${t('ro_p_win')}: ${v.metrics.p_pass == null ? '–' : pct(v.metrics.p_pass)} · payout: ${v.metrics.p_first_payout == null ? '–' : pct(v.metrics.p_first_payout)}</li>`).join('');
-    return `<div class="judge jx" id="jx"><b>${t('jx_title')}</b> <span class="badge b-${j.verdict}">${t('v_' + j.verdict)}</span>
+    const stg = j.stage && j.stage.stage ? `<span class="badge b-stage">${esc(j.stage.stage)}</span>` : '';
+    const modes = r.dsr_modes ? `<details><summary>${t('jx_dsr_modes')}</summary><table class="jx-t"><tr><th></th><th>N</th><th>V</th><th>SR₀ ${t('jx_annual')}</th><th>DSR</th><th></th></tr>${['holdout_null', 'raw', 'locked_looks'].map(k => { const m = r.dsr_modes[k]; return m ? `<tr class="${m.official ? 'jx-PASS' : ''}"><td>${esc(k)}${m.official ? ' ★' : ''}</td><td>${m.N}</td><td>${m.V == null ? '–' : m.V.toPrecision(2)}</td><td>${m.sr0_annual == null ? '–' : m.sr0_annual.toFixed(2)}</td><td>${m.value == null ? '–' : m.value.toFixed(2)}</td><td>${esc(m.formula)}<br><span class="sub">${esc(m.V_meaning)}. ${esc(m.interpretation)}</span></td></tr>` : ''; }).join('')}</table></details>` : '';
+    const fin = r.finalist ? `<div class="sub">${t('jx_finalist', { k: r.finalist.k_index, m: (r.finalist.epoch || {}).max_finalists, a: (r.finalist.epoch || {}).start, b: (r.finalist.epoch || {}).end })}</div>` : '';
+    const shl = r.shelved ? `<div class="sub">⚠ ${esc(r.shelved.reason)}</div>` : '';
+    const fwd = r.forward_test ? `<details><summary>${t('jx_forward')}: ${esc(r.forward_test.status)} (${r.forward_test.sessions} ${t('jx_sessions')}, z ≥ ${r.forward_test.boundary.toFixed(2)})</summary><table class="jx-t">${(r.forward_test.looks || []).map(l => `<tr><td>T=${l.T}</td><td>z ${l.z.toFixed(2)}</td><td>Sharpe ${l.annual_sharpe.toFixed(2)}</td></tr>`).join('')}</table>${r.forward_plan ? `<div class="sub">plan ${esc(r.forward_plan.hash.slice(0, 10))} · ${esc(r.forward_plan.method)} · ${esc((r.forward_plan.stopping || []).join(' | '))}</div>` : ''}</details>` : '';
+    return `<div class="judge jx" id="jx"><b>${t('jx_title')}</b> <span class="badge b-${j.verdict}">${t('v_' + j.verdict)}</span> ${stg}
       <div class="sub">${esc(j.reason || '')}</div><div class="sub">${t('jx_det')}</div>
       ${r.can_promote_to_paper ? `<button class="btn small" id="jx-paper">${t('jx_paper_go')}</button>` : ''}
       ${r.paper ? `<div class="sub">${t('jx_paper_state')}: ${esc(r.paper.status)}${r.paper.probation ? ' (prova)' : ''}</div>` : ''}
@@ -715,7 +720,7 @@
         <div class="sub"><b>${t('jx_frozen')}:</b> ${(d.frozen || []).map(esc).join(' · ')}</div></div>` : ''}
       <details open><summary>${t('jx_failed')} (${bad.length})</summary>${bad.length ? `<table class="jx-t"><tr><th></th><th></th><th>${t('jx_obs')}</th><th>${t('jx_thr')}</th><th>${t('jx_ci')}</th><th></th></tr>${bad.map(row).join('')}</table>` : `<div class="sub">${t('jx_none')}</div>`}</details>
       <details><summary>${t('jx_passed')} (${ok.length})</summary><table class="jx-t">${ok.map(row).join('')}</table></details>
-      ${props ? `<details><summary>${t('jx_prop')}</summary><ul>${props}</ul></details>` : ''}</div>`;
+      ${props ? `<details><summary>${t('jx_prop')}</summary><ul>${props}</ul></details>` : ''}${modes}${fin}${shl}${fwd}</div>`;
   }
 
   async function openDetail(slug) {
