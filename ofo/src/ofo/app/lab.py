@@ -32,6 +32,8 @@ from ..registry import TrialRegistry
 from ..agents.loop import _fingerprint
 from ..specs import StrategySpec, from_dict
 from .mie_service import AGENTS as MIE_AGENTS, MIEService
+from ..pdf import Doc as PDFDoc
+from ..streaks import streak_stats
 from ..storage import atomic_write, list_studies, load_study, slugify
 from .. import deploy as dep
 from .. import knowledge, obsidian
@@ -2020,6 +2022,77 @@ class Lab:
                 charts[key] = chart_pack(dates, pnl)
         return {"report": d["report"], "planner": d["planner"], "auditor": d["auditor"],
                 "charts": charts, "cut": s.get("cut"), "best_params": s.get("best_params"), "exit": s.get("exit")}
+
+    def streaks(self, slug: str) -> dict:
+        """Average and longest winning / losing streaks of the strategy's trades (and of its days), from the SAME trade list the Trades tab shows:
+        the hidden block's trades enter only if the Judge already looked at it."""
+        t = self.trades(slug)
+        if not t or not t.get("trades"):
+            return {"available": False, "reason": "NOT AVAILABLE"}
+        tr = sorted(t["trades"], key=lambda x: (str(x.get("session")), str(x.get("entry_t") or "")))
+        days: dict = {}
+        for x in tr:
+            days[str(x["session"])[:10]] = days.get(str(x["session"])[:10], 0.0) + float(x["pnl"])
+        return {"available": True, "trades": streak_stats([x["pnl"] for x in tr]), "days": streak_stats([days[k] for k in sorted(days)]),
+                "locked_visible": t.get("locked_visible"), "contracts": t.get("contracts")}
+
+    def report_pdf(self, slug: str) -> bytes | None:
+        """The strategy's file as a PDF: verdict and reason, development / walk-forward numbers, streaks, sizing, parameters and the equity curves the page shows.
+        Same visibility rules as the page (no hidden-block series unless the Judge already looked)."""
+        d = self.detail(slug)
+        if d is None:
+            return None
+        rep, L = d["report"], d["report"].get("locked") or {}
+        doc = PDFDoc(f"OFO - {rep.get('name')}")
+        doc.text(str(rep.get("name")), 17, bold=True)
+        doc.text(f"modello {rep.get('template')} - {rep.get('n_candidates')} combinazioni testate - fonte {str(rep.get('source') or '')[:80]} - mercato {self.market_of(rep)} - generato {time.strftime('%Y-%m-%d %H:%M')}", 8.5)
+        doc.rule()
+        jd = self.judgment(slug) or {}
+        j = jd.get("judgment") or {}
+        doc.heading("Verdetto del Judge (deterministico, non AI)")
+        doc.text(f"{j.get('verdict') or L.get('verdict') or L.get('status')} - fase: {j.get('stage') or '-'}", 11, bold=True)
+        doc.text(str(j.get("reason") or L.get("reason") or "-"))
+        for r in (j.get("failed") or [])[:8]:
+            doc.text(f"non superato: {r.get('label')} ({r.get('status')})", 9, indent=10)
+        for r in (j.get("passed") or [])[:12]:
+            doc.text(f"superato: {r.get('label')}", 9, indent=10)
+        sur = rep.get("surface") or {}
+        doc.heading("Superficie dei parametri (sviluppo)")
+        doc.table([["Sharpe mediano", "combinazioni positive", "plateau", "robusta"],
+                   [f"{sur.get('median_sharpe', 0):.3f}", f"{sur.get('frac_positive', 0):.0%}", f"{sur.get('plateau_ratio', 0):.2f}", "si" if sur.get("robust") else "no"]], [130, 140, 90, 90])
+        if d.get("best_params"):
+            doc.text("Migliore combinazione in sviluppo (massimo di molte: ottimistica): " + str(d["best_params"]), 9)
+        titles = {"wf_oos": "Walk-forward (fuori campione)", "dev_best": "In campione (ottimizzato)", "locked": "Blocco nascosto (solo dopo lo sguardo del Judge)"}
+        for k in ("wf_oos", "dev_best", "locked"):
+            ch = d["charts"].get(k)
+            if not ch:
+                continue
+            m = ch["metrics"]
+            doc.heading(titles[k])
+            g = lambda key, fmt: "-" if m.get(key) is None else format(m[key], fmt)
+            doc.table([["P&L totale", "Sharpe annuo", "Sortino", "Profit factor", "% giorni vincenti", "Max drawdown"],
+                       [g("total_pnl", ",.0f"), g("sharpe", ".2f"), g("sortino", ".2f"), g("profit_factor", ".2f"), g("win_rate", ".0%"), g("max_drawdown", ",.0f")]], [80, 80, 70, 80, 90, 90])
+            doc.chart("Equity cumulata", ch["equity"])
+        try:
+            st = self.streaks(slug)
+        except Exception:
+            st = {"available": False}
+        doc.heading("Serie di vincite e perdite")
+        if st.get("available"):
+            f = lambda v: "-" if v is None else f"{v:.1f}"
+            doc.table([["", "serie vincenti media", "piu lunga", "serie perdenti media", "piu lunga"],
+                       ["trade", f(st["trades"]["win"]["avg"]), st["trades"]["win"]["max"], f(st["trades"]["loss"]["avg"]), st["trades"]["loss"]["max"]],
+                       ["giorni", f(st["days"]["win"]["avg"]), st["days"]["win"]["max"], f(st["days"]["loss"]["avg"]), st["days"]["loss"]["max"]]], [60, 120, 70, 130, 70])
+            doc.text(f"calcolate su {st['trades']['n']} trade ({'incluso' if st.get('locked_visible') else 'escluso'} il blocco nascosto) con {st.get('contracts')} micro.", 8.5)
+        else:
+            doc.text("NOT AVAILABLE", 9)
+        sz = (L.get("sizing") or rep.get("sizing") or {}).get("accounts") or {}
+        if sz:
+            doc.heading("Dimensionamento consigliato (in campione, ottimistico)")
+            doc.table([["conto", "micro consigliati"]] + [[a, str(v.get("recommended"))] for a, v in sz.items()], [100, 140])
+        doc.heading("Nota")
+        doc.text("OFO non invia ordini. I numeri su dati di sviluppo sono in campione e ottimistici; il verdetto dipende dal protocollo del blocco nascosto e non e modificabile dagli agenti.", 8.5)
+        return doc.render()
 
     def accounts(self) -> dict:
         real = load_accounts(self.data / "accounts.json")

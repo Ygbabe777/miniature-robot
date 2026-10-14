@@ -27,7 +27,7 @@ def _default() -> dict:
             "budget": {"screen_per_day": 1000, "deep_per_day": 100, "enforce_daily_caps": False,
                        "stage_split": {"hypothesis": 0.15, "screening": 0.35, "validation": 0.30, "robustness": 0.15, "audit": 0.05}},
             "walk_forward": {"min_windows": 6, "train_days": 120, "test_days": 20, "min_test_days": 10},
-            "sample": {"min_oos_trades": 200, "min_backtest_trades": 200},
+            "sample": {"min_oos_trades": 15, "min_backtest_trades": 100},
             "judge": {}, "protocol": {"enforce": True, "max_finalists": 3, "epoch_min_new_sessions": 100, "forward": {"looks": [60, 120, 180, 250], "alpha": 0.05}}, "near_miss": {"min_dsr": 0.70, "auto_paper": False}, "favorites": {"min_winning_days": 0.50, "max_losing_streak": 7},
             "holdout_fraction": 0.18,
             "search": {"coarse_step": 2, "random_extra_fraction": 0.25, "refine_top": 3, "refine_share": 0.25, "seed": 7},

@@ -38,7 +38,7 @@
     g.fillStyle = '#7b8087'; g.textAlign = 'left'; g.fillText(ch.sessions.join(' + ') + ' · ' + ch.tf + ' · ' + t('mie_chart_scope'), L, h - 6);
   }
   const views = {
-    chart() { return `<canvas id="mie-cv" width="880" height="420" style="width:100%;border:1px solid var(--edge)"></canvas><div class="smeta">${t('mie_chart_legend')}</div>`; },
+    chart() { const c = data.chart || {}; return (c.available ? '' : `<div class="smeta">${esc(c.why || '')}</div>`) + `<canvas id="mie-cv" width="880" height="420" style="width:100%;border:1px solid var(--edge)"></canvas><div class="smeta">${t('mie_chart_legend')}</div>`; },
     overview() {
       const o = data.overview || {};
       if (!o.available) return `<div class="mie-na">${NA}</div><div class="smeta">${esc(o.note || '')}</div>`;

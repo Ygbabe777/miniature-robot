@@ -336,3 +336,5 @@ h2{color:var(--silver);letter-spacing:.22em;font-weight:400}
 #mie-panel .kv span{color:var(--silver)} #mie-panel .kv b{color:var(--platinum);text-align:right;font-weight:600}
 #mie-panel .ev2{font-size:11.5px;border-left:2px solid var(--gunmetal);padding:2px 8px;margin:3px 0;color:var(--txt)} #mie-panel .ev2 small{display:block;color:var(--silver)}
 #mie-panel .smeta{font-size:11px;color:var(--silver);margin:4px 0}
+.pdf-dl{margin-left:8px;font-size:10px;letter-spacing:.12em;color:var(--silver);border:1px solid var(--edge);padding:2px 6px;text-decoration:none}.pdf-dl:hover{color:var(--white);border-color:var(--silver)}
+#pdf-go{text-decoration:none;display:inline-block}

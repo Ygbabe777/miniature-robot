@@ -42,9 +42,9 @@
   "note": "se i dati non permettono 6 finestre OOS cronologiche con almeno min_test_days sessioni ciascuna, lo studio lo dichiara e non può essere approvato pienamente"
  },
  "sample": {
-  "min_oos_trades": 200,
-  "note": "min_oos_trades è indicativo; min_backtest_trades (200) è un requisito: con meno trade nell'intero backtest una strategia non può essere approvata (campione insufficiente)",
-  "min_backtest_trades": 200
+  "min_oos_trades": 15,
+  "note": "min_oos_trades è indicativo; min_backtest_trades (100: circa un trade a settimana su due anni) è un requisito: con meno trade nell'intero backtest una strategia non può essere approvata (campione insufficiente)",
+  "min_backtest_trades": 100
  },
  "holdout_fraction": 0.18,
  "holdout_note": "15-20% indicativo; con pochi dati un blocco così piccolo può avere troppi pochi trade e lo studio risulta INSUFFICIENT_EVIDENCE",
@@ -523,8 +523,8 @@
   "decay_z": 1.64,
   "max_sharpe_ci_width": 8.0,
   "min_oos_days": 80,
-  "min_oos_trades": 30,
-  "min_backtest_trades": 200,
+  "min_oos_trades": 15,
+  "min_backtest_trades": 100,
   "ci_z": 1.96,
   "note": "Giudice a due teste (edge / prop / finale). Soglie CONFIGURABILI ma mai calibrate sul blocco bloccato: vedi docs/JUDGE_AUDIT.md e scripts/judge_sensitivity.py. APPROVED non è più facile del Judge legacy: richiede anche la revisione prop-farming completa. PAPER_CANDIDATE non è un'approvazione."
  },

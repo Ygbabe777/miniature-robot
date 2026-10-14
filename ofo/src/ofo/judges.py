@@ -49,8 +49,8 @@ DEFAULTS = {
     "decay_z": 1.64,                 # evidence against: development -> unseen Sharpe drop beyond one-sided 95% sampling noise (overfit signature)
     "max_sharpe_ci_width": 8.0,      # sanity floor on the 95% interval of the annual Sharpe (DSR is the real test; this only refuses a degenerate estimate)
     "min_oos_days": 80,
-    "min_oos_trades": 30,
-    "min_backtest_trades": 200,
+    "min_oos_trades": 15,
+    "min_backtest_trades": 100,
     "ci_z": 1.96,
 }
 
@@ -172,13 +172,13 @@ def edge_judge(report: dict, oos=None, dev=None, cfg: dict | None = None, lineag
     sample_notes = []
     if touched:
         if days < c["min_oos_days"] and not waived:
-            sample_notes.append(f"{days} sessioni fuori campione (ne servono {c['min_oos_days']}, o ≥ mezzo trade al giorno)")
+            sample_notes.append(f"{days} sessioni fuori campione (ne servono {c['min_oos_days']}, o ≥ un trade a settimana)")
         if trades < c["min_oos_trades"]:
             sample_notes.append(f"{trades} trade fuori campione (ne servono {c['min_oos_trades']})")
         if bt and not bt.get("ok", True):
             sample_notes.append(f"{bt.get('n')} trade in tutto il backtest (ne servono {bt.get('min', c['min_backtest_trades'])})")
         if smp.get("sporadic"):
-            sample_notes.append("trade sporadici (meno di uno ogni due giorni)")
+            sample_notes.append("trade sporadici (meno di uno a settimana)")
     else:
         if wf_short:
             sample_notes.append(f"finestre walk-forward {plan.get('windows')} su {plan.get('target_windows')} pianificate")

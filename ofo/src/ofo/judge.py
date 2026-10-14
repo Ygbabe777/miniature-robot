@@ -18,9 +18,9 @@ class Thresholds:
     eval_days: int = 5                  # ... within this many sessions, at the best size that does not bust too often
     base_contracts: int = 2             # size the daily P&L series was produced with
     max_p_bust: float = 0.40            # at the base size, over a long horizon
-    min_trades: int = 30                # a sample needs at least this many trades, whatever the days
+    min_trades: int = 15                # a sample needs at least this many trades, whatever the days
     min_days_floor: int = 80            # ... and never fewer sessions than this
-    min_trades_per_day: float = 0.5     # fewer days than min_days are fine when the strategy trades at least this often: one trade every two days (the owner has ~2 years of data)
+    min_trades_per_day: float = 0.2     # fewer days than min_days are fine when the strategy trades at least this often: one trade a week (the owner trades several strategies per account and has ~2 years of data)
 
 
 APPROVED = "APPROVED"

@@ -120,7 +120,7 @@ def load_rulesets(directory: str | Path = "rules/rulesets") -> dict[str, Ruleset
 def load_farming_config(path: str | Path = "rules/farming.json") -> dict:
     default = {"rulesets": ["GENERIC_EOD_50K", "GENERIC_EOD_25K"], "horizon_days": 126, "max_attempts": 3, "block": 3, "n_outer": 30,
                "n_inner": 150, "n_select": 100, "sizes": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "seed": 11,
-               "gates": {"min_locked_sessions": 60, "min_locked_trades": 30, "min_npfv_lcb95": 0.0, "min_p_first_payout": 0.15,
+               "gates": {"min_locked_sessions": 60, "min_locked_trades": 15, "min_npfv_lcb95": 0.0, "min_p_first_payout": 0.15,
                          "min_first_payout_given_pass": 0.5, "max_p_funded_fail_before_payout": 0.6, "stress_costs_multiple": 2.0,
                          "stress_npfv_min": 0.0, "max_es5_to_cost": 3.0},
                "forward": {"min_days": 20}, "payout_policies": ["A", "B", "C"]}

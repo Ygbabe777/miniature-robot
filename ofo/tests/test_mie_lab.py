@@ -275,7 +275,11 @@ def test_the_chart_is_real_development_data_and_scientists_point_at_it_only_whil
             pg.on("pageerror", lambda e: errs.append(str(e)))
             pg.goto("http://127.0.0.1:8800/")
             pg.wait_for_timeout(4000)
-            assert pg.evaluate("LabScene.chartGeo()") and pg.evaluate("LabScene.chartGeo().n") == 5
+            for _ in range(30):                                                   # the page fetches the chart after loading: wait for it, not for a fixed time
+                if pg.evaluate("LabScene.chartGeo()"):
+                    break
+                pg.wait_for_timeout(1000)
+            assert pg.evaluate("LabScene.chartGeo().n") == 5
             assert not any(pg.evaluate("Object.values(LabScene.mieBeams())")), "no beam while nobody works"
             pg.evaluate("LabScene.onEvent(%s)" % json.dumps({"agent": "structure_engine", "type": "working", "message": "x", "data": {}}))
             pg.wait_for_timeout(1500)

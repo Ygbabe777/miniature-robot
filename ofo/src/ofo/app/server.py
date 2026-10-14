@@ -9,6 +9,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from ..storage import slugify
+
 STATIC = Path(__file__).parent / "static"
 
 
@@ -61,6 +63,20 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(d) if d else self._json({"error": "not found"}, 404)
                 if u.path == "/api/epoch":
                     return self._json(lab.epoch_state())
+                if u.path.startswith("/api/streaks/"):
+                    return self._json(lab.streaks(unquote(u.path[len("/api/streaks/"):])))
+                if u.path.startswith("/api/pdf/"):
+                    slug = unquote(u.path[len("/api/pdf/"):]).removesuffix(".pdf")
+                    data = lab.report_pdf(slug)
+                    if data is None:
+                        return self._json({"error": "not found"}, 404)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/pdf")
+                    self.send_header("Content-Disposition", f'attachment; filename="{slugify(slug)}.pdf"')
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if u.path.startswith("/api/mie/"):
                     what = u.path[len("/api/mie/"):]
                     if what == "trace":

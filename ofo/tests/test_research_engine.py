@@ -25,7 +25,7 @@ def test_config_is_versioned_validated_and_the_baseline_is_the_one_requested():
     assert CFG["timeframes"]["execution"] == ["1min", "5min"] and CFG["timeframes"]["context"] == ["15min"]
     caps = rc.stage_caps(CFG)
     assert caps["screening"] == 1000 and caps["deep_candidates"] == 100 and abs(sum(CFG["budget"]["stage_split"].values()) - 1) < 1e-9
-    assert CFG["walk_forward"]["min_windows"] == 6 and CFG["sample"]["min_oos_trades"] == 200 and 0.15 <= CFG["holdout_fraction"] <= 0.20
+    assert CFG["walk_forward"]["min_windows"] == 6 and CFG["sample"]["min_oos_trades"] == 15 and 0.15 <= CFG["holdout_fraction"] <= 0.20
     assert "+" in CFG["config_version"] and "total_trials" not in CFG["budget"]            # the total budget is NOT here: it stays as it was
     bad = json.loads(json.dumps(CFG)); bad["search_space"]["orb"]["params"]["or_minutes"]["range"] = [1, 9999]
     with pytest.raises(rc.ResearchConfigError):

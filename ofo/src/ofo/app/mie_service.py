@@ -75,8 +75,8 @@ class MIEService:
     # ------------------------------------------------------------------ the scheduler
     def due(self) -> bool:
         lab = self.lab
-        return (self.enabled and not self.running and time.time() - self.last_tick_at >= self.interval_s and lab.busy.get("job", 0) == 0
-                and lab.busy.get("research", 0) == 0 and lab.ap.get("enabled", True))
+        # only a running STUDY (CPU heavy, shares the data) blocks it: the Researcher waiting for the AI is not a reason to stay idle
+        return self.enabled and not self.running and time.time() - self.last_tick_at >= self.interval_s and lab.busy.get("job", 0) == 0 and lab.ap.get("enabled", True)
 
     def tick(self, force: bool = False) -> dict:
         """One MIE increment. Runs only when no study is running (they are CPU heavy and the data is shared). Returns what happened."""
@@ -100,6 +100,8 @@ class MIEService:
         finally:
             self.last_tick_at = time.time()
             self.running = False
+            for a in AGENTS:                                         # nobody stays "working" after a step, whatever happened inside it
+                self.lab.events.emit(a, "idle", "passo MIE concluso")
         return out
 
     def tick_async(self) -> dict:
@@ -156,7 +158,11 @@ class MIEService:
     def chart(self) -> dict:
         snap = self.snapshot()
         ch = (snap or {}).get("chart")
-        return {"available": bool(ch and ch["candles"]), "reason": None if ch else NA, **(ch or {})}
+        if ch and ch["candles"]:
+            return {"available": True, "reason": None, **ch}
+        why = ("un passo MIE è in corso" if self.running else f"ultimo passo fallito: {self.last_error}" if self.last_error else
+               "il MIE non ha ancora completato un passo: premi «Esegui un passo ora»" if not snap else "la chart non è stata costruita nell'ultimo passo")
+        return {"available": False, "reason": NA, "why": why}
 
     def snapshot(self) -> dict | None:
         try:

@@ -152,7 +152,7 @@
     $('#jobs').innerHTML = s.jobs.filter(j => j.status === 'queued' || j.status === 'running').map(j => `<div class="card"><span class="spin"></span>${t('job_run', { n: '<b>' + esc(j.name) + '</b>', c: j.n_candidates })}
       <div class="meta">${j.status === 'queued' ? t('job_wait', { why: esc(engineWhy(s.engine)) }) : t('job_stage', { s: t('stg_' + (j.stage || 'starting')), d: esc(j.stage_detail || '') })}</div></div>`).join('')
       + s.jobs.filter(j => j.status === 'error').slice(-1).map(j => `<div class="card" style="border-color:var(--down)">${t('job_err', { n: esc(j.name), e: esc(j.error) })}</div>`).join('');
-    $('#studies').innerHTML = `<h2>${t('studies_title')}</h2>` + (s.strategies.length ? s.strategies.map(x => `<div class="row" data-slug="${esc(x.slug)}"><div><b>${esc(x.name)}</b><small>${esc(x.template)} · ${x.n_candidates} ${t('combos')} · ${t('med_sharpe')} ${num(x.median_sharpe, 3)} · ${x.robust ? t('robust') : t('fragile')}${x.role ? ' · ' + t('ro_' + x.role) : ''}</small></div><span class="badge b-${x.status}">${t('v_' + x.status)}</span></div>`).join('') : `<div class="empty">${t('none_yet')}</div>`);
+    $('#studies').innerHTML = `<h2>${t('studies_title')}</h2>` + (s.strategies.length ? s.strategies.map(x => `<div class="row" data-slug="${esc(x.slug)}"><div><b>${esc(x.name)}</b><small>${esc(x.template)} · ${x.n_candidates} ${t('combos')} · ${t('med_sharpe')} ${num(x.median_sharpe, 3)} · ${x.robust ? t('robust') : t('fragile')}${x.role ? ' · ' + t('ro_' + x.role) : ''}</small></div><span class="badge b-${x.status}">${t('v_' + x.status)}</span><a class="pdf-dl" href="/api/pdf/${encodeURIComponent(x.slug)}" download title="PDF" onclick="event.stopPropagation()">PDF</a></div>`).join('') : `<div class="empty">${t('none_yet')}</div>`);
     $('#studies').querySelectorAll('.row').forEach(r => r.onclick = () => openDetail(r.dataset.slug));
     $('#reqs').innerHTML = s.template_requests.length ? `<h2>${t('reqs_title')}</h2>` + s.template_requests.map(r => `<div class="card"><b>${esc(r.name)}</b><div class="meta">${esc(r.when)}</div>${esc(r.description)}</div>`).join('') : '';
     if (window.LabScene) LabScene.setTrader(s.strategies.filter(x => x.status === 'APPROVED').map(x => x.name), { wait: t('tr_wait'), desk: t('tr_desk'), ready: t('tr_ready'), head: t('tr_head'), none: t('tr_none') });
@@ -734,7 +734,7 @@
     const title = { wf_oos: t('s_wf'), locked: t('s_locked'), dev_best: t('s_dev') };
     const pl = d.planner && d.planner.reason ? (/failed a deterministic gate/.test(d.planner.reason) ? t('pl_gate') : d.planner.reason) : '';
     $('#detail').innerHTML = `
-      <div class="dtitle"><h1>${esc(rep.name)}</h1><span class="badge b-${L.verdict || L.status}">${t('v_' + (L.verdict || L.status))}</span><button class="btn small" id="retest-go" title="${esc(t('retest_tip'))}">↻ ${t('retest')}</button></div>
+      <div class="dtitle"><h1>${esc(rep.name)}</h1><span class="badge b-${L.verdict || L.status}">${t('v_' + (L.verdict || L.status))}</span><a class="btn small" id="pdf-go" href="/api/pdf/${encodeURIComponent(slug)}" download>PDF</a> <button class="btn small" id="retest-go" title="${esc(t('retest_tip'))}">↻ ${t('retest')}</button></div>
       ${rep.retest_no ? `<div class="sub">${t('retest_n', { n: rep.retest_no })}</div>` : ''}
       <div class="sub">${t('d_model')} ${esc(rep.template)} · ${rep.n_candidates} ${t('d_tested')} · ${esc(rep.source || '')}</div>
       <div class="judge"><b>${t('d_judge')}</b> ${L.reason ? '<div style="margin-top:6px">' + esc(itReason(L.reason)) + '</div>' : ''}
@@ -744,6 +744,7 @@
       ${d.best_params ? `<div class="sub">${t('d_best', { p: esc(JSON.stringify(d.best_params)), n: rep.n_candidates })}</div>` : ''}
       <div id="jx-slot"></div>
       <div id="mie-trace"></div>
+      <div id="streak-slot"></div>
       ${rolesBox(rep.roles)}
       ${farmBox(rep.farming)}
       ${tfBox(rep.by_timeframe)}
@@ -763,6 +764,12 @@
       ${d.auditor ? `<div class="judge"><b>${t('aud_title')}</b><p>${esc(d.auditor.summary)}</p>${(d.auditor.risk_flags || []).length ? '<ul style="padding:0">' + d.auditor.risk_flags.map(f => `<li class="no">${esc(f)}</li>`).join('') + '</ul>' : ''}<p><b>${t('aud_next')}:</b> ${esc(d.auditor.next_step)}</p></div>` : ''}
       ${pl ? `<div class="judge"><b>${t('planner')}:</b> ${esc(t('pl_' + ({ abandon: 'abandon', extend: 'extend', new_hypothesis: 'new' }[d.planner.decision] || 'abandon')))} — ${esc(pl)}</div>` : ''}`;
     if (window.MIE) MIE.trace(slug, $('#mie-trace'));
+    api('/api/streaks/' + encodeURIComponent(slug)).then(r => {
+      const el = $('#streak-slot'); if (!el) return;
+      if (!r.available) { el.innerHTML = `<div class="judge"><b>${t('stk_title')}</b> <span class="smeta">NOT AVAILABLE</span></div>`; return; }
+      const f = v => v == null ? '–' : Number(v).toFixed(1), row = (n, s) => `<tr><td>${n}</td><td>${f(s.win.avg)}</td><td>${s.win.max}</td><td>${f(s.loss.avg)}</td><td>${s.loss.max}</td></tr>`;
+      el.innerHTML = `<div class="judge"><b>${t('stk_title')}</b><table class="mie-t"><tr><th></th><th>${t('stk_wavg')}</th><th>${t('stk_wmax')}</th><th>${t('stk_lavg')}</th><th>${t('stk_lmax')}</th></tr>${row(t('stk_trades'), r.trades)}${row(t('stk_days'), r.days)}</table><div class="smeta">${t('stk_note', { n: r.trades.n })}</div></div>`;
+    });
     api('/api/judge?slug=' + encodeURIComponent(slug)).then(r => {
       const slot = $('#jx-slot'); if (!slot || r.error) return;
       slot.outerHTML = judgeBox(r);

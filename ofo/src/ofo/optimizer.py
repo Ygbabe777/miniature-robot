@@ -51,7 +51,7 @@ class SurfaceThresholds:
     min_plateau_ratio: float = 0.6      # PARAMETER neighbours of the best must keep >=60% of its Sharpe
     min_neighbours_positive: float = 0.75
     min_tf_positive: float = 0.5        # share of timeframes whose median Sharpe is positive (when several are tested)
-    min_trades: int = 160               # development trades of the final candidate (the whole backtest needs 200: ~80% of them are development)
+    min_trades: int = 80                # development trades of the final candidate (the whole backtest needs 100: ~80% of them are development)
     max_cost_multiple_sharpe: float = 0.0   # Sharpe must stay above this at twice the costs and with next-open fills
 
 
@@ -863,7 +863,7 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
             report["gate_failed"] = "reproducibility"
         # the WHOLE backtest (development + unseen block) must contain at least `min_backtest_trades` trades: fewer cannot be approved
         n_bt = len(led_full.trades) if led_full is not None else None
-        min_bt = int(rcfg["sample"].get("min_backtest_trades", 200))
+        min_bt = int(rcfg["sample"].get("min_backtest_trades", 100))
         report["locked"]["backtest_trades"] = {"n": n_bt, "min": min_bt, "ok": bool(n_bt is not None and n_bt >= min_bt)}
         if n_bt is not None and n_bt < min_bt and report["locked"]["status"] == "APPROVED":
             report["locked"]["status"] = "INSUFFICIENT_EVIDENCE"
