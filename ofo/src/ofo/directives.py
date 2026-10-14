@@ -42,7 +42,7 @@ def words(topic: str) -> list[str]:
 class Directives:
     def __init__(self, path: str | Path, now=time.time):
         self.path, self.now = Path(path), now
-        self.items: list[dict] = json.loads(self.path.read_text()) if self.path.exists() else []
+        self.items: list[dict] = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else []
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -136,7 +136,7 @@ def best_size(daily_pnl, plan: FundedPlan, base_contracts: int, scales=(0.25, 0.
 
 def load_plans(path: str | Path) -> list[FundedPlan]:
     plans = []
-    for d in json.loads(Path(path).read_text())["plans"]:
+    for d in json.loads(Path(path).read_text(encoding="utf-8"))["plans"]:
         e = d["eval"]
         rules = PropRules(name=f"{d['firm']} {d['plan']}", start_balance=e["start_balance"],
                           profit_target=e["profit_target"], max_drawdown=e["max_drawdown"],

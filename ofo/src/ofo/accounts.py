@@ -45,7 +45,7 @@ def load_accounts(path: str | Path) -> list[dict]:
     p = Path(path)
     if not p.exists():
         return []
-    raw = json.loads(p.read_text())
+    raw = json.loads(p.read_text(encoding="utf-8"))
     return [derive(validate(a)) for a in (raw["accounts"] if isinstance(raw, dict) else raw)][:8]
 
 

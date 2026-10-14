@@ -39,6 +39,28 @@ def _llm(llm, role: str):
     return llm[role] if role in llm else llm["researcher"]      # roles missing from the config share the researcher's models
 
 
+AI_DEADLINE_S = 90.0        # the Planner and the Auditor comment AFTER the deterministic verdict: they may never keep a finished study waiting
+
+
+def _bounded(fn, seconds: float = AI_DEADLINE_S):
+    """Run fn() with a hard wall-clock limit. LLM retries and fallbacks can add up to many minutes; the study must not wait for them."""
+    import threading
+    box: dict = {}
+
+    def go():
+        try:
+            box["v"] = fn()
+        except BaseException as e:          # noqa: BLE001 - re-raised in the caller's thread
+            box["e"] = e
+    t = threading.Thread(target=go, daemon=True, name="ofo-ai-call")
+    t.start(); t.join(seconds)
+    if t.is_alive():
+        raise AgentError(f"nessuna risposta dall'AI entro {int(seconds)} s: lo studio prosegue senza")
+    if "e" in box:
+        raise box["e"]
+    return box["v"]
+
+
 class ResearchLoop:
     @property
     def bars(self):
@@ -55,7 +77,7 @@ class ResearchLoop:
         self.work.mkdir(parents=True, exist_ok=True)
         self.market = market                 # which market this loop tests on (report["market"])
         self.state_file = self.work / state_name
-        st = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
+        st = json.loads(self.state_file.read_text(encoding="utf-8")) if self.state_file.exists() else {}
         self.processed_ideas: set = set(st.get("processed_ideas", []))
         self.done_specs: set = set(st.get("done_specs", []))
         self.queue: list[tuple[StrategySpec, int]] = []
@@ -69,7 +91,7 @@ class ResearchLoop:
 
     def _save(self) -> None:
         self.state_file.write_text(json.dumps({"processed_ideas": sorted(self.processed_ideas),
-                                               "done_specs": sorted(self.done_specs)}))
+                                               "done_specs": sorted(self.done_specs)}), encoding="utf-8")
 
     def enqueue(self, spec: StrategySpec, depth: int = 0) -> bool:
         fp = _fingerprint(spec)
@@ -92,13 +114,13 @@ class ResearchLoop:
             meta = p.with_suffix(".meta.json")
             if meta.exists():
                 try:
-                    m = json.loads(meta.read_text()); source = f"{m.get('title', p.name)} ({m.get('url', '')})"
+                    m = json.loads(meta.read_text(encoding="utf-8")); source = f"{m.get('title', p.name)} ({m.get('url', '')})"
                 except ValueError:
                     pass
             self.events.emit("researcher", "reading", f"reading {p.name}")
             self.events.emit("researcher", "working", f"reading {p.name}")
             try:
-                text = extract_pdf_text(str(p)) if p.suffix.lower() == ".pdf" else p.read_text(errors="replace")
+                text = extract_pdf_text(str(p)) if p.suffix.lower() == ".pdf" else p.read_text(errors="replace", encoding="utf-8")
                 info: dict = {}
                 specs, rejected = propose_specs(_llm(self.llm, "researcher"), text, source=source, language=self.language,
                                                 memory=self.memory(), info=info, max_chunks=self.max_chunks)
@@ -124,7 +146,7 @@ class ResearchLoop:
             (self.work / "specs_auto").mkdir(exist_ok=True)
             (self.work / "specs_auto" / f"{_slug(p.stem)}.json").write_text(json.dumps(
                 {"strategies": [dataclasses.asdict(s) for s in specs], "rejected": rejected,
-                 "concepts": info.get("concepts", []), "source": source}, indent=1))
+                 "concepts": info.get("concepts", []), "source": source}, indent=1), encoding="utf-8")
             for s in specs:
                 if self.enqueue(s):
                     added += 1
@@ -164,22 +186,24 @@ class ResearchLoop:
             if getattr(self, "on_stage", None):
                 self.on_stage("planner", "il Planner decide il passo successivo (chiamata AI)")
             try:
-                decision = make_planner(_llm(self.llm, "planner"), spec, left, depth, ev, self.language).run(
+                decision = _bounded(lambda: make_planner(_llm(self.llm, "planner"), spec, left, depth, ev, self.language).run(
                     dev_summary(rep, {"trials_total": self.registry.n_trials, "trials_left": left,
-                                      "lab_memory": self.memory()}, depth))
+                                      "lab_memory": self.memory()}, depth)))
             except (AgentError, LLMError) as e:       # an AI outage must never lose a finished study
                 decision["reason"] = f"planner failed: {e}"
             ev.emit("planner", decision["decision"], decision["reason"][:300])
         locked = rep["locked"]
         ev.emit("judge", "verdict", f"{spec.name}: {locked['status']}", {k: v for k, v in locked.items() if k != "checks"})
         audit = None
+        rep['market'] = self.market
+        save_study(self.work, rep, {**decision, "spec": dataclasses.asdict(decision["spec"]) if decision["spec"] else None}, None)      # the verdict is visible NOW; the Auditor's commentary is added below
         if "checks" in locked or s["robust"]:
             if getattr(self, "on_stage", None):
                 self.on_stage("auditor", "l'Auditor commenta lo studio (chiamata AI)")
             payload = {k: v for k, v in rep.items() if k not in ("wf_oos_series", "series")}
             payload["trials_total"] = self.registry.n_trials
             try:
-                audit = make_auditor(_llm(self.llm, "auditor"), ev, self.language).run(payload)
+                audit = _bounded(lambda: make_auditor(_llm(self.llm, "auditor"), ev, self.language).run(payload))
                 ev.emit("auditor", "commentary", audit["summary"][:300], {"risk_flags": audit["risk_flags"]})
             except (AgentError, LLMError) as e:
                 ev.emit("auditor", "error", str(e)[:300])

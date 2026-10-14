@@ -95,7 +95,7 @@ class TrialRegistry:
         if self._con.execute("SELECT value FROM meta WHERE key='legacy_imported'").fetchone():
             return
         try:
-            old = json.loads(self.json_path.read_text())
+            old = json.loads(self.json_path.read_text(encoding="utf-8"))
         except ValueError:
             return
 

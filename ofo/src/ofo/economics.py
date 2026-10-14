@@ -24,7 +24,7 @@ ASSUMED = {
 def load_assumptions(path: str | Path | None) -> dict:
     out = json.loads(json.dumps(ASSUMED))
     if path and Path(path).exists():
-        for k, v in json.loads(Path(path).read_text()).items():
+        for k, v in json.loads(Path(path).read_text(encoding="utf-8")).items():
             if k in out and isinstance(v, dict):
                 out[k]["payout"].update(v.get("payout", {}))
                 for f in ("eval_fee_monthly", "activation_fee"):
@@ -68,6 +68,6 @@ def multi_account(p_pass: float, p_lo: float, p_hi: float, p_payout: float, fees
 def load_goal(path: str | Path | None) -> dict:
     """The owner's goal from rules/economics.json: {"goal": {"max_eval_days": 5, "min_pass_rate": 0.30, "strong_pass_rate": 0.35}}."""
     if path and Path(path).exists():
-        g = json.loads(Path(path).read_text()).get("goal") or {}
+        g = json.loads(Path(path).read_text(encoding="utf-8")).get("goal") or {}
         return {k: g[k] for k in ("max_eval_days", "min_pass_rate", "strong_pass_rate") if k in g}
     return {}

@@ -45,7 +45,7 @@ class ModelPool:
         self.fails: dict[str, int] = {}
         self.rr: dict[str, int] = {}
         today = dt.date.today().isoformat()
-        led = json.loads(self.ledger_path.read_text()) if self.ledger_path.exists() else {}
+        led = json.loads(self.ledger_path.read_text(encoding="utf-8")) if self.ledger_path.exists() else {}
         self.calls: list[list] = [c for c in led.get("calls", []) if c[0] > self.now() - 3600]
         self.ledger = led if led.get("date") == today else {"date": today, "models": {}, "roles": {}}
 
@@ -53,7 +53,7 @@ class ModelPool:
     def _save(self) -> None:
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         self.ledger["calls"] = self.calls
-        self.ledger_path.write_text(json.dumps(self.ledger, indent=1))
+        self.ledger_path.write_text(json.dumps(self.ledger, indent=1), encoding="utf-8")
 
     # --- hourly call allowance (every attempt counts, successful or not) -------------------
     def calls_last_hour(self, role: str | None = None) -> int:
@@ -121,7 +121,7 @@ class ModelPool:
     def chat(self, role: str, messages: list[dict], temperature: float = 0.2, **extra) -> str:
         cp = self._cache_path(role, messages, temperature)
         if cp is not None and cp.exists():
-            return json.loads(cp.read_text())["content"]
+            return json.loads(cp.read_text(encoding="utf-8"))["content"]
         cap = self.budget.get(role)
         if cap is not None and self.tokens_today(role) >= cap:
             raise BudgetExceeded(f"role {role!r} used its daily budget of {cap} tokens")
@@ -153,7 +153,7 @@ class ModelPool:
                 self._record(role, model, r)
                 if cp is not None:
                     cp.parent.mkdir(parents=True, exist_ok=True)
-                    cp.write_text(json.dumps({"content": r["content"], "model": model}))
+                    cp.write_text(json.dumps({"content": r["content"], "model": model}), encoding="utf-8")
                 return r["content"]
             soonest = min(self.cooldown.get(m, 0) for m in models) - self.now()
             if waited + max(soonest, 0) > self.max_wait or soonest > self.max_wait:
@@ -182,11 +182,11 @@ def build_pool(config_path: str | Path, ledger_path="data/llm_usage.json", cache
                budget_state="data/budget.json"):
     """config/llm.json: {"roles": {"researcher": [models], "planner": [...], "auditor": [...]},
     "daily_token_budget": {"researcher": 300000}, "cooldown_seconds": 30}. Keys stay in env vars."""
-    cfg = json.loads(Path(config_path).read_text())
+    cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     bcfg = cfg.get("budget")
     bfile = Path(config_path).with_name("budget.json")          # config/budget.json: weekly dollars, prices, remaining balance
     if bcfg is None and bfile.exists():
-        bcfg = json.loads(bfile.read_text())
+        bcfg = json.loads(bfile.read_text(encoding="utf-8"))
     from ..budget import BudgetGovernor
     governor = BudgetGovernor(budget_state, bcfg) if bcfg is not None else None
     pool = ModelPool(LLMClient(), cfg["roles"], ledger_path, cache_dir, cfg.get("daily_token_budget"), governor=governor,

@@ -56,9 +56,9 @@ def load_study(work: str | Path, slug: str) -> dict | None:
     f = d / f"{slugify(slug)}.json"
     if not f.exists():
         return None
-    out = json.loads(f.read_text())
+    out = json.loads(f.read_text(encoding="utf-8"))
     sf = d / f"{slugify(slug)}_series.json"
-    out["series"] = json.loads(sf.read_text()) if sf.exists() else None
+    out["series"] = json.loads(sf.read_text(encoding="utf-8")) if sf.exists() else None
     return out
 
 
@@ -68,7 +68,7 @@ def list_studies(work: str | Path) -> list[dict]:
         if f.name.endswith("_series.json"):
             continue
         try:
-            d = json.loads(f.read_text())
+            d = json.loads(f.read_text(encoding="utf-8"))
             r, s = d["report"], d["report"]["surface"]
             rows.append({"slug": f.stem, "name": r["name"], "template": r["template"],
                          "status": r["locked"]["status"], "robust": s["robust"],
@@ -85,7 +85,7 @@ def update_report(work: str | Path, slug: str, mutate) -> bool:
     f = Path(work) / "reports" / f"{slugify(slug)}.json"
     if not f.exists():
         return False
-    d = json.loads(f.read_text())
+    d = json.loads(f.read_text(encoding="utf-8"))
     mutate(d["report"])
     atomic_write(f, json.dumps(d, indent=1, default=str))
     return True

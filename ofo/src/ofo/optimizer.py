@@ -599,7 +599,9 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
             lk["legacy_status"] = lk.get("status")
             lk["verdict"] = j["verdict"]
             lk["status"] = j["legacy_status"]
-            lk["reason"] = lk.get("reason") if j["verdict"] == "APPROVED" else j["reason"]
+            lk["judge_reason"] = j["reason"]
+            if j["verdict"] != "APPROVED" and not lk.get("reason"):
+                lk["reason"] = j["reason"]
             if j["verdict"] != "APPROVED" and not report.get("gate_failed"):
                 report["gate_failed"] = ((j.get("diagnosis") or {}).get("failed_gate") or {}).get("label")
             report["near_miss"] = ({"gate": "edge", "dsr": (j["edge"]["metrics"] or {}).get("dsr"), "needed": rcfg.get("judge", {}).get("confidence", 0.95), "why": j["reason"]}

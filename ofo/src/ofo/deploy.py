@@ -207,11 +207,11 @@ def new_signals(bars: pd.DataFrame, dep: dict, contract, base_contracts: int) ->
 class Store:
     def __init__(self, path: Path):
         self.path = Path(path)
-        self.d = json.loads(self.path.read_text()) if self.path.exists() else {"items": [], "data": {}}
+        self.d = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {"items": [], "data": {}}
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.d, indent=1, default=str))
+        self.path.write_text(json.dumps(self.d, indent=1, default=str), encoding="utf-8")
 
     def get(self, slug: str) -> dict | None:
         return next((x for x in self.d["items"] if x["slug"] == slug), None)
