@@ -201,7 +201,7 @@
     const key = JSON.stringify([a.enabled, bits, a.paused, LANG, a.markets]);
     if (key === apKey) return; apKey = key;
     $('#autopilot').innerHTML = `<div class="${a.enabled ? 'apon' : 'apoff'}">${a.enabled ? t('ap_on') : t('ap_off')}</div><div class="apm">${bits.join(' · ')}</div>`
-      + (a.paused ? `<div class="apoff">${t('ap_paused_' + a.paused)}</div>` : '')
+      + (a.paused ? `<div class="apoff">${t('ap_paused_' + a.paused)}${budgetWhy(a.paused_info)}</div>` : '')
       + (a.markets && a.markets.length > 1 ? `<div class="apm"><b>${t('mk_title')}</b>${a.markets.map(m => `<label style="display:block"><input type="checkbox" class="mk-on" value="${m.sym}" ${m.enabled ? 'checked' : ''}> ${esc(m.name)} (${m.mini}/${m.micro})</label>`).join('')}</div>` : '')
       + `<button class="btn small" id="ap-toggle">${a.enabled ? t('ap_toggle_off') : t('ap_toggle_on')}</button><div class="apn">${t('ap_note')}</div>`;
     document.querySelectorAll('.mk-on').forEach(c => c.onchange = async () => { const on = [...document.querySelectorAll('.mk-on')].filter(x => x.checked).map(x => x.value); await api('/api/markets', { method: 'POST', json: { markets: on } }); apKey = ''; poll(); });
@@ -689,6 +689,12 @@
     if (typeof v === 'number') return Math.abs(v) < 5 ? v.toFixed(2) : Math.round(v).toLocaleString();
     if (typeof v === 'object') return Object.entries(v).map(([k, x]) => k + ' ' + jxVal(x)).join(' · ');
     return String(v);
+  }
+  function budgetWhy(i) {
+    if (!i) return '';
+    const q = (i.queued || []).find(x => x.blocked_by); const b = q && q.blocked_by;
+    const caps = Object.entries(i.caps || {}).filter(([k]) => ['screening', 'validation', 'robustness', 'audit'].includes(k)).map(([k, c]) => `${k} ${(i.used || {})[k] || 0}/${c}`).join(' · ');
+    return `<div class="sub">${esc(i.day)} · ${esc(i.unit)}: ${esc(caps)}${b ? ` — «${esc(q.name)}»: ${esc(b.stage)} ${b.used}+${b.needs} > ${b.cap}` : ''}</div>`;
   }
   function judgeBox(r) {
     const j = r.judgment; if (!j) return '';

@@ -49,6 +49,7 @@ from ..optimizer import farming_context, farming_for_study
 from ..research_budget import ResearchBudget
 from .. import research_config as rcfg_mod
 from ..search import spec_overlap
+from ..research_budget import planned_units
 from ..storage import update_report
 from ..scout import Scout
 from ..sources import agent_reach_status, config_problem, load_config, missing_channels
@@ -688,7 +689,7 @@ class Lab:
             threads.append({"name": t.name, "alive": t.is_alive(), "where": list(reversed(where))})
         return {"build": BUILD, "lab_lock_held": self.lock.locked(), "engine_lock_held": self.run_lock.locked(), "holder": self._holder,
                 "busy": dict(self.busy), "jobs": [{k: v for k, v in j.items() if not k.startswith("_")} for j in list(self.jobs.values())[-10:]],
-                "pending": len(self.pending), "threads": threads}
+                "pending": len(self.pending), "budget": self.budget_explain(), "threads": threads}
 
     STUCK_AFTER_S = 20
 
@@ -838,6 +839,30 @@ class Lab:
             ok, stage = False, "screening"
         self._budget_detail = detail
         return None if ok else ("day" if stage in ("screening", "deep_candidates") else f"day:{stage}")
+
+    def budget_explain(self) -> dict:
+        """Why the autopilot may be paused on the daily budget: today's use and caps per stage, the owner's ceiling, and for the cheapest queued
+        study the first constraint it breaks. Read-only; it counts evaluations (trials), NOT tokens."""
+        caps, used = self.rbudget.caps(), self.rbudget.used()
+        out = {"day": self.rbudget.day(), "unit": "valutazioni di test (trial), non token", "caps": caps, "used": used, "overage_allowed": self.rbudget.overage_allowed(),
+               "owner_ceiling_per_day": self.ap["max_trials_per_day"], "deep_today": self.registry.deep_candidates_on(self.rbudget.day()),
+               "total_registered": self.registry.n_trials, "total_cap": self.ap["max_trials_total"], "queued": []}
+        with self.lock:
+            items = list(self.pending.items())
+        for sid, v in items[:200]:
+            sp = v["spec"]
+            plan = planned_units(sp, self.rbudget.cfg)
+            br = next(((st, used[st], plan[st], caps[st]) for st in ("screening", "validation", "robustness", "audit") if used[st] + plan[st] > caps[st] + out["overage_allowed"]), None)
+            if br is None and used["screening"] + sp.n_candidates > self.ap["max_trials_per_day"]:
+                br = ("screening(ceiling)", used["screening"], sp.n_candidates, self.ap["max_trials_per_day"])
+            if br is None and out["deep_today"] >= caps["deep_candidates"]:
+                br = ("deep_candidates", out["deep_today"], 1, caps["deep_candidates"])
+            out["queued"].append({"name": sp.name, "candidates": sp.n_candidates, "blocked_by": None if br is None else {"stage": br[0], "used": br[1], "needs": br[2], "cap": br[3]}})
+        out["queued"].sort(key=lambda r: (r["blocked_by"] is not None, r["candidates"]))
+        out["queued"] = out["queued"][:12]
+        if self.registry.n_trials >= self.ap["max_trials_total"]:
+            out["total_reached"] = True
+        return out
 
     def autopilot_tick(self) -> bool:
         """One step of the autonomous cycle. Deterministic rules still decide every verdict: the
@@ -1119,7 +1144,7 @@ class Lab:
         phase = ("off" if not enabled else "paused" if self.ap.get("paused") else "testing" if running
                  else "budget" if bm in ("paused_day", "paused_weekend", "blocked") and not self.pending
                  else "researching" if self.busy["research"] > 0 else "waiting")
-        return {"enabled": enabled, "phase": phase, "paused": self.ap.get("paused"),
+        return {"enabled": enabled, "phase": phase, "paused": self.ap.get("paused"), "paused_info": self.budget_explain() if self.ap.get("paused") else None,
                 "trials_today": self.ap["trials_today"], "max_trials_per_day": self.ap["max_trials_per_day"],
                 "max_trials_total": self.ap["max_trials_total"], "queue": len(self.pending),
                 "next_search": nxt, "searching": self._scout_running, "working": sorted(self.working_agents()),

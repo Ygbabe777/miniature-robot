@@ -288,3 +288,13 @@ def test_dsr_counts_the_looks_at_the_unseen_block_not_every_trial_ever_registere
     assert rc.get()["dsr_trials"] == "locked_looks"
     # the threshold itself did not move
     assert JG.DEFAULTS["confidence"] == 0.95 and rc.get()["judge"]["confidence"] == 0.95
+
+
+def test_budget_explain_names_the_binding_constraint_in_trials_not_tokens(tmp_path):
+    from ofo.app.lab import Lab
+    from test_research import synth
+    p = tmp_path / "NQ.csv.gz"; synth(n_sessions=60, seed=3).to_csv(p, compression="gzip")
+    lab = Lab(str(p), data_dir=str(tmp_path / "data"), ideas_dir=str(tmp_path / "ideas"))
+    e = lab.budget_explain()
+    assert "non token" in e["unit"] and e["used"]["screening"] == 0 and e["caps"]["screening"] == 1000
+    assert "budget" in lab.diag()
