@@ -147,6 +147,7 @@ class Lab:
             saved = json.loads(self.ap_file.read_text(encoding="utf-8", errors="ofo_legacy"))
             if saved.get("v", 1) < 2:                 # v1 capped at 4000/day: queued strategies sat there for hours
                 saved.pop("max_trials_per_day", None); saved.pop("max_trials_total", None)
+            saved.pop("paused", None)                  # a pause is a live condition, never a saved one: yesterday's budget must not block today
             self.ap.update(saved)
             self.ap["v"] = 2
         self.ap_first_run = first
@@ -819,7 +820,7 @@ class Lab:
 
     # -- Autopilot: search, test, judge and report without asking ---------------------------
     def _save_ap(self) -> None:
-        self.ap_file.write_text(json.dumps(self.ap, indent=1), encoding="utf-8")
+        self.ap_file.write_text(json.dumps({k: v for k, v in self.ap.items() if k != "paused"}, indent=1), encoding="utf-8")
 
     def set_autopilot(self, enabled: bool | None = None, max_trials_per_day: int | None = None) -> dict:
         if enabled is not None:
@@ -881,6 +882,7 @@ class Lab:
             self._refill()                             # nothing waiting: seed starters, then brainstorm
             queue = waiting()
         if not queue:
+            self.ap["paused"] = None                   # nothing is waiting, so nothing is blocked
             return False
         # first strategy that FITS the budget, in the order of the family allocator: one huge proposal must not block the small ones
         why = "day"

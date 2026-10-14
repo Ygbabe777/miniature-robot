@@ -298,3 +298,16 @@ def test_budget_explain_names_the_binding_constraint_in_trials_not_tokens(tmp_pa
     e = lab.budget_explain()
     assert "non token" in e["unit"] and e["used"]["screening"] == 0 and e["caps"]["screening"] == 1000
     assert "budget" in lab.diag()
+
+
+def test_yesterdays_budget_pause_is_not_restored_on_restart(tmp_path):
+    import json
+    from ofo.app.lab import Lab
+    from test_research import synth
+    p = tmp_path / "NQ.csv.gz"; synth(n_sessions=60, seed=3).to_csv(p, compression="gzip")
+    d = tmp_path / "data"; d.mkdir()
+    (d / "autopilot.json").write_text(json.dumps({"v": 2, "enabled": True, "paused": "day", "day": "2020-01-01"}), encoding="utf-8")
+    lab = Lab(str(p), data_dir=str(d), ideas_dir=str(tmp_path / "ideas"))
+    assert not lab.ap.get("paused") and lab.autopilot_state()["paused"] is None
+    lab.ap["paused"] = "day"; lab._save_ap()
+    assert "paused" not in json.loads((d / "autopilot.json").read_text(encoding="utf-8"))
