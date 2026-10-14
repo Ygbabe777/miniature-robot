@@ -57,7 +57,7 @@ class Scout:
         self.source_defaults = dict(source_defaults or {})
         self.use_s2, self.queries_per_run, self.max_picks, self.use_ssrn = use_semantic_scholar, queries_per_run, max_picks, use_ssrn
         self.file = self.dir / "scout_state.json"
-        self.state = json.loads(self.file.read_text(encoding="utf-8")) if self.file.exists() else {}
+        self.state = json.loads(self.file.read_text(encoding="utf-8", errors="ofo_legacy")) if self.file.exists() else {}
         self.state.setdefault("queries", {}); self.state.setdefault("papers", {})
         self.state.setdefault("auto", {"enabled": False, "minutes": 60}); self.state.setdefault("last_run", None)
         self.state.setdefault("extra_topics", [])

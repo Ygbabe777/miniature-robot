@@ -68,7 +68,7 @@ def load(path: str | Path | None = None) -> dict:
     cfg = _default()
     raw = ""
     if p.exists():
-        raw = p.read_text(encoding="utf-8-sig")
+        raw = p.read_text(encoding="utf-8-sig", errors="ofo_legacy")
         try:
             cfg = _merge(cfg, json.loads(raw))
         except ValueError as e:

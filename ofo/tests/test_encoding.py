@@ -30,3 +30,11 @@ def test_a_slow_ai_call_never_holds_the_study_longer_than_the_deadline():
     assert time.time() - t < 2
     with pytest.raises(ValueError):
         _bounded(lambda: (_ for _ in ()).throw(ValueError("x")), 5)
+
+
+def test_files_written_by_earlier_windows_versions_in_cp1252_still_load(tmp_path):
+    import json
+    import ofo  # noqa: F401  (registers the 'ofo_legacy' error handler)
+    f = tmp_path / "old.json"
+    f.write_bytes(json.dumps({"t": "perché è già così"}, ensure_ascii=False).encode("cp1252"))
+    assert json.loads(f.read_text(encoding="utf-8", errors="ofo_legacy"))["t"] == "perché è già così"

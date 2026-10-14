@@ -87,7 +87,7 @@ def write_note(path: Path, front: dict, body: str, notes_title: str) -> bool:
     if path.exists() and END not in path.read_text(encoding="utf-8", errors="replace"):
         return False                                    # not our file (or the marker was deleted): leave it alone
     out = render({"ofo_generated": True, **front}, body, read_kept(path), notes_title)
-    if path.exists() and path.read_text(encoding="utf-8") == out:
+    if path.exists() and path.read_text(encoding="utf-8", errors="ofo_legacy") == out:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(out, encoding="utf-8")

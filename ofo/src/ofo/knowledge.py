@@ -60,7 +60,7 @@ def build(studies: list[dict], papers: dict, specs_dir: Path, notes: dict | None
     by_file, strat_file = {}, {}
     for f in sorted(Path(specs_dir).glob("*.json")) if Path(specs_dir).exists() else []:
         try:
-            d = json.loads(f.read_text(encoding="utf-8"))
+            d = json.loads(f.read_text(encoding="utf-8", errors="ofo_legacy"))
         except ValueError:
             continue
         by_file[f.stem] = clean_concepts(d.get("concepts"))

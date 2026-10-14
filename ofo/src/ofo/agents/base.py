@@ -15,7 +15,7 @@ class AgentError(RuntimeError):
 
 
 def load_prompt(name: str, **subs: str) -> str:
-    text = (PROMPT_DIR / f"{name}.md").read_text(encoding="utf-8")
+    text = (PROMPT_DIR / f"{name}.md").read_text(encoding="utf-8", errors="ofo_legacy")
     for k, v in subs.items():
         text = text.replace("{{" + k + "}}", v)
     if "{{" in text:

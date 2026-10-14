@@ -45,7 +45,7 @@ class ModelPool:
         self.fails: dict[str, int] = {}
         self.rr: dict[str, int] = {}
         today = dt.date.today().isoformat()
-        led = json.loads(self.ledger_path.read_text(encoding="utf-8")) if self.ledger_path.exists() else {}
+        led = json.loads(self.ledger_path.read_text(encoding="utf-8", errors="ofo_legacy")) if self.ledger_path.exists() else {}
         self.calls: list[list] = [c for c in led.get("calls", []) if c[0] > self.now() - 3600]
         self.ledger = led if led.get("date") == today else {"date": today, "models": {}, "roles": {}}
 
@@ -121,7 +121,7 @@ class ModelPool:
     def chat(self, role: str, messages: list[dict], temperature: float = 0.2, **extra) -> str:
         cp = self._cache_path(role, messages, temperature)
         if cp is not None and cp.exists():
-            return json.loads(cp.read_text(encoding="utf-8"))["content"]
+            return json.loads(cp.read_text(encoding="utf-8", errors="ofo_legacy"))["content"]
         cap = self.budget.get(role)
         if cap is not None and self.tokens_today(role) >= cap:
             raise BudgetExceeded(f"role {role!r} used its daily budget of {cap} tokens")
@@ -182,11 +182,11 @@ def build_pool(config_path: str | Path, ledger_path="data/llm_usage.json", cache
                budget_state="data/budget.json"):
     """config/llm.json: {"roles": {"researcher": [models], "planner": [...], "auditor": [...]},
     "daily_token_budget": {"researcher": 300000}, "cooldown_seconds": 30}. Keys stay in env vars."""
-    cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    cfg = json.loads(Path(config_path).read_text(encoding="utf-8", errors="ofo_legacy"))
     bcfg = cfg.get("budget")
     bfile = Path(config_path).with_name("budget.json")          # config/budget.json: weekly dollars, prices, remaining balance
     if bcfg is None and bfile.exists():
-        bcfg = json.loads(bfile.read_text(encoding="utf-8"))
+        bcfg = json.loads(bfile.read_text(encoding="utf-8", errors="ofo_legacy"))
     from ..budget import BudgetGovernor
     governor = BudgetGovernor(budget_state, bcfg) if bcfg is not None else None
     pool = ModelPool(LLMClient(), cfg["roles"], ledger_path, cache_dir, cfg.get("daily_token_budget"), governor=governor,

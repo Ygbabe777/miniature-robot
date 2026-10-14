@@ -316,7 +316,7 @@ def config_problem(path: str | Path | None) -> str:
     if not path or not Path(path).exists():
         return ""
     try:
-        user = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        user = json.loads(Path(path).read_text(encoding="utf-8-sig", errors="ofo_legacy"))
         return "" if isinstance(user, dict) else "the file must contain a JSON object { ... }"
     except ValueError as e:
         return f"config/sources.json is not valid JSON ({e}). Use lowercase true/false, double quotes, no trailing commas."
@@ -325,7 +325,7 @@ def config_problem(path: str | Path | None) -> str:
 def load_config(path: str | Path | None) -> dict:
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     if path and Path(path).exists() and not config_problem(path):
-        user = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        user = json.loads(Path(path).read_text(encoding="utf-8-sig", errors="ofo_legacy"))
         cfg["channels"].update(user.get("channels", {}))
         if user.get("rss_feeds") is not None:
             cfg["rss_feeds"] = user["rss_feeds"]

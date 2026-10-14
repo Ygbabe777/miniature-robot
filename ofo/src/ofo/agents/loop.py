@@ -77,7 +77,7 @@ class ResearchLoop:
         self.work.mkdir(parents=True, exist_ok=True)
         self.market = market                 # which market this loop tests on (report["market"])
         self.state_file = self.work / state_name
-        st = json.loads(self.state_file.read_text(encoding="utf-8")) if self.state_file.exists() else {}
+        st = json.loads(self.state_file.read_text(encoding="utf-8", errors="ofo_legacy")) if self.state_file.exists() else {}
         self.processed_ideas: set = set(st.get("processed_ideas", []))
         self.done_specs: set = set(st.get("done_specs", []))
         self.queue: list[tuple[StrategySpec, int]] = []
@@ -114,7 +114,7 @@ class ResearchLoop:
             meta = p.with_suffix(".meta.json")
             if meta.exists():
                 try:
-                    m = json.loads(meta.read_text(encoding="utf-8")); source = f"{m.get('title', p.name)} ({m.get('url', '')})"
+                    m = json.loads(meta.read_text(encoding="utf-8", errors="ofo_legacy")); source = f"{m.get('title', p.name)} ({m.get('url', '')})"
                 except ValueError:
                     pass
             self.events.emit("researcher", "reading", f"reading {p.name}")

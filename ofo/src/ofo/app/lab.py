@@ -144,7 +144,7 @@ class Lab:
         first = not self.ap_file.exists()
         self.ap = {"v": 2, "markets": None, "enabled": True, "max_trials_per_day": 30000, "max_trials_total": 300000, "day": "", "trials_today": 0}
         if not first:
-            saved = json.loads(self.ap_file.read_text(encoding="utf-8"))
+            saved = json.loads(self.ap_file.read_text(encoding="utf-8", errors="ofo_legacy"))
             if saved.get("v", 1) < 2:                 # v1 capped at 4000/day: queued strategies sat there for hours
                 saved.pop("max_trials_per_day", None); saved.pop("max_trials_total", None)
             self.ap.update(saved)
@@ -155,7 +155,7 @@ class Lab:
         self.directives = Directives(self.data / "directives.json")
         self.obs = {"vault": os.environ.get("OFO_OBSIDIAN_VAULT") or "", "last": None, "error": None}
         if self.obs_file.exists() and not self.obs["vault"]:
-            self.obs["vault"] = json.loads(self.obs_file.read_text(encoding="utf-8")).get("vault", "")
+            self.obs["vault"] = json.loads(self.obs_file.read_text(encoding="utf-8", errors="ofo_legacy")).get("vault", "")
         self.deployments = dep.Store(self.data / "deployments.json")
         self.busy["forward"] = 0
         self._last_forward = 0.0
@@ -259,7 +259,7 @@ class Lab:
         if not self.queue_file.exists():
             return
         try:
-            d = json.loads(self.queue_file.read_text(encoding="utf-8"))
+            d = json.loads(self.queue_file.read_text(encoding="utf-8", errors="ofo_legacy"))
         except ValueError:
             return
         for it in d.get("pending", []) + d.get("running", []):
@@ -395,7 +395,7 @@ class Lab:
         return res
 
     def _save_request(self, req: dict, message: str) -> None:
-        cur = json.loads(self.requests_file.read_text(encoding="utf-8")) if self.requests_file.exists() else []
+        cur = json.loads(self.requests_file.read_text(encoding="utf-8", errors="ofo_legacy")) if self.requests_file.exists() else []
         cur.append({**req, "asked": message[:300], "when": time.strftime("%Y-%m-%d %H:%M")})
         self.requests_file.write_text(json.dumps(cur, indent=1, ensure_ascii=False), encoding="utf-8")
 
@@ -812,7 +812,7 @@ class Lab:
         done = self._loop_obj.processed_ideas if self._loop_obj else set()
         if self._loop_obj is None:
             f = self.work / "loop_state.json"
-            done = set(json.loads(f.read_text(encoding="utf-8")).get("processed_ideas", [])) if f.exists() else set()
+            done = set(json.loads(f.read_text(encoding="utf-8", errors="ofo_legacy")).get("processed_ideas", [])) if f.exists() else set()
         dirs = [self.ideas] + ([self._vault_ideas()] if self._vault_ideas() else [])
         return any(hashlib.sha256(p.read_bytes()).hexdigest() not in done for d in dirs for p in d.rglob("*")
                    if p.is_file() and p.suffix.lower() in IDEA_SUFFIXES and not p.name.startswith("_"))
@@ -914,7 +914,7 @@ class Lab:
                 f = base / fn
                 if not f.exists():
                     continue
-                for d in json.loads(f.read_text(encoding="utf-8")).get("strategies", []):
+                for d in json.loads(f.read_text(encoding="utf-8", errors="ofo_legacy")).get("strategies", []):
                     try:
                         sp = from_dict(d)
                     except Exception:
@@ -1084,7 +1084,7 @@ class Lab:
         notes = self._vault_notes()
         g = self.knowledge_graph(notes)
         f = self.data / "connections.json"
-        done = set(json.loads(f.read_text(encoding="utf-8"))) if f.exists() else set()
+        done = set(json.loads(f.read_text(encoding="utf-8", errors="ofo_legacy"))) if f.exists() else set()
         cands = knowledge.connection_candidates(g, obsidian.owner_pairs(notes), done, n=1)
         if not cands:
             return 0
@@ -1184,7 +1184,7 @@ class Lab:
 
     def decisions(self) -> dict:
         f = self.data / "decisions.json"
-        return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        return json.loads(f.read_text(encoding="utf-8", errors="ofo_legacy")) if f.exists() else {}
 
     def decide(self, slug: str, decision: str, note: str = "") -> dict:
         """The owner's decision on an approved strategy. 'live' means YOU will trade it (OFO never sends orders): it keeps its paper
@@ -1311,7 +1311,7 @@ class Lab:
         dec, out = self.decisions(), []
         for f in sorted(self._fasc_dir().glob("*.json")):
             try:
-                x = json.loads(f.read_text(encoding="utf-8"))
+                x = json.loads(f.read_text(encoding="utf-8", errors="ofo_legacy"))
             except ValueError:
                 continue
             if x.get("stato") != "APPROVED":
@@ -1325,7 +1325,7 @@ class Lab:
         f = self._fasc_dir() / f"{slugify(slug)}.json"
         if not f.exists():
             return None
-        x = json.loads(f.read_text(encoding="utf-8"))
+        x = json.loads(f.read_text(encoding="utf-8", errors="ofo_legacy"))
         x["decisione"] = self.decisions().get(x["slug"])
         dp = self.deployments.get(x["slug"]) or {}
         fw = (dp.get("forward") or {})
@@ -1496,7 +1496,7 @@ class Lab:
         out = []
         for f in sorted(self.dossier_dir.glob("*.json"), reverse=True):
             try:
-                out.append(json.loads(f.read_text(encoding="utf-8")))
+                out.append(json.loads(f.read_text(encoding="utf-8", errors="ofo_legacy")))
             except ValueError:
                 continue
         return out
@@ -1599,7 +1599,7 @@ class Lab:
                     m = (self.ideas / p["file"]).with_suffix(".meta.json")
                     if m.exists():
                         try:
-                            q["abstract"] = json.loads(m.read_text(encoding="utf-8")).get("abstract", "")
+                            q["abstract"] = json.loads(m.read_text(encoding="utf-8", errors="ofo_legacy")).get("abstract", "")
                         except ValueError:
                             pass
                 papers[pid] = q
@@ -1707,7 +1707,7 @@ class Lab:
         n = 0
         for f in sorted((self.work / "specs_auto").glob("*.json")) if (self.work / "specs_auto").exists() else []:
             try:
-                for d in json.loads(f.read_text(encoding="utf-8")).get("strategies", []):
+                for d in json.loads(f.read_text(encoding="utf-8", errors="ofo_legacy")).get("strategies", []):
                     n += self._add_pending_all(from_dict(d), "paper")
             except Exception:
                 continue
@@ -1770,7 +1770,7 @@ class Lab:
                               "read": h in processed})
         items = list(self.pending.items())             # a plain copy, no lock: the page must answer even if something holds the lab lock
         pending = [spec_summary(i, v["spec"], v["origin"], self.registry.n_trials, v.get("market")) for i, v in items]
-        reqs = json.loads(self.requests_file.read_text(encoding="utf-8")) if self.requests_file.exists() else []
+        reqs = json.loads(self.requests_file.read_text(encoding="utf-8", errors="ofo_legacy")) if self.requests_file.exists() else []
         return {"trials": self.registry.n_trials, "locked_looks": self.registry.data["locked_looks"],
                 "calls_last_hour": self.pool.calls_last_hour() if self.pool else None,
                 "calls_per_hour": self.pool.calls_per_hour if self.pool else None,

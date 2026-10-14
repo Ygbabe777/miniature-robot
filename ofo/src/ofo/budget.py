@@ -52,7 +52,7 @@ class BudgetGovernor:
         self.path = Path(state_path)
         self.now = now
         self.cfg = {**DEFAULTS, **(config or {})}
-        self.s = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {}
+        self.s = json.loads(self.path.read_text(encoding="utf-8", errors="ofo_legacy")) if self.path.exists() else {}
         self.s.setdefault("usage", {})
         self.s.setdefault("usd_total", 0.0)
         self.s.setdefault("calibrated", None)

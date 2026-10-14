@@ -110,7 +110,7 @@ def load_rulesets(directory: str | Path = "rules/rulesets") -> dict[str, Ruleset
     out = {}
     for p in sorted(Path(directory).glob("*.json")):
         try:
-            r = from_dict(json.loads(p.read_text(encoding="utf-8-sig")))
+            r = from_dict(json.loads(p.read_text(encoding="utf-8-sig", errors="ofo_legacy")))
             out[r.id] = r
         except (ValueError, KeyError, TypeError):
             continue                                  # a malformed file never stops the lab
@@ -125,7 +125,7 @@ def load_farming_config(path: str | Path = "rules/farming.json") -> dict:
                          "stress_npfv_min": 0.0, "max_es5_to_cost": 3.0},
                "forward": {"min_days": 20}, "payout_policies": ["A", "B", "C"]}
     try:
-        user = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        user = json.loads(Path(path).read_text(encoding="utf-8-sig", errors="ofo_legacy"))
     except (OSError, ValueError):
         return default
     cfg = {**default, **{k: v for k, v in user.items() if not k.startswith("_")}}

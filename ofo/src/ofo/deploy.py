@@ -88,7 +88,7 @@ class SignalLog:
         self.path = Path(path)
         self.records = []
         if self.path.exists():
-            for line in self.path.read_text(encoding="utf-8").splitlines():
+            for line in self.path.read_text(encoding="utf-8", errors="ofo_legacy").splitlines():
                 if line.strip():
                     self.records.append(json.loads(line))
 
@@ -207,7 +207,7 @@ def new_signals(bars: pd.DataFrame, dep: dict, contract, base_contracts: int) ->
 class Store:
     def __init__(self, path: Path):
         self.path = Path(path)
-        self.d = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {"items": [], "data": {}}
+        self.d = json.loads(self.path.read_text(encoding="utf-8", errors="ofo_legacy")) if self.path.exists() else {"items": [], "data": {}}
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

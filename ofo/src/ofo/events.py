@@ -51,7 +51,7 @@ class EventLog:
         """The last n events without parsing a log that may have grown for months."""
         if not self.path.exists():
             return []
-        lines = self.path.read_text(encoding="utf-8").splitlines()[-n:]
+        lines = self.path.read_text(encoding="utf-8", errors="ofo_legacy").splitlines()[-n:]
         out = []
         for x in lines:
             try:
