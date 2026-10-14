@@ -690,7 +690,7 @@ class Lab:
             threads.append({"name": t.name, "alive": t.is_alive(), "where": list(reversed(where))})
         return {"build": BUILD, "lab_lock_held": self.lock.locked(), "engine_lock_held": self.run_lock.locked(), "holder": self._holder,
                 "busy": dict(self.busy), "jobs": [{k: v for k, v in j.items() if not k.startswith("_")} for j in list(self.jobs.values())[-10:]],
-                "pending": len(self.pending), "budget": self.budget_explain(), "threads": threads}
+                "pending": len(self.pending), "budget": self.budget_explain(), "hypothesis": self.hypothesis_status(), "ai": not isinstance(self.llm, NoLLM), "threads": threads}
 
     STUCK_AFTER_S = 20
 
