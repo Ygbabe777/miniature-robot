@@ -78,7 +78,8 @@ def test_3_exact_and_near_duplicates_are_not_rerun(tmp_path):
     assert lab._add_pending_all(near, "paper") == 1
     very_near = from_dict({**SPEC, "name": "A tweak", "ranges": {"lookback": [10, 20, 30, 40, 60, 70]}})    # 5 of 6 shared = 0.83 >= 0.8
     assert lab._add_pending_all(very_near, "paper") == 0
-    assert lab.registry.counter("duplicates_exact") == 1 and lab.registry.counter("duplicates_near") == 1
+    assert lab.registry.counter("dedup_exact") == 1 and lab.registry.counter("dedup_near") == 1               # unique decisions; the legacy counters are no longer bumped
+    assert lab.registry.counter("duplicates_exact") == 0 and lab.registry.counter("duplicates_near") == 0
     reg = TrialRegistry(tmp_path / "x.db")
     bars = synth(n_sessions=200, seed=4)
     run_study(bars, from_dict(SPEC), MNQ, PRESETS["50k"], reg, dedupe=True)

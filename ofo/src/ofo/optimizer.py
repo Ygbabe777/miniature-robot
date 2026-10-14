@@ -774,6 +774,8 @@ def _run_study(bars: pd.DataFrame, spec: StrategySpec, contract: Contract, rules
             except (FIN.BlockFull, FIN.LineageBlocked) as e:
                 kind = "lineage" if isinstance(e, FIN.LineageBlocked) else "block_full"
                 report["shelved"] = {"kind": kind, "reason": str(e), "epoch": epoch}
+                if kind == "block_full":
+                    registry.bump(f"shelved_block_full:{epoch['id']}", 1)
                 report["gate_failed"] = "finalist_slot"
                 report["locked"] = {"status": "INSUFFICIENT_EVIDENCE", "reason": f"blocco hidden non disponibile ({kind}): {e}; il blocco non è stato toccato"}
                 stages.end(2, "registro dei finalisti: nessuno slot", False)

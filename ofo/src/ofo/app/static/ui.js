@@ -198,9 +198,11 @@
     const mins = a.next_search ? Math.max(0, Math.round((a.next_search - Date.now() / 1000) / 60)) : null;
     const bits = [t('ap_phase_' + a.phase), t('ap_budget', { a: a.trials_today, b: a.max_trials_per_day }), t('ap_queue', { n: a.queue }), t('ap_ready', { n: a.ready })];
     if (a.searching) bits.push(t('ap_searching')); else if (mins !== null && a.enabled) bits.push(t('ap_next', { m: mins }));
-    const key = JSON.stringify([a.enabled, bits, a.paused, LANG, a.markets]);
+    const ws = a.work_state || {};
+    const key = JSON.stringify([a.enabled, bits, a.paused, LANG, a.markets, ws.state, ws.why]);
     if (key === apKey) return; apKey = key;
     $('#autopilot').innerHTML = `<div class="${a.enabled ? 'apon' : 'apoff'}">${a.enabled ? t('ap_on') : t('ap_off')}</div><div class="apm">${bits.join(' · ')}</div>`
+      + (ws.state && ws.state !== 'ACTIVE' ? `<div class="apm"><b>${esc(ws.state)}</b> — ${esc(ws.why || '')}</div>` : '')
       + (a.paused ? `<div class="apoff">${t('ap_paused_' + a.paused)}${budgetWhy(a.paused_info)}</div>` : '')
       + (a.markets && a.markets.length > 1 ? `<div class="apm"><b>${t('mk_title')}</b>${a.markets.map(m => `<label style="display:block"><input type="checkbox" class="mk-on" value="${m.sym}" ${m.enabled ? 'checked' : ''}> ${esc(m.name)} (${m.mini}/${m.micro})</label>`).join('')}</div>` : '')
       + `<button class="btn small" id="ap-toggle">${a.enabled ? t('ap_toggle_off') : t('ap_toggle_on')}</button><div class="apn">${t('ap_note')}</div>`;

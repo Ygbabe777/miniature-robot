@@ -138,6 +138,8 @@ def make_server(lab, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTP
                     return self._json(lab.tell_researcher(str(data.get("text", "")), data.get("kind")))
                 if u.path == "/api/directives/remove":
                     return self._json(lab.forget_directive(str(data.get("id", ""))))
+                if u.path == "/api/dedup/invalidate":
+                    return self._json(lab.invalidate_dedup(data.get("market")))
                 if u.path == "/api/epoch/open":
                     return self._json(lab.open_epoch())
                 if u.path == "/api/promote":

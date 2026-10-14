@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .. import dedup as DD
 from .. import evidence as EV
 from .. import judges as JG
 from .. import BUILD
@@ -127,6 +128,10 @@ class Lab:
         self.registry = TrialRegistry(self.data / "registry.json")
         self.registry.recover_stale()                  # studies that were running when the process died: failed, re-runnable, trials kept
         self.rbudget = ResearchBudget(self.registry)
+        self.dedup = DD.DedupMemory(self.registry)                # persistent memory of deduplication decisions (survives restarts)
+        self._research_calls = {k: {"n": 0, "last": None, "result": None} for k in ("hypothesize", "brainstorm", "connect_ideas")}
+        self._llm_error = None                                     # (time, text) of the last LLM-provider failure of the Researcher, cleared by the next success
+        self._ws_last = None
         self.pending: dict[str, dict] = {}
         self._running_specs: dict[str, dict] = {}
         self._holder: dict | None = None                       # who holds the engine right now (a study or a review), for the UI
@@ -277,36 +282,54 @@ class Lab:
             except Exception:
                 continue
 
-    def near_duplicate(self, spec: StrategySpec, market: str | None = None, threshold: float = 0.8) -> str | None:
+    NEAR_THRESHOLD = 0.8
+
+    def near_duplicate_info(self, spec: StrategySpec, market: str | None = None, threshold: float | None = None) -> dict | None:
         """An economically almost equivalent hypothesis: same template, same timeframes and parameter ranges overlapping >= threshold
-        with something already tested or queued. Returns what it duplicates (a name) or None."""
+        with something already tested or queued. Returns {name, fp, where} of what it duplicates, or None. Always computed against the CURRENT state."""
+        threshold = self.NEAR_THRESHOLD if threshold is None else threshold
+
         def same(rng, tfs, tmpl):
             return tmpl == spec.template and set(tfs or []) == set(spec.timeframes) and spec_overlap(rng, spec.ranges) >= threshold
         for v in list(self.pending.values()):
             if (v.get("market") or self.primary) == (market or self.primary) and v["spec"] is not spec and \
                     same(v["spec"].ranges, v["spec"].timeframes, v["spec"].template):
-                return v["spec"].name
+                return {"name": v["spec"].name, "fp": DD.equivalent_fp(v["spec"].template, v["spec"].timeframes, v["spec"].ranges), "where": "queued"}
         for r in self.registry.study_rows(500):
             d = r.get("details") or {}
             if r["status"] in ("completed", "early_stopped") and (r.get("market") or self.primary) == (market or self.primary) and \
                     same(d.get("ranges"), d.get("timeframes"), d.get("template")):
-                return r["label"].removeprefix("study:")
+                return {"name": r["label"].removeprefix("study:"), "fp": DD.equivalent_fp(d.get("template"), d.get("timeframes"), d.get("ranges")), "where": "done"}
         return None
+
+    def near_duplicate(self, spec: StrategySpec, market: str | None = None, threshold: float = 0.8) -> str | None:
+        info = self.near_duplicate_info(spec, market, threshold)
+        return info["name"] if info else None
+
+    def _note_dup(self, market: str, spec: StrategySpec, spec_fp: str, kind: str, equivalent: str, equivalent_name: str, origin: str) -> bool:
+        """Record a deduplication decision ONCE. Only a new decision is announced and counted; the same decision met again by polling is silent."""
+        new = self.dedup.record(market, spec_fp, DD.rule_version(self.NEAR_THRESHOLD), kind, equivalent, spec.name, equivalent_name, origin)
+        if new:
+            self.registry.bump("dedup_exact" if kind == "exact" else "dedup_near", 1)            # reliable counters: unique decisions
+            if kind == "near":                                  # an exact duplicate is only counted (as before); a near-equivalent one is worth one event
+                self.events.emit("lab", "duplicate", f"{spec.name}: quasi equivalente a «{equivalent_name}», non rieseguita")
+        return new
 
     def _add_pending_all(self, spec: StrategySpec, origin: str) -> int:
         """Queue a strategy once per market (skipping what that market already tested or has queued): the lab learns
-        on which index each idea works. Returns how many queue entries were added."""
+        on which index each idea works. Returns how many queue entries were added. Dropping a duplicate is a DECISION, recorded once."""
         n = 0
         fp = _fingerprint(spec)
         for m in self.enabled_markets():
             queued = any(v.get("market") == m and _fingerprint(v["spec"]) == fp for v in self.pending.values())
             if fp in self.loop(m).done_specs or queued:
-                self.registry.note_duplicate("duplicates_exact")
+                if queued and origin == "starter":              # the seed scan meeting its own queued starter is not a decision
+                    continue
+                self._note_dup(m, spec, fp, "exact", ("queued:" if queued else "done:") + fp, spec.name, origin)
                 continue
-            near = self.near_duplicate(spec, m)
+            near = self.near_duplicate_info(spec, m)
             if near:                                           # same idea, cosmetically different: do not spend budget twice
-                self.registry.note_duplicate("duplicates_near")
-                self.events.emit("lab", "duplicate", f"{spec.name}: quasi equivalente a «{near}», non rieseguita")
+                self._note_dup(m, spec, fp, "near", near["where"] + ":" + near["fp"], near["name"], origin)
                 continue
             self._add_pending(spec, origin, m)
             n += 1
@@ -509,6 +532,9 @@ class Lab:
                 shutil.copyfile(f, hist / f"{f.stem}.{stamp}.json")
         n = int(rep.get("retest_no", 0)) + 1
         market = self.market_of(rep)
+        eq = DD.equivalent_fp(spec.template, spec.timeframes, spec.ranges)
+        for kind_ in ("queued", "done"):
+            self.dedup.invalidate(equivalent=f"{kind_}:{eq}")                               # an authorised retest also releases what was dropped for being equivalent to it
         sid = self._add_pending(spec, "retest", market, retest_no=n)["id"]
         self.events.emit("lab", "retest", f"ritest n.{n} di «{spec.name}»: nuovo esperimento, nuovo sguardo al blocco bloccato (contato)")
         job = self.start(sid)
@@ -698,7 +724,7 @@ class Lab:
             threads.append({"name": t.name, "alive": t.is_alive(), "where": list(reversed(where))})
         return {"build": BUILD, "lab_lock_held": self.lock.locked(), "engine_lock_held": self.run_lock.locked(), "holder": self._holder,
                 "busy": dict(self.busy), "jobs": [{k: v for k, v in j.items() if not k.startswith("_")} for j in list(self.jobs.values())[-10:]],
-                "pending": len(self.pending), "budget": self._bounded_view(self.budget_explain), "hypothesis": self._bounded_view(self.hypothesis_status), "ai": not isinstance(self.llm, NoLLM), "threads": threads}
+                "pending": len(self.pending), "budget": self._bounded_view(self.budget_explain), "hypothesis": self._bounded_view(self.hypothesis_status), "research": self._bounded_view(self.research_diag, 2.5), "ai": not isinstance(self.llm, NoLLM), "threads": threads}
 
     @staticmethod
     def _bounded_view(fn, seconds: float = 1.5):
@@ -782,7 +808,10 @@ class Lab:
                                      for f in sorted(set(list(fams) + list(usage_f)))},
                 "stage_usage": usage_s, "stage_flow": stage_flow, "elimination_by_gate": gates.most_common(10),
                 "mean_cost_per_test_s": round(compute / evals, 3) if evals else None, "mean_study_s": round(compute / max(1, len([r for r in rows if r["compute_s"]])), 1),
-                "duplicates_avoided": {"exact": self.registry.counter("duplicates_exact"), "near": self.registry.counter("duplicates_near")},
+                "duplicates_avoided": {"exact": self.registry.counter("dedup_exact"), "near": self.registry.counter("dedup_near"),
+                                       "legacy_exact": self.registry.counter("duplicates_exact"), "legacy_near": self.registry.counter("duplicates_near"),
+                                       "repeats_suppressed": dict(self.dedup.suppressed),
+                                       "note": "exact/near = decisioni di deduplicazione UNICHE (affidabili, da questa versione); legacy_* = vecchi contatori incrementati a ogni polling, gonfiati e non più aggiornati"},
                 "promising": promising[:10], "recurring_negatives": negs.most_common(8),
                 "in_queue": len(self.pending), "running": len(self._running_specs), "in_paper": sum(1 for x in self.deployments.d["items"] if x.get("status") in ("live", "confirmed")),
                 "approved": sum(1 for x in studies if x.get("status") == "APPROVED"),
@@ -857,6 +886,86 @@ class Lab:
         self._budget_detail = detail
         return None if ok else ("day" if stage in ("screening", "deep_candidates") else f"day:{stage}")
 
+    # -- what the lab is doing when there is nothing to test ------------------------------------
+    WORK_STATES = ("ACTIVE", "IDLE", "WAITING_RESEARCH", "RESEARCH_RUNNING", "RESEARCH_BLOCKED", "EPOCH_WAITING", "NO_NEW_HYPOTHESES")
+
+    def work_state(self) -> dict:
+        """The REAL reason the lab has (or has not) work, from backend conditions only. Nothing is invented to avoid IDLE."""
+        now = time.time()
+        if any(j["status"] in ("queued", "running") for j in list(self.jobs.values())) or self.pending:
+            return {"state": "ACTIVE", "why": "test in corso o in coda"}
+        if getattr(self, "_hyp_running", False) or self._scout_running or self.busy["research"] > 0 or self.busy.get("hypo", 0) > 0:
+            return {"state": "RESEARCH_RUNNING", "why": "il Researcher sta cercando fonti o sviluppando ipotesi"}
+        if isinstance(self.llm, NoLLM):
+            return {"state": "RESEARCH_BLOCKED", "why": "nessuna AI configurata (chiave mancante)"}
+        err = self._llm_error
+        if err and now - err[0] < 1800:
+            return {"state": "RESEARCH_BLOCKED", "why": f"errore del provider LLM: {err[1]}"}
+        try:
+            if not self.llm_allowed("researcher"):
+                return {"state": "RESEARCH_BLOCKED", "why": "AI in pausa per il budget settimanale"}
+        except Exception:
+            pass
+        proto = rcfg_mod.get().get("protocol") or {}
+        if proto.get("enforce"):
+            try:
+                from .. import finalists as FIN
+                fin = FIN.Finalists(self.registry)
+                ep = fin.current(self.primary)
+                if ep and len(fin.rows(ep["id"])) >= int(ep["max_finalists"]) and self.registry.counter(f"shelved_block_full:{ep['id']}") > 0:
+                    return {"state": "EPOCH_WAITING", "why": f"il blocco hidden ha tutti i {ep['max_finalists']} finalisti: servono sessioni nuove per una nuova epoca"}
+            except Exception:
+                pass
+        h = self.hypothesis_status(now)
+        last = (h.get("log") or [None])[-1]
+        gap = float(rcfg_mod.get()["hypothesis"]["min_gap_min"]) * 60
+        if last and not last.get("error") and last.get("proposals", 0) == 0 and (now - getattr(self, "_last_hyp", 0)) < 6 * gap:
+            return {"state": "NO_NEW_HYPOTHESES", "why": f"l'ultima richiesta ha prodotto {last.get('produced', 0)} ipotesi, nessuna nuova ({last.get('duplicates', 0)} scartate come duplicate)"}
+        if h.get("ready") or str(h.get("why") or "").startswith("prossima richiesta"):
+            return {"state": "WAITING_RESEARCH", "why": h.get("why") or "il Researcher sta per proporre nuove ipotesi"}
+        if not self.ap["enabled"]:
+            return {"state": "IDLE", "why": "autopilota spento"}
+        return {"state": "IDLE", "why": h.get("why") or "nessun lavoro"}
+
+    def _note_work_state(self) -> None:
+        """One event per CHANGE of state (never per poll)."""
+        ws = self.work_state()
+        if ws["state"] != self._ws_last:
+            if self._ws_last is not None and ws["state"] != "ACTIVE":
+                self.events.emit("lab", "state", f"stato: {ws['state']} - {ws['why']}"[:200])
+            self._ws_last = ws["state"]
+
+    def research_diag(self) -> dict:
+        """Why the lab has no new studies: Researcher activity, calls made, what they produced, duplicates dropped, budget, epoch, provider errors."""
+        h = self.hypothesis_status()
+        err = self._llm_error
+        try:
+            allowed = bool(self.llm_allowed("researcher"))
+        except Exception:
+            allowed = None
+        ws = self.work_state()
+        return {"state": ws, "researcher_active": bool(getattr(self, "_hyp_running", False) or self._scout_running or self.busy["research"] > 0),
+                "ai": not isinstance(self.llm, NoLLM), "calls": self._research_calls,
+                "hypothesis": {"ready": h.get("ready"), "why": h.get("why"), "queued_by_researcher": h.get("queued"), "last_calls": h.get("log")},
+                "budget": {"researcher_allowed": allowed, "mode": self.governor().mode() if self.governor() else None, "daily_trial_caps_enforced": self.rbudget.enforced()},
+                "provider_error": None if not err else {"at": time.strftime("%H:%M:%S", time.localtime(err[0])), "text": err[1]},
+                "dedup": {"unique_decisions": self.dedup.count(DD.rule_version(self.NEAR_THRESHOLD)), "counters": {"exact": self.registry.counter("dedup_exact"), "near": self.registry.counter("dedup_near")},
+                          "legacy_counters_inflated": {"exact": self.registry.counter("duplicates_exact"), "near": self.registry.counter("duplicates_near")},
+                          "repeats_suppressed": dict(self.dedup.suppressed), "recent": self.dedup.recent(5), "rule": DD.rule_version(self.NEAR_THRESHOLD)}}
+
+    def _safe_ws(self) -> dict:
+        try:
+            return self.work_state()
+        except Exception as e:
+            return {"state": "IDLE", "why": f"stato non disponibile: {type(e).__name__}"}
+
+    def invalidate_dedup(self, market: str | None = None) -> dict:
+        """Owner action: forget remembered deduplication decisions (all, or one market). The next scan re-decides them against the current state."""
+        n = self.dedup.invalidate(market=market)
+        self._seed_sig = None
+        self.events.emit("lab", "dedup", f"memoria di deduplicazione azzerata ({n} decisioni{', mercato ' + market if market else ''})")
+        return {"invalidated": n}
+
     def budget_explain(self) -> dict:
         """Why the autopilot may be paused on the daily budget: today's use and caps per stage, the owner's ceiling, and for the cheapest queued
         study the first constraint it breaks. Read-only; it counts evaluations (trials), NOT tokens."""
@@ -883,6 +992,10 @@ class Lab:
     def autopilot_tick(self) -> bool:
         """One step of the autonomous cycle. Deterministic rules still decide every verdict: the
         autopilot only removes the clicks. Returns True if it started a study."""
+        try:
+            self._note_work_state()
+        except Exception:
+            pass
         if not self.ap["enabled"] or isinstance(self.llm, NoLLM):
             return False
         if any(j["status"] in ("queued", "running") for j in self.jobs.values()):
@@ -924,6 +1037,15 @@ class Lab:
         """The classic families (opening range, VWAP, EMA, breakout, z-score) are tested first, so the lab never sits idle
         waiting for the first paper. Specs already tested or queued are skipped."""
         n = 0
+        bases = [b for b in (Path(__file__).resolve().parents[3] / "specs", Path("specs")) if b.is_dir()]
+        try:                                                    # nothing changed since the last scan that found nothing new: do not scan again every tick
+            on = sorted(self.enabled_markets())
+            sig = (tuple((str(b / fn), (b / fn).stat().st_mtime_ns) for b in bases[:1] for fn in self.STARTER_FILES if (b / fn).exists()), tuple(on), len(self.pending),
+                   tuple(len(self.loop(m).done_specs) for m in on), DD.rule_version(self.NEAR_THRESHOLD))
+        except Exception:
+            sig = None
+        if sig is not None and sig == getattr(self, "_seed_sig", None):
+            return 0
         for base in (Path(__file__).resolve().parents[3] / "specs", Path("specs")):
             if not base.is_dir():
                 continue
@@ -938,6 +1060,7 @@ class Lab:
                         continue
                     n += self._add_pending_all(sp, "starter")
             break
+        self._seed_sig = sig if n == 0 else None
         return n
 
     def brainstorm(self, now: float | None = None) -> int:
@@ -950,6 +1073,7 @@ class Lab:
         if self.economy() or not self.llm_allowed("researcher"):
             return 0                                                    # brainstorming is the first thing to go when saving tokens
         self._last_brainstorm = now
+        self._research_calls["brainstorm"]["n"] += 1; self._research_calls["brainstorm"]["last"] = now
         lp = self.loop()
         llm = self.llm["researcher"] if isinstance(self.llm, dict) else self.llm
         text = ("BRAINSTORM (no paper this time). Using the lab memory above, propose new, different, testable "
@@ -962,10 +1086,14 @@ class Lab:
             try:
                 specs, _ = propose_specs(llm, text, source="lab brainstorm", language=self.language, memory=self.memory_text())
             except Exception as e:
+                self._llm_error = (time.time(), f"{type(e).__name__}: {str(e)[:160]}")
+                self._research_calls["brainstorm"]["result"] = {"error": self._llm_error[1]}
                 self.events.emit("researcher", "idle", f"brainstorm failed: {e}"[:200])
                 return 0
+            self._llm_error = None
             for sp in specs:
                 n += self._add_pending_all(sp, "brainstorm")
+            self._research_calls["brainstorm"]["result"] = {"produced": len(specs), "queued": n}
             self.events.emit("researcher", "done", f"brainstorm: {n} new proposals")
         return n
 
@@ -1044,6 +1172,7 @@ class Lab:
             return 0
         self._hyp_running, self._last_hyp = True, now
         self._hyp_last = {**getattr(self, "_hyp_last", {}), fid: now}
+        self._research_calls["hypothesize"]["n"] += 1; self._research_calls["hypothesize"]["last"] = now
 
         def work() -> int:
             from ..papers import propose_specs
@@ -1064,19 +1193,25 @@ class Lab:
                     specs, rejected = propose_specs(llm, brief, source=f"ipotesi famiglia {fid}", language=self.language,
                                                     memory=self.memory_text(), max_chunks=1)
                     entry["rejected"] = [r.get("reason", "")[:100] for r in rejected[:3]]
+                    entry["produced"], entry["duplicates"] = len(specs), 0
                     for sp in specs:
                         got = self._add_pending_all(sp, "hypothesis")
+                        entry["duplicates"] += int(got == 0)
                         n += got
                         if got:
                             self.events.emit("researcher", "proposal", f"💡 {sp.name}: {sp.template}, {sp.n_candidates} candidati" +
                                              (f" (scheda incompleta: {len(sp.hypothesis_missing)} voci)" if sp.hypothesis_missing else ""),
                                              {"rationale": sp.rationale, "family": fid})
                     entry["proposals"] = n
+                    self._llm_error = None
+                    self._research_calls["hypothesize"]["result"] = {"produced": entry["produced"], "queued": n, "duplicates": entry["duplicates"]}
                     self.registry.add_trials(0, f"hypothesis:{fid}", kind="compute", stage="hypothesis", family=fid, n_evals=max(1, len(specs)),
                                              compute_s=time.time() - t0, config_version=rcfg_mod.get()["config_version"])
                     self.events.emit("researcher", "done", f"famiglia {fid}: {n} nuove ipotesi in coda")
             except Exception as e:                                  # AI down / budget / key refused: say so, try again after the gap
                 entry["error"] = f"{type(e).__name__}: {str(e)[:160]}"
+                self._llm_error = (time.time(), entry["error"])
+                self._research_calls["hypothesize"]["result"] = {"error": entry["error"]}
                 self.events.emit("researcher", "error", f"ipotesi famiglia {fid}: AI non utilizzabile ({entry['error']})")
                 self.events.emit("researcher", "idle", "stopped")
             finally:
@@ -1106,6 +1241,7 @@ class Lab:
         if not cands:
             return 0
         self._last_connect = now
+        self._research_calls["connect_ideas"]["n"] += 1; self._research_calls["connect_ideas"]["last"] = now
         a, b, _ = cands[0]
         studies = {s["report"]["name"]: s["report"] for s in self._studies_full()}
 
@@ -1161,7 +1297,7 @@ class Lab:
         phase = ("off" if not enabled else "paused" if self.ap.get("paused") else "testing" if running
                  else "budget" if bm in ("paused_day", "paused_weekend", "blocked") and not self.pending
                  else "researching" if self.busy["research"] > 0 else "waiting")
-        return {"enabled": enabled, "phase": phase, "paused": self.ap.get("paused"), "paused_info": self.budget_explain() if self.ap.get("paused") else None,
+        return {"enabled": enabled, "phase": phase, "work_state": self._safe_ws(), "paused": self.ap.get("paused"), "paused_info": self.budget_explain() if self.ap.get("paused") else None,
                 "trials_today": self.ap["trials_today"], "max_trials_per_day": self.ap["max_trials_per_day"],
                 "max_trials_total": self.ap["max_trials_total"], "queue": len(self.pending),
                 "next_search": nxt, "searching": self._scout_running, "working": sorted(self.working_agents()),
