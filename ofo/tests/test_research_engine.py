@@ -36,7 +36,7 @@ def test_config_is_versioned_validated_and_the_baseline_is_the_one_requested():
 # ---- acceptance 1: the budget never exceeds its limit without an explicit decision ----
 def test_1_daily_caps_hold_and_only_an_explicit_decision_raises_them(tmp_path):
     reg = TrialRegistry(tmp_path / "r.db")
-    cfg = json.loads(json.dumps(CFG)); cfg["budget"]["screen_per_day"] = 100
+    cfg = json.loads(json.dumps(CFG)); cfg["budget"]["screen_per_day"] = 100; cfg["budget"]["enforce_daily_caps"] = True
     rb = ResearchBudget(reg, cfg)
     spec = from_dict({**SPEC, "ranges": {"lookback": [10, 20, 30, 40]}})                   # 4 x 2 timeframes = 8 candidates
     assert rb.can_start(spec)[0]

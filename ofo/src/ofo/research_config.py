@@ -24,7 +24,7 @@ class ResearchConfigError(ValueError):
 def _default() -> dict:
     return {"version": "builtin", "markets": {"priority": ["NQ"], "later": ["ES"]},
             "timeframes": {"execution": ["1min", "5min"], "context": ["15min"]},
-            "budget": {"screen_per_day": 1000, "deep_per_day": 100,
+            "budget": {"screen_per_day": 1000, "deep_per_day": 100, "enforce_daily_caps": False,
                        "stage_split": {"hypothesis": 0.15, "screening": 0.35, "validation": 0.30, "robustness": 0.15, "audit": 0.05}},
             "walk_forward": {"min_windows": 6, "train_days": 120, "test_days": 20, "min_test_days": 10},
             "sample": {"min_oos_trades": 200, "min_backtest_trades": 200},

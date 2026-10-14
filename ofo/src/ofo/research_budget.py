@@ -40,6 +40,9 @@ class ResearchBudget:
     def day(self) -> str:
         return time.strftime("%Y-%m-%d", time.localtime(self.now()))
 
+    def enforced(self) -> bool:
+        return bool(self.cfg["budget"].get("enforce_daily_caps", False))
+
     def caps(self) -> dict:
         return rc.stage_caps(self.cfg)
 
@@ -59,7 +62,9 @@ class ResearchBudget:
     def can_start(self, spec) -> tuple[bool, str | None, dict]:
         caps, used, plan = self.caps(), self.used(), planned_units(spec, self.cfg)
         extra = self.overage_allowed()
-        detail = {"caps": caps, "used": used, "planned": plan, "overage_allowed": extra}
+        detail = {"caps": caps, "used": used, "planned": plan, "overage_allowed": extra, "enforced": self.enforced()}
+        if not self.enforced():                      # no daily caps: trials are still COUNTED (the Deflated Sharpe uses them), they just never stop the lab
+            return True, None, detail
         for s in ("screening", "validation", "robustness", "audit"):
             if used[s] + plan[s] > caps[s] + extra:
                 return False, s, detail

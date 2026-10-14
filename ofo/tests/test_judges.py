@@ -332,3 +332,19 @@ def test_one_study_does_not_spend_the_whole_daily_screening_budget(tmp_path):
     reg._con.execute("UPDATE experiments SET stage='screening' WHERE label LIKE 'schedule_info:%'"); reg._con.commit()
     assert rb.used()["screening"] > 1000
     assert ResearchBudget(TrialRegistry(tmp_path / "r.db")).used()["screening"] <= plan["screening"] + 33
+
+
+def test_by_default_no_daily_trial_cap_ever_pauses_the_lab_but_trials_are_still_counted(tmp_path):
+    import json
+    from ofo import research_config as rc
+    from ofo.registry import TrialRegistry
+    from ofo.research_budget import ResearchBudget
+    from ofo.specs import from_dict
+    assert rc.get()["budget"]["enforce_daily_caps"] is False
+    reg = TrialRegistry(tmp_path / "r.db")
+    spec = from_dict({"name": "x", "template": "breakout", "ranges": {"lookback": [10, 20, 30, 40]}, "timeframes": ["5min", "15min"], "rationale": "MECCANISMO x EVIDENZA y QUANDO NON FUNZIONA z"})
+    reg.add_trials(5000, "lots", kind="trials", stage="screening", family="E")
+    rb = ResearchBudget(reg)
+    assert rb.can_start(spec)[0] and reg.n_trials >= 5000                    # never blocked, always counted (the Deflated Sharpe still sees them)
+    cfg = json.loads(json.dumps(rc.get())); cfg["budget"]["enforce_daily_caps"] = True
+    assert not ResearchBudget(reg, cfg).can_start(spec)[0]                  # the old behaviour is one switch away

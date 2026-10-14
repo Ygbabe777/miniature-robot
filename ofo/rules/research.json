@@ -30,7 +30,9 @@
    "robustness": 0.15,
    "audit": 0.05
   },
-  "note": "total_trials NON è qui: resta quello già presente (autopilot max_trials_total). screen_per_day = configurazioni valutate nello screening; deep_per_day = candidati che entrano nella validazione approfondita; gli altri tetti di fase derivano dalle percentuali."
+  "note": "total_trials NON è qui: resta quello già presente (autopilot max_trials_total). screen_per_day = configurazioni valutate nello screening; deep_per_day = candidati che entrano nella validazione approfondita; gli altri tetti di fase derivano dalle percentuali.",
+  "enforce_daily_caps": false,
+  "enforce_note": "false = nessun tetto giornaliero: il programma continua sempre. I tentativi sono CONTATI comunque (il Deflated Sharpe li usa), quindi il Judge non diventa più permissivo. Metti true per riavere i tetti."
  },
  "walk_forward": {
   "min_windows": 6,

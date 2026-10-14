@@ -851,7 +851,7 @@ class Lab:
         if self.registry.n_trials >= self.ap["max_trials_total"]:
             return "total"
         ok, stage, detail = self.rbudget.can_start(spec)
-        if ok and self.rbudget.used()["screening"] + spec.n_candidates > self.ap["max_trials_per_day"]:
+        if ok and self.rbudget.enforced() and self.rbudget.used()["screening"] + spec.n_candidates > self.ap["max_trials_per_day"]:
             ok, stage = False, "screening"
         self._budget_detail = detail
         return None if ok else ("day" if stage in ("screening", "deep_candidates") else f"day:{stage}")
@@ -1019,7 +1019,7 @@ class Lab:
             why = "sta lavorando"
         elif queued >= int(h["queue_low"]):
             why = f"coda sufficiente ({queued} test in attesa)"
-        elif used >= self.rbudget.caps()["hypothesis"] + self.rbudget.overage_allowed():
+        elif self.rbudget.enforced() and used >= self.rbudget.caps()["hypothesis"] + self.rbudget.overage_allowed():
             why = "tetto giornaliero della fase ipotesi raggiunto"
         elif now - getattr(self, "_last_hyp", 0.0) < gap:
             why = f"prossima richiesta tra {int((gap - (now - getattr(self, '_last_hyp', 0.0))) / 60) + 1} min"

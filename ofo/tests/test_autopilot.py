@@ -63,6 +63,7 @@ def wait_jobs(lab):
 def test_autopilot_runs_pending_without_asking_and_respects_budget(tmp_path, bars_csv):
     lab = make(tmp_path, bars_csv)
     lab._add_pending(from_dict(SPEC), "paper")
+    lab.rbudget.cfg = {**lab.rbudget.cfg, "budget": {**lab.rbudget.cfg["budget"], "enforce_daily_caps": True}}
     lab.set_autopilot(max_trials_per_day=100)
     lab.ap["max_trials_per_day"] = 5                            # below the 16 candidates: must pause
     assert lab.autopilot_tick() is False and lab.autopilot_state()["paused"] == "day" and len(lab.pending) == 1
@@ -198,6 +199,7 @@ def test_a_huge_proposal_does_not_block_the_small_ones_behind_it(tmp_path, bars_
     small = from_dict({**SPEC, "name": "Tiny", "ranges": {"or_minutes": [15], "retest_bars": [3], "tol": [0.0]},
                        "timeframes": ["15min"]})                       # 1 candidate
     lab._add_pending(big, "paper"); lab._add_pending(small, "paper")
+    lab.rbudget.cfg = {**lab.rbudget.cfg, "budget": {**lab.rbudget.cfg["budget"], "enforce_daily_caps": True}}
     lab.ap["max_trials_per_day"] = 5
     assert lab.autopilot_tick() is True
     wait_jobs(lab)
